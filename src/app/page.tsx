@@ -198,7 +198,7 @@ export default function Home() {
       return;
     }
 
-    setRehearsals(data as any[] as RehearsalRow[]);
+    setRehearsals((data as RehearsalRow[]) ?? []);
   }, []);
 
   /** 团员端：加载当前用户在所有排练上的打卡记录 */
@@ -228,7 +228,7 @@ export default function Home() {
       map[ridKey(row.rehearsal_id)] = row.status;
     }
     setMyAttendanceByRehearsal(map);
-  }, [user?.id, isAdmin]);
+  }, [user, isAdmin]);
 
   React.useEffect(() => {
     void fetchLatestAnnouncement();

@@ -173,7 +173,7 @@ export default function SignupPage() {
               <select
                 value={instrument}
                 onChange={(e) => {
-                  setInstrument(e.target.value as any);
+                  setInstrument(e.target.value as (typeof INSTRUMENT_OPTIONS)[number]);
                   setErrorMsg("");
                 }}
                 className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"

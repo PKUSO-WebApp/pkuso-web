@@ -102,6 +102,7 @@ export default function CommunityPage() {
     setLoading(false);
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- 历史遗留的 effect 数据获取模式,重构时需改为 Suspense/SWR
   React.useEffect(() => {
     void fetchPosts();
   }, [fetchPosts]);

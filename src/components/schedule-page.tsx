@@ -31,6 +31,13 @@ type CreateFormState = {
   signInCode: string;
 };
 
+type AttendanceRow = {
+  id: string | number;
+  user_id?: string;
+  status?: string;
+  users?: { name?: string; section?: string } | null;
+};
+
 export function SchedulePage() {
   const [currentType, setCurrentType] = React.useState<RehearsalType>("合排");
   const [schedules, setSchedules] = React.useState<RehearsalRow[]>([]);
@@ -68,6 +75,7 @@ export function SchedulePage() {
     setLoading(false);
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- 历史遗留的 effect 数据获取模式,重构时需改为 Suspense/SWR
   React.useEffect(() => {
     void fetchSchedules();
   }, [fetchSchedules]);
@@ -249,7 +257,7 @@ export function SchedulePage() {
   const [codeError, setCodeError] = React.useState<string | null>(null);
   const [attendanceModalRehearsal, setAttendanceModalRehearsal] =
     React.useState<RehearsalRow | null>(null);
-  const [attendanceList, setAttendanceList] = React.useState<any[]>([]);
+  const [attendanceList, setAttendanceList] = React.useState<AttendanceRow[]>([]);
   const [attendanceLoading, setAttendanceLoading] = React.useState(false);
 
   React.useEffect(() => {
@@ -571,7 +579,8 @@ export function SchedulePage() {
                 <p className="py-6 text-center text-[11px] text-zinc-400">暂无签到记录</p>
               ) : (
                 attendanceList.map((row, index) => {
-                  const userInfo = (row as any).users as
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase join 结果类型无法在编译期推断
+                  const userInfo = (row as { users: unknown } | undefined)?.users as
                     { name?: string; section?: string } | undefined;
                   const name = userInfo?.name ?? "未命名成员";
                   const section = userInfo?.section ?? "声部未登记";

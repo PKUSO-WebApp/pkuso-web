@@ -84,9 +84,10 @@ export async function POST(request: Request) {
 
     console.log("=== 邮件发送成功 ===", data);
     return NextResponse.json({ success: true, data }, { status: 200 });
-  } catch (error: any) {
-    console.error("[Email API Error 捕获]:", error?.message || error);
-    return NextResponse.json({ error: error?.message || String(error) }, { status: 500 });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("[Email API Error 捕获]:", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
 

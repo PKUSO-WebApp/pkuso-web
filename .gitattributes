@@ -1,0 +1,14 @@
+# 所有文本文件统一 LF 结尾
+* text=auto eol=lf
+
+# 二进制/图片
+*.ico    binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.svg    binary
+
+# 锁文件（机器生成，diff 无意义）
+pnpm-lock.yaml  binary -diff

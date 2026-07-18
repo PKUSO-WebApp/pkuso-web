@@ -3,63 +3,16 @@
 import React from "react";
 import { useUser } from "@/context/UserContext";
 import { supabase } from "@/lib/supabase";
-
-/** 与花名册一致的声部顺序，用于分组 */
-const INSTRUMENT_ORDER = [
-  "第一小提琴",
-  "第二小提琴",
-  "中提琴",
-  "大提琴",
-  "低音提琴",
-  "长笛",
-  "双簧管",
-  "单簧管",
-  "大管",
-  "圆号",
-  "小号",
-  "长号",
-  "大号",
-  "打击乐",
-  "键盘",
-  "竖琴",
-] as const;
-const OTHER_GROUP = "其他";
-
-type AnnouncementRow = {
-  id: string;
-  content: string | null;
-  created_at: string | null;
-};
-
-type RehearsalRow = {
-  id: string | number;
-  title: string | null;
-  date: string | null;
-  /** @deprecated 使用 start_time / end_time */
-  time?: string | null;
-  start_time?: string | null;
-  end_time?: string | null;
-  location: string | null;
-  repertoire: string | null;
-  created_at: string | null;
-};
-
-type ProfileRow = {
-  id: string;
-  full_name: string | null;
-  instrument: string | null;
-  status: string | null;
-};
-
-type AttendanceStatus = "present" | "leave" | "absent";
+import { INSTRUMENT_ORDER, OTHER_INSTRUMENT_GROUP } from "@/constants/instruments";
+import type { AnnouncementRow, RehearsalRow, ProfileRow, AttendanceStatus } from "@/types/database";
 
 function instrumentGroupKey(instrument: string | null): string {
-  if (!instrument) return OTHER_GROUP;
+  if (!instrument) return OTHER_INSTRUMENT_GROUP;
   const trimmed = instrument.trim();
   if (INSTRUMENT_ORDER.includes(trimmed as (typeof INSTRUMENT_ORDER)[number])) {
     return trimmed;
   }
-  return OTHER_GROUP;
+  return OTHER_INSTRUMENT_GROUP;
 }
 
 function ridKey(id: string | number): string {
@@ -320,8 +273,8 @@ export default function Home() {
       const users = map.get(key);
       if (users && users.length > 0) ordered.push({ group: key, users });
     }
-    const other = map.get(OTHER_GROUP);
-    if (other && other.length > 0) ordered.push({ group: OTHER_GROUP, users: other });
+    const other = map.get(OTHER_INSTRUMENT_GROUP);
+    if (other && other.length > 0) ordered.push({ group: OTHER_INSTRUMENT_GROUP, users: other });
     return ordered;
   }, [attendanceMembers]);
 

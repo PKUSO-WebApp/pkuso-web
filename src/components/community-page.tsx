@@ -4,22 +4,7 @@ import React from "react";
 import imageCompression from "browser-image-compression";
 import { useUser } from "@/context/UserContext";
 import { supabase } from "@/lib/supabase";
-
-type PostType = "ensemble" | "gathering";
-
-type PostRow = {
-  id: string;
-  title: string;
-  type: PostType;
-  content: string;
-  image_url: string | null;
-  author_id: string;
-  created_at: string;
-  contact_info: string | null;
-  current_sections: string | null;
-  missing_sections: string | null;
-  users?: { name: string; section: string } | null;
-};
+import type { PostType, PostRow } from "@/types/database";
 
 type FormState = {
   title: string;

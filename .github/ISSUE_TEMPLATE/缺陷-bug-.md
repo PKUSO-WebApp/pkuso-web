@@ -1,7 +1,10 @@
 ---
-name: 缺陷
+name: 缺陷（Bug）
 about: 报告一个 bug
-labels: "bug"
+title: ''
+labels: bug
+assignees: ''
+
 ---
 
 **复现步骤：**

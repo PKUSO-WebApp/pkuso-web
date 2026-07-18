@@ -126,7 +126,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       login({
         id: sessionUserId,
         name: ((data as ProfileData)?.full_name as string) ?? "未命名用户",
-        role: (((data as ProfileData)?.role ?? "member") as UserRole),
+        role: ((data as ProfileData)?.role ?? "member") as UserRole,
         section: ((data as ProfileData)?.instrument as string) ?? "",
         status: ((data as ProfileData)?.status as string) ?? undefined,
         email: ((data as ProfileData)?.email as string) ?? undefined,

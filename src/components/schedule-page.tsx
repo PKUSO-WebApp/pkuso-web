@@ -75,7 +75,6 @@ export function SchedulePage() {
     setLoading(false);
   }, []);
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- 历史遗留的 effect 数据获取模式,重构时需改为 Suspense/SWR
   React.useEffect(() => {
     void fetchSchedules();
   }, [fetchSchedules]);
@@ -579,7 +578,6 @@ export function SchedulePage() {
                 <p className="py-6 text-center text-[11px] text-zinc-400">暂无签到记录</p>
               ) : (
                 attendanceList.map((row, index) => {
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase join 结果类型无法在编译期推断
                   const userInfo = (row as { users: unknown } | undefined)?.users as
                     { name?: string; section?: string } | undefined;
                   const name = userInfo?.name ?? "未命名成员";

@@ -1,0 +1,44 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm verify
+
+      - run: pnpm build
+
+  branch-name:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: 校验分支命名规范
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          if ! echo "$BRANCH" | grep -qE '^(feat|fix|docs|refactor|test|chore|build|ci|style)/'; then
+            echo "::error::分支命名不规范: $BRANCH"
+            echo "期望格式: <type>/<简述> (type = feat|fix|docs|refactor|test|chore|build|ci|style)"
+            exit 1
+          fi
+          echo "✅ 分支名符合规范: $BRANCH"

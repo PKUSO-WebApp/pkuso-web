@@ -21,9 +21,7 @@ type UserContextValue = {
   logout: () => void;
 };
 
-const UserContext = React.createContext<UserContextValue | undefined>(
-  undefined,
-);
+const UserContext = React.createContext<UserContextValue | undefined>(undefined);
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = React.useState<User | null>(null);
@@ -55,4 +53,3 @@ export function useUser() {
   }
   return ctx;
 }
-

@@ -30,9 +30,7 @@ export default function SignupPage() {
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [fullName, setFullName] = React.useState("");
-  const [instrument, setInstrument] = React.useState<
-    (typeof INSTRUMENT_OPTIONS)[number] | ""
-  >("");
+  const [instrument, setInstrument] = React.useState<(typeof INSTRUMENT_OPTIONS)[number] | "">("");
   const [college, setCollege] = React.useState("");
   const [joinDate, setJoinDate] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
@@ -62,11 +60,10 @@ export default function SignupPage() {
     }
 
     setSubmitting(true);
-    const { data: signUpData, error: signUpError } =
-      await supabase.auth.signUp({
-        email: email.trim(),
-        password: password,
-      });
+    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+      email: email.trim(),
+      password: password,
+    });
 
     if (signUpError) {
       setSubmitting(false);
@@ -107,9 +104,7 @@ export default function SignupPage() {
         <div className="rounded-3xl border border-zinc-200 bg-white p-5 shadow-sm">
           <div className="mb-4 text-center">
             <h1 className="text-xl font-semibold text-zinc-900">创建账号</h1>
-            <p className="mt-1 text-xs text-zinc-500">
-              注册后需等待管理员审核通过
-            </p>
+            <p className="mt-1 text-xs text-zinc-500">注册后需等待管理员审核通过</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-3">
@@ -130,9 +125,7 @@ export default function SignupPage() {
             </div>
 
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-zinc-600">
-                邮箱
-              </label>
+              <label className="block text-[11px] font-medium text-zinc-600">邮箱</label>
               <input
                 type="email"
                 value={email}
@@ -147,9 +140,7 @@ export default function SignupPage() {
             </div>
 
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-zinc-600">
-                密码
-              </label>
+              <label className="block text-[11px] font-medium text-zinc-600">密码</label>
               <input
                 type="password"
                 value={password}
@@ -164,9 +155,7 @@ export default function SignupPage() {
             </div>
 
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-zinc-600">
-                真实姓名
-              </label>
+              <label className="block text-[11px] font-medium text-zinc-600">真实姓名</label>
               <input
                 value={fullName}
                 onChange={(e) => {
@@ -180,13 +169,11 @@ export default function SignupPage() {
             </div>
 
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-zinc-600">
-                所属声部
-              </label>
+              <label className="block text-[11px] font-medium text-zinc-600">所属声部</label>
               <select
                 value={instrument}
                 onChange={(e) => {
-                  setInstrument(e.target.value as any);
+                  setInstrument(e.target.value as (typeof INSTRUMENT_OPTIONS)[number]);
                   setErrorMsg("");
                 }}
                 className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
@@ -203,9 +190,7 @@ export default function SignupPage() {
             </div>
 
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-zinc-600">
-                学院
-              </label>
+              <label className="block text-[11px] font-medium text-zinc-600">学院</label>
               <input
                 value={college}
                 onChange={(e) => {
@@ -219,9 +204,7 @@ export default function SignupPage() {
             </div>
 
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-zinc-600">
-                入团时间
-              </label>
+              <label className="block text-[11px] font-medium text-zinc-600">入团时间</label>
               <input
                 value={joinDate}
                 onChange={(e) => {
@@ -259,4 +242,3 @@ export default function SignupPage() {
     </div>
   );
 }
-

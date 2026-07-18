@@ -36,10 +36,7 @@ export default function ProfilePage() {
   const instrument = user?.section ?? "—";
   const email = user?.email ?? "—";
   const isAdmin = user?.role === "admin";
-  const initials =
-    fullName !== "—"
-      ? fullName.slice(0, 2) || fullName.slice(0, 1) || "--"
-      : "--";
+  const initials = fullName !== "—" ? fullName.slice(0, 2) || fullName.slice(0, 1) || "--" : "--";
 
   const [isPwdModalOpen, setIsPwdModalOpen] = React.useState(false);
   const [newPwd, setNewPwd] = React.useState("");
@@ -83,10 +80,7 @@ export default function ProfilePage() {
   const handleApprove = async (id: string) => {
     if (approvingId) return;
     setApprovingId(id);
-    const { error } = await supabase
-      .from("profiles")
-      .update({ status: "approved" })
-      .eq("id", id);
+    const { error } = await supabase.from("profiles").update({ status: "approved" }).eq("id", id);
     setApprovingId(null);
 
     if (error) {
@@ -101,8 +95,7 @@ export default function ProfilePage() {
 
   // —— 管理员：发布公告 ——
   const [announcementBody, setAnnouncementBody] = React.useState("");
-  const [announcementSubmitting, setAnnouncementSubmitting] =
-    React.useState(false);
+  const [announcementSubmitting, setAnnouncementSubmitting] = React.useState(false);
 
   const handlePublishAnnouncement = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -165,9 +158,7 @@ export default function ProfilePage() {
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-base font-medium text-white">
             {initials}
           </div>
-          <div
-            className={`min-w-0 flex-1 ${isAdmin ? "flex items-center" : "space-y-1"}`}
-          >
+          <div className={`min-w-0 flex-1 ${isAdmin ? "flex items-center" : "space-y-1"}`}>
             <h1 className="text-lg font-semibold text-zinc-900">{fullName}</h1>
             {!isAdmin ? (
               <>
@@ -186,9 +177,7 @@ export default function ProfilePage() {
       {/* 管理员控制台：仅 admin */}
       {isAdmin && (
         <section className="space-y-4 rounded-2xl border-2 border-zinc-900 bg-zinc-50 p-4 shadow-sm">
-          <h2 className="text-base font-semibold text-zinc-900">
-            💃 管理员控制台
-          </h2>
+          <h2 className="text-base font-semibold text-zinc-900">💃 管理员控制台</h2>
 
           {/* 入团审批 */}
           <div>
@@ -206,9 +195,7 @@ export default function ProfilePage() {
               </button>
             </div>
             {pendingLoading ? (
-              <p className="py-4 text-center text-xs text-zinc-400">
-                加载中…
-              </p>
+              <p className="py-4 text-center text-xs text-zinc-400">加载中…</p>
             ) : pendingRows.length === 0 ? (
               <p className="rounded-xl bg-white/80 py-4 text-center text-xs text-zinc-500">
                 暂无待审批用户
@@ -224,12 +211,8 @@ export default function ProfilePage() {
                       <p className="text-sm font-semibold text-zinc-900">
                         {r.full_name || "未填写姓名"}
                       </p>
-                      <p className="mt-0.5 text-xs text-zinc-500">
-                        {r.instrument || "未选择声部"}
-                      </p>
-                      <p className="mt-0.5 text-xs text-zinc-500">
-                        {r.email || "未填写邮箱"}
-                      </p>
+                      <p className="mt-0.5 text-xs text-zinc-500">{r.instrument || "未选择声部"}</p>
+                      <p className="mt-0.5 text-xs text-zinc-500">{r.email || "未填写邮箱"}</p>
                       <p className="mt-0.5 text-[11px] text-zinc-400">
                         注册时间：{formatTime(r.created_at)}
                       </p>
@@ -250,9 +233,7 @@ export default function ProfilePage() {
 
           {/* 发布公告 */}
           <div className="border-t border-zinc-200 pt-4">
-            <p className="mb-2 text-[11px] font-medium text-zinc-600">
-              发布全团公告
-            </p>
+            <p className="mb-2 text-[11px] font-medium text-zinc-600">发布全团公告</p>
             <form onSubmit={handlePublishAnnouncement} className="space-y-2">
               <textarea
                 value={announcementBody}
@@ -314,17 +295,12 @@ export default function ProfilePage() {
             }}
           />
           <div className="relative w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-            <h2
-              id="update-password-title"
-              className="text-base font-semibold text-zinc-900"
-            >
+            <h2 id="update-password-title" className="text-base font-semibold text-zinc-900">
               修改登录密码
             </h2>
             <form onSubmit={handleUpdatePassword} className="mt-4 space-y-3">
               <div>
-                <label className="mb-1 block text-xs font-medium text-zinc-600">
-                  新密码
-                </label>
+                <label className="mb-1 block text-xs font-medium text-zinc-600">新密码</label>
                 <input
                   type="password"
                   value={newPwd}
@@ -334,9 +310,7 @@ export default function ProfilePage() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-zinc-600">
-                  确认新密码
-                </label>
+                <label className="mb-1 block text-xs font-medium text-zinc-600">确认新密码</label>
                 <input
                   type="password"
                   value={confirmPwd}

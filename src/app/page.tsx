@@ -122,9 +122,7 @@ function isRehearsalEnded(
   const timeStr = (endTime ?? "").trim() || (startTimeFallback ?? "").trim();
   if (!timeStr) return false;
   const [hh = 0, mm = 0] = timeStr.split(":").map(Number);
-  const end = endTime
-    ? new Date(y, m - 1, d, hh, mm, 0)
-    : new Date(y, m - 1, d, hh, mm + 30, 0);
+  const end = endTime ? new Date(y, m - 1, d, hh, mm, 0) : new Date(y, m - 1, d, hh, mm + 30, 0);
   return Date.now() > end.getTime();
 }
 
@@ -133,9 +131,7 @@ export default function Home() {
   const role = user?.role;
   const isAdmin = role === "admin";
 
-  const [announcement, setAnnouncement] = React.useState<AnnouncementRow | null>(
-    null,
-  );
+  const [announcement, setAnnouncement] = React.useState<AnnouncementRow | null>(null);
   const [announcementLoading, setAnnouncementLoading] = React.useState(false);
 
   const [rehearsals, setRehearsals] = React.useState<RehearsalRow[]>([]);
@@ -165,13 +161,9 @@ export default function Home() {
   const [attendanceModalRehearsal, setAttendanceModalRehearsal] =
     React.useState<RehearsalRow | null>(null);
   const [attendanceLoading, setAttendanceLoading] = React.useState(false);
-  const [attendanceMembers, setAttendanceMembers] = React.useState<ProfileRow[]>(
-    [],
-  );
+  const [attendanceMembers, setAttendanceMembers] = React.useState<ProfileRow[]>([]);
   /** user_id -> 当前选择的状态（无记录时默认 absent） */
-  const [statusByUserId, setStatusByUserId] = React.useState<
-    Record<string, AttendanceStatus>
-  >({});
+  const [statusByUserId, setStatusByUserId] = React.useState<Record<string, AttendanceStatus>>({});
   const [attendanceSaving, setAttendanceSaving] = React.useState(false);
 
   const fetchLatestAnnouncement = React.useCallback(async () => {
@@ -206,7 +198,7 @@ export default function Home() {
       return;
     }
 
-    setRehearsals((data as any[]) as RehearsalRow[]);
+    setRehearsals((data as RehearsalRow[]) ?? []);
   }, []);
 
   /** 团员端：加载当前用户在所有排练上的打卡记录 */
@@ -236,7 +228,7 @@ export default function Home() {
       map[ridKey(row.rehearsal_id)] = row.status;
     }
     setMyAttendanceByRehearsal(map);
-  }, [user?.id, isAdmin]);
+  }, [user, isAdmin]);
 
   React.useEffect(() => {
     void fetchLatestAnnouncement();
@@ -259,10 +251,7 @@ export default function Home() {
           .from("profiles")
           .select("id, full_name, instrument, status")
           .eq("status", "approved"),
-        supabase
-          .from("attendances")
-          .select("user_id, status")
-          .eq("rehearsal_id", rid),
+        supabase.from("attendances").select("user_id, status").eq("rehearsal_id", rid),
       ]);
 
       setAttendanceLoading(false);
@@ -303,7 +292,10 @@ export default function Home() {
   /** 按 Tab 过滤：全团合排 / 声部分排（宽松匹配，避免全角/空格导致不显示） */
   const displayedRehearsals = React.useMemo(() => {
     return rehearsals.filter((r) => {
-      const dbTitle = (r.title || "").toString().replace(/\u3000/g, " ").trim();
+      const dbTitle = (r.title || "")
+        .toString()
+        .replace(/\u3000/g, " ")
+        .trim();
       const target = scheduleTab === "full" ? "全团合排" : "声部分排";
       if (dbTitle === target) return true;
       if (scheduleTab === "full") return dbTitle.includes("合排") && !dbTitle.includes("分排");
@@ -320,10 +312,7 @@ export default function Home() {
     }
     for (const [, arr] of map) {
       arr.sort((a, b) =>
-        String(a.full_name ?? "").localeCompare(
-          String(b.full_name ?? ""),
-          "zh-CN",
-        ),
+        String(a.full_name ?? "").localeCompare(String(b.full_name ?? ""), "zh-CN"),
       );
     }
     const ordered: { group: string; users: ProfileRow[] }[] = [];
@@ -397,13 +386,7 @@ export default function Home() {
     const startTime = (form.time ?? "").trim();
     const endTime = (form.endTime ?? "").trim();
 
-    if (
-      !form.date ||
-      !startTime ||
-      !endTime ||
-      !form.location.trim() ||
-      !form.repertoire.trim()
-    ) {
+    if (!form.date || !startTime || !endTime || !form.location.trim() || !form.repertoire.trim()) {
       alert("请填写完整的排练信息。");
       return;
     }
@@ -453,7 +436,11 @@ export default function Home() {
         <button
           type="button"
           disabled
-          className={compact ? compactClass + " cursor-not-allowed text-zinc-500" : "w-full cursor-not-allowed rounded-full border border-zinc-200 bg-zinc-100 py-2 text-sm font-medium text-zinc-500"}
+          className={
+            compact
+              ? compactClass + " cursor-not-allowed text-zinc-500"
+              : "w-full cursor-not-allowed rounded-full border border-zinc-200 bg-zinc-100 py-2 text-sm font-medium text-zinc-500"
+          }
         >
           ✅ 已签到
         </button>
@@ -464,7 +451,11 @@ export default function Home() {
         <button
           type="button"
           disabled
-          className={compact ? compactClass + " cursor-not-allowed text-zinc-500" : "w-full cursor-not-allowed rounded-full border border-zinc-200 bg-zinc-100 py-2 text-sm font-medium text-zinc-500"}
+          className={
+            compact
+              ? compactClass + " cursor-not-allowed text-zinc-500"
+              : "w-full cursor-not-allowed rounded-full border border-zinc-200 bg-zinc-100 py-2 text-sm font-medium text-zinc-500"
+          }
         >
           ⏸️ 已请假
         </button>
@@ -474,7 +465,11 @@ export default function Home() {
       <button
         type="button"
         onClick={() => void handleMemberSignIn(r)}
-        className={compact ? compactClass + " hover:bg-zinc-50" : "w-full rounded-full bg-zinc-900 py-2 text-sm font-medium text-white shadow-sm hover:bg-zinc-800"}
+        className={
+          compact
+            ? compactClass + " hover:bg-zinc-50"
+            : "w-full rounded-full bg-zinc-900 py-2 text-sm font-medium text-white shadow-sm hover:bg-zinc-800"
+        }
       >
         📍 点击签到
       </button>
@@ -487,12 +482,8 @@ export default function Home() {
       <header className="mb-1">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <h1 className="text-lg font-semibold text-zinc-900">
-              本周排练日程
-            </h1>
-            <p className="mt-1 text-xs text-zinc-500">
-              查看乐团合排与分排安排
-            </p>
+            <h1 className="text-lg font-semibold text-zinc-900">本周排练日程</h1>
+            <p className="mt-1 text-xs text-zinc-500">查看乐团合排与分排安排</p>
           </div>
           {isAdmin && (
             <button
@@ -547,9 +538,7 @@ export default function Home() {
             <span className="shrink-0 text-amber-600" aria-hidden>
               📢
             </span>
-            <p className="min-w-0 truncate text-xs text-amber-900">
-              {announcement.content}
-            </p>
+            <p className="min-w-0 truncate text-xs text-amber-900">{announcement.content}</p>
           </div>
         </section>
       )}
@@ -573,10 +562,7 @@ export default function Home() {
           />
           <div className="relative w-full max-w-sm rounded-2xl bg-white shadow-xl max-h-[85vh] overflow-y-auto p-4 pb-5">
             <div className="mb-2 flex items-center justify-between">
-              <h2
-                id="publish-modal-title"
-                className="text-sm font-semibold text-zinc-900"
-              >
+              <h2 id="publish-modal-title" className="text-sm font-semibold text-zinc-900">
                 发布新日程
               </h2>
               <button
@@ -595,9 +581,7 @@ export default function Home() {
                     type="radio"
                     name="rehearsalType"
                     checked={form.rehearsalType === "全团合排"}
-                    onChange={() =>
-                      setForm((p) => ({ ...p, rehearsalType: "全团合排" }))
-                    }
+                    onChange={() => setForm((p) => ({ ...p, rehearsalType: "全团合排" }))}
                     className="h-3.5 w-3.5 border-zinc-300 text-zinc-900 focus:ring-zinc-500"
                   />
                   全团合排
@@ -607,9 +591,7 @@ export default function Home() {
                     type="radio"
                     name="rehearsalType"
                     checked={form.rehearsalType === "声部分排"}
-                    onChange={() =>
-                      setForm((p) => ({ ...p, rehearsalType: "声部分排" }))
-                    }
+                    onChange={() => setForm((p) => ({ ...p, rehearsalType: "声部分排" }))}
                     className="h-3.5 w-3.5 border-zinc-300 text-zinc-900 focus:ring-zinc-500"
                   />
                   声部分排
@@ -619,9 +601,7 @@ export default function Home() {
               <input
                 type="date"
                 value={form.date}
-                onChange={(e) =>
-                  setForm((p) => ({ ...p, date: e.target.value }))
-                }
+                onChange={(e) => setForm((p) => ({ ...p, date: e.target.value }))}
                 className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-900 outline-none focus:border-zinc-400"
               />
               {/* 开始时间 - 结束时间 */}
@@ -629,34 +609,26 @@ export default function Home() {
                 <input
                   type="time"
                   value={form.time}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, time: e.target.value }))
-                  }
+                  onChange={(e) => setForm((p) => ({ ...p, time: e.target.value }))}
                   className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-900 outline-none focus:border-zinc-400"
                 />
                 <span className="text-[11px] text-zinc-500">至</span>
                 <input
                   type="time"
                   value={form.endTime}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, endTime: e.target.value }))
-                  }
+                  onChange={(e) => setForm((p) => ({ ...p, endTime: e.target.value }))}
                   className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-900 outline-none focus:border-zinc-400"
                 />
               </div>
               <input
                 value={form.location}
-                onChange={(e) =>
-                  setForm((p) => ({ ...p, location: e.target.value }))
-                }
+                onChange={(e) => setForm((p) => ({ ...p, location: e.target.value }))}
                 className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-900 outline-none focus:border-zinc-400"
                 placeholder="地点（如：新太阳b108）"
               />
               <textarea
                 value={form.repertoire}
-                onChange={(e) =>
-                  setForm((p) => ({ ...p, repertoire: e.target.value }))
-                }
+                onChange={(e) => setForm((p) => ({ ...p, repertoire: e.target.value }))}
                 rows={3}
                 className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-900 outline-none focus:border-zinc-400"
                 placeholder="排练曲目（如：柴四）"
@@ -685,7 +657,7 @@ export default function Home() {
           <div className="space-y-5 transition-opacity duration-200">
             {displayedRehearsals.map((r) => {
               const displayTime =
-                (r?.start_time && r?.end_time)
+                r?.start_time && r?.end_time
                   ? `${r.start_time} - ${r.end_time}`
                   : (r?.time ?? r?.start_time ?? "");
               const ended = isRehearsalEnded(
@@ -702,16 +674,12 @@ export default function Home() {
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <h2 className="text-lg font-semibold text-zinc-900">
-                        {dateTitle}
-                      </h2>
+                      <h2 className="text-lg font-semibold text-zinc-900">{dateTitle}</h2>
                       <p className="mt-0.5 text-[11px] text-zinc-500">
                         排练曲目：{repertoireLabel}
                       </p>
                       <div className="mt-1 flex items-center justify-between gap-2">
-                        <p className="text-[11px] text-zinc-400">
-                          📍 {r?.location ?? "—"}
-                        </p>
+                        <p className="text-[11px] text-zinc-400">📍 {r?.location ?? "—"}</p>
                         {isAdmin && (
                           <div className="ml-auto flex shrink-0 gap-2 text-[11px]">
                             <button
@@ -735,9 +703,7 @@ export default function Home() {
                     <div className="flex shrink-0 flex-col items-end gap-1">
                       <span
                         className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                          ended
-                            ? "bg-zinc-100 text-zinc-500"
-                            : "bg-blue-100 text-blue-700"
+                          ended ? "bg-zinc-100 text-zinc-500" : "bg-blue-100 text-blue-700"
                         }`}
                       >
                         {ended ? "已结束" : "即将开始"}
@@ -781,14 +747,9 @@ export default function Home() {
           />
           <div className="relative m-auto flex h-[70vh] w-full max-w-md flex-col rounded-t-2xl border border-zinc-200 bg-white shadow-xl sm:rounded-2xl">
             <div className="flex shrink-0 items-center justify-between border-b border-zinc-100 px-3 py-2">
-              <h2
-                id="attendance-modal-title"
-                className="pr-2 text-sm font-semibold text-zinc-900"
-              >
+              <h2 id="attendance-modal-title" className="pr-2 text-sm font-semibold text-zinc-900">
                 {formatDateMMDD(attendanceModalRehearsal.date)} ·{" "}
-                {(attendanceModalRehearsal.repertoire ?? "").trim() ||
-                  "常规排练"}{" "}
-                - 考勤修正
+                {(attendanceModalRehearsal.repertoire ?? "").trim() || "常规排练"} - 考勤修正
               </h2>
               <button
                 type="button"
@@ -802,20 +763,14 @@ export default function Home() {
 
             <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
               {attendanceLoading ? (
-                <p className="py-8 text-center text-sm text-zinc-400">
-                  加载团员与考勤…
-                </p>
+                <p className="py-8 text-center text-sm text-zinc-400">加载团员与考勤…</p>
               ) : groupedMembers.length === 0 ? (
-                <p className="py-8 text-center text-sm text-zinc-500">
-                  暂无已通过审核的团员
-                </p>
+                <p className="py-8 text-center text-sm text-zinc-500">暂无已通过审核的团员</p>
               ) : (
                 <div className="space-y-3">
                   {groupedMembers.map(({ group, users }) => (
                     <div key={group}>
-                      <p className="mb-1 text-sm font-medium text-zinc-500">
-                        {group}
-                      </p>
+                      <p className="mb-1 text-sm font-medium text-zinc-500">{group}</p>
                       <ul className="space-y-1">
                         {users.map((m) => (
                           <li
@@ -837,11 +792,7 @@ export default function Home() {
                                   key={key}
                                   type="button"
                                   title={
-                                    key === "present"
-                                      ? "出勤"
-                                      : key === "leave"
-                                        ? "请假"
-                                        : "缺席"
+                                    key === "present" ? "出勤" : key === "leave" ? "请假" : "缺席"
                                   }
                                   onClick={() =>
                                     setStatusByUserId((prev) => ({
@@ -871,11 +822,7 @@ export default function Home() {
             <div className="shrink-0 border-t border-zinc-100 bg-white px-3 py-2">
               <button
                 type="button"
-                disabled={
-                  attendanceLoading ||
-                  attendanceSaving ||
-                  attendanceMembers.length === 0
-                }
+                disabled={attendanceLoading || attendanceSaving || attendanceMembers.length === 0}
                 onClick={() => void handleSaveAttendance()}
                 className="w-full rounded-xl bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
               >

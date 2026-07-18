@@ -2,6 +2,11 @@
   "name": "orchestra-web",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@11.8.0",
+  "engines": {
+    "node": ">=20.9",
+    "pnpm": ">=11"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

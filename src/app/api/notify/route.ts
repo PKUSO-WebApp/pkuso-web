@@ -19,10 +19,7 @@ export async function POST(request: Request) {
       Object.keys(process.env).filter((k) => k.toUpperCase().includes("RESEND")),
     );
     console.log("[Env] has RESEND key:", !!resendKey);
-    console.log(
-      "[Env] has NEXT_PUBLIC_SUPABASE_URL:",
-      !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-    );
+    console.log("[Env] has NEXT_PUBLIC_SUPABASE_URL:", !!process.env.NEXT_PUBLIC_SUPABASE_URL);
     console.log(
       "[Env] has NEXT_PUBLIC_SUPABASE_ANON_KEY:",
       !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
@@ -89,10 +86,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, data }, { status: 200 });
   } catch (error: any) {
     console.error("[Email API Error 捕获]:", error?.message || error);
-    return NextResponse.json(
-      { error: error?.message || String(error) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: error?.message || String(error) }, { status: 500 });
   }
 }
 

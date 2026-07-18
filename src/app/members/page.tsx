@@ -77,9 +77,7 @@ export default function MembersPage() {
     setRosterError(null);
     const { data, error } = await supabase
       .from("profiles")
-      .select(
-        "id, full_name, email, instrument, status, role, college, join_date, created_at",
-      )
+      .select("id, full_name, email, instrument, status, role, college, join_date, created_at")
       .eq("status", "approved");
     setRosterLoading(false);
     if (error) {
@@ -105,10 +103,7 @@ export default function MembersPage() {
     }
     for (const [, arr] of map) {
       arr.sort((a, b) =>
-        String(a.full_name ?? "").localeCompare(
-          String(b.full_name ?? ""),
-          "zh-CN",
-        ),
+        String(a.full_name ?? "").localeCompare(String(b.full_name ?? ""), "zh-CN"),
       );
     }
     const ordered: { group: string; users: ProfileRow[] }[] = [];
@@ -159,14 +154,8 @@ export default function MembersPage() {
   // 区间内 rehearsal id 列表（含起止），id 类型与 DB 一致
   const rehearsalIdsInRange = React.useMemo(() => {
     if (rehearsalList.length === 0) return [];
-    const startIdx = Math.max(
-      0,
-      Math.min(startRehearsalIndex, rehearsalList.length - 1),
-    );
-    const endIdx = Math.max(
-      0,
-      Math.min(endRehearsalIndex, rehearsalList.length - 1),
-    );
+    const startIdx = Math.max(0, Math.min(startRehearsalIndex, rehearsalList.length - 1));
+    const endIdx = Math.max(0, Math.min(endRehearsalIndex, rehearsalList.length - 1));
     const lo = Math.min(startIdx, endIdx);
     const hi = Math.max(startIdx, endIdx);
     return rehearsalList.slice(lo, hi + 1).map((r) => r.id);
@@ -207,7 +196,8 @@ export default function MembersPage() {
       .from("profiles")
       .select("id, full_name, instrument")
       .in("id", userIds);
-    const profList = (profiles as { id: string; full_name: string | null; instrument: string | null }[]) ?? [];
+    const profList =
+      (profiles as { id: string; full_name: string | null; instrument: string | null }[]) ?? [];
     const idToProfile = new Map(profList.map((p) => [p.id, p]));
     const result: { userId: string; label: string; count: number }[] = [];
     for (const [userId, count] of countMap) {
@@ -231,10 +221,7 @@ export default function MembersPage() {
 
   const handleExportCsv = () => {
     const header = "声部 - 姓名,出勤次数";
-    const lines = statsRows.map(
-      (r) =>
-        `"${String(r.label).replace(/"/g, '""')}",${r.count}`,
-    );
+    const lines = statsRows.map((r) => `"${String(r.label).replace(/"/g, '""')}",${r.count}`);
     const csv = "\uFEFF" + [header, ...lines].join("\r\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -249,9 +236,7 @@ export default function MembersPage() {
     <div className="space-y-4 pb-2">
       <header className="mt-1">
         <h1 className="text-lg font-semibold text-zinc-900">成员</h1>
-        <p className="mt-1 text-xs text-zinc-500">
-          排练考勤与乐团花名册
-        </p>
+        <p className="mt-1 text-xs text-zinc-500">排练考勤与乐团花名册</p>
       </header>
 
       {/* 卡片 A：排练考勤 */}
@@ -261,9 +246,7 @@ export default function MembersPage() {
         className="w-full rounded-2xl border border-zinc-100 bg-white p-4 text-left shadow-[0_1px_4px_rgba(15,23,42,0.06)] transition hover:border-zinc-200"
       >
         <p className="text-sm font-semibold text-zinc-900">排练考勤</p>
-        <p className="mt-1 text-xs text-zinc-500">
-          按合排日程区间统计出勤并导出
-        </p>
+        <p className="mt-1 text-xs text-zinc-500">按合排日程区间统计出勤并导出</p>
       </button>
 
       {/* 卡片 B：全团成员信息统计 */}
@@ -273,9 +256,7 @@ export default function MembersPage() {
         className="w-full rounded-2xl border border-zinc-100 bg-white p-4 text-left shadow-[0_1px_4px_rgba(15,23,42,0.06)] transition hover:border-zinc-200"
       >
         <p className="text-sm font-semibold text-zinc-900">全团成员信息</p>
-        <p className="mt-1 text-xs text-zinc-500">
-          点击查看乐团最新花名册
-        </p>
+        <p className="mt-1 text-xs text-zinc-500">点击查看乐团最新花名册</p>
       </button>
 
       {/* Modal A：排练考勤 */}
@@ -293,9 +274,7 @@ export default function MembersPage() {
           />
           <div className="relative flex max-h-[85vh] w-full max-w-md flex-col rounded-t-3xl border border-zinc-100 bg-white p-4 shadow-xl">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-base font-semibold text-zinc-900">
-                总排练考勤统计
-              </h2>
+              <h2 className="text-base font-semibold text-zinc-900">总排练考勤统计</h2>
               <button
                 type="button"
                 onClick={() => setAttendanceOpen(false)}
@@ -311,20 +290,14 @@ export default function MembersPage() {
             {rehearsalsLoading ? (
               <p className="mb-3 text-xs text-zinc-400">加载合排日程…</p>
             ) : rehearsalList.length === 0 ? (
-              <p className="mb-3 text-xs text-amber-600">
-                暂无合排/全团日程，请先在日程中发布
-              </p>
+              <p className="mb-3 text-xs text-amber-600">暂无合排/全团日程，请先在日程中发布</p>
             ) : (
               <div className="mb-3 space-y-2">
                 <div className="space-y-1">
-                  <label className="block text-[11px] font-medium text-zinc-600">
-                    起始排练
-                  </label>
+                  <label className="block text-[11px] font-medium text-zinc-600">起始排练</label>
                   <select
                     value={startRehearsalIndex}
-                    onChange={(e) =>
-                      setStartRehearsalIndex(Number(e.target.value))
-                    }
+                    onChange={(e) => setStartRehearsalIndex(Number(e.target.value))}
                     className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900"
                   >
                     {rehearsalList.map((r, idx) => (
@@ -335,14 +308,10 @@ export default function MembersPage() {
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="block text-[11px] font-medium text-zinc-600">
-                    结束排练
-                  </label>
+                  <label className="block text-[11px] font-medium text-zinc-600">结束排练</label>
                   <select
                     value={endRehearsalIndex}
-                    onChange={(e) =>
-                      setEndRehearsalIndex(Number(e.target.value))
-                    }
+                    onChange={(e) => setEndRehearsalIndex(Number(e.target.value))}
                     className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900"
                   >
                     {rehearsalList.map((r, idx) => (
@@ -366,33 +335,22 @@ export default function MembersPage() {
 
             <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-zinc-100">
               {statsLoading ? (
-                <p className="p-4 text-center text-xs text-zinc-400">
-                  统计中…
-                </p>
+                <p className="p-4 text-center text-xs text-zinc-400">统计中…</p>
               ) : statsError ? (
                 <p className="p-3 text-sm text-red-600">{statsError}</p>
               ) : statsRows.length === 0 ? (
-                <p className="p-4 text-center text-xs text-zinc-500">
-                  该区间内暂无出勤记录
-                </p>
+                <p className="p-4 text-center text-xs text-zinc-500">该区间内暂无出勤记录</p>
               ) : (
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-zinc-100 bg-zinc-50">
-                      <th className="px-3 py-2 font-medium text-zinc-700">
-                        声部 - 姓名
-                      </th>
-                      <th className="px-3 py-2 font-medium text-zinc-700">
-                        出勤次数
-                      </th>
+                      <th className="px-3 py-2 font-medium text-zinc-700">声部 - 姓名</th>
+                      <th className="px-3 py-2 font-medium text-zinc-700">出勤次数</th>
                     </tr>
                   </thead>
                   <tbody>
                     {statsRows.map((r) => (
-                      <tr
-                        key={r.userId}
-                        className="border-b border-zinc-50 last:border-0"
-                      >
+                      <tr key={r.userId} className="border-b border-zinc-50 last:border-0">
                         <td className="px-3 py-2 text-zinc-900">{r.label}</td>
                         <td className="px-3 py-2 text-zinc-700">{r.count}</td>
                       </tr>
@@ -420,9 +378,7 @@ export default function MembersPage() {
           />
           <div className="relative flex max-h-[85vh] w-full max-w-md flex-col rounded-t-3xl border border-zinc-100 bg-white shadow-xl transition-all duration-300 ease-out">
             <div className="flex shrink-0 items-center justify-between border-b border-zinc-100 px-4 py-3">
-              <h2 className="text-base font-semibold text-zinc-900">
-                全团成员信息统计
-              </h2>
+              <h2 className="text-base font-semibold text-zinc-900">全团成员信息统计</h2>
               <button
                 type="button"
                 onClick={() => setRosterOpen(false)}
@@ -433,17 +389,11 @@ export default function MembersPage() {
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
               {rosterLoading ? (
-                <p className="py-8 text-center text-xs text-zinc-400">
-                  加载中…
-                </p>
+                <p className="py-8 text-center text-xs text-zinc-400">加载中…</p>
               ) : rosterError ? (
-                <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">
-                  {rosterError}
-                </p>
+                <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{rosterError}</p>
               ) : grouped.length === 0 ? (
-                <p className="py-8 text-center text-xs text-zinc-500">
-                  暂无已通过成员
-                </p>
+                <p className="py-8 text-center text-xs text-zinc-500">暂无已通过成员</p>
               ) : (
                 <div className="space-y-5">
                   {grouped.map(({ group, users }) => (
@@ -460,12 +410,8 @@ export default function MembersPage() {
                             <p className="font-medium text-zinc-900">
                               {(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}
                             </p>
-                            <p className="mt-0.5 text-zinc-500">
-                              学院：{u.college?.trim() || "—"}
-                            </p>
-                            <p className="mt-0.5 text-zinc-500">
-                              邮箱：{u.email ?? "—"}
-                            </p>
+                            <p className="mt-0.5 text-zinc-500">学院：{u.college?.trim() || "—"}</p>
+                            <p className="mt-0.5 text-zinc-500">邮箱：{u.email ?? "—"}</p>
                             <p className="mt-0.5 text-zinc-400">
                               入团时间：{u.join_date?.trim() || "—"}
                             </p>

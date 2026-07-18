@@ -43,16 +43,12 @@ export default function LoginPage() {
         <div className="rounded-3xl border border-zinc-200 bg-white p-5 shadow-sm">
           <div className="mb-4 text-center">
             <h1 className="text-xl font-semibold text-zinc-900">登录</h1>
-            <p className="mt-1 text-xs text-zinc-500">
-              登录后进入乐团系统
-            </p>
+            <p className="mt-1 text-xs text-zinc-500">登录后进入乐团系统</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-3">
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-zinc-600">
-                Email
-              </label>
+              <label className="block text-[11px] font-medium text-zinc-600">Email</label>
               <input
                 type="email"
                 value={email}
@@ -67,9 +63,7 @@ export default function LoginPage() {
             </div>
 
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-zinc-600">
-                Password
-              </label>
+              <label className="block text-[11px] font-medium text-zinc-600">Password</label>
               <input
                 type="password"
                 value={password}
@@ -109,4 +103,3 @@ export default function LoginPage() {
     </div>
   );
 }
-

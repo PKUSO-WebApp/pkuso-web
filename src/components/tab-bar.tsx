@@ -33,18 +33,14 @@ export function TabBar() {
               >
                 <div
                   className={`flex items-center justify-center rounded-full p-1.5 ${
-                    active
-                      ? "bg-zinc-900 text-white"
-                      : "text-zinc-500 hover:text-zinc-900"
+                    active ? "bg-zinc-900 text-white" : "text-zinc-500 hover:text-zinc-900"
                   }`}
                 >
                   <Icon className="h-5 w-5" />
                 </div>
                 <span
                   className={
-                    active
-                      ? "text-[11px] font-medium text-zinc-900"
-                      : "text-[11px] text-zinc-500"
+                    active ? "text-[11px] font-medium text-zinc-900" : "text-[11px] text-zinc-500"
                   }
                 >
                   {tab.label}
@@ -57,4 +53,3 @@ export function TabBar() {
     </nav>
   );
 }
-

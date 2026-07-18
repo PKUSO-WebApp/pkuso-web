@@ -43,8 +43,7 @@ body {
   @apply rounded-full text-zinc-700 hover:bg-zinc-100;
 }
 
-.react-datepicker-orchestra
-  .react-datepicker__day--selected.react-datepicker__day--selected {
+.react-datepicker-orchestra .react-datepicker__day--selected.react-datepicker__day--selected {
   @apply bg-zinc-900 text-white hover:bg-zinc-900;
 }
 
@@ -64,4 +63,3 @@ body {
   .react-datepicker__time-list-item--selected.react-datepicker__time-list-item--selected {
   @apply bg-zinc-900 text-white;
 }
-

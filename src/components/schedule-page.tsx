@@ -1,4 +1,4 @@
- "use client";
+"use client";
 
 import React from "react";
 import { useUser } from "@/context/UserContext";
@@ -73,8 +73,7 @@ export function SchedulePage() {
   }, [fetchSchedules]);
 
   const list = React.useMemo(() => {
-    const targetType: DbRehearsalType =
-      currentType === "合排" ? "full" : "section";
+    const targetType: DbRehearsalType = currentType === "合排" ? "full" : "section";
     return schedules.filter((item) => item.type === targetType);
   }, [currentType, schedules]);
 
@@ -177,10 +176,7 @@ export function SchedulePage() {
         return;
       }
     } else {
-      const { error } = await supabase
-        .from("rehearsals")
-        .update(payload)
-        .eq("id", editingId);
+      const { error } = await supabase.from("rehearsals").update(payload).eq("id", editingId);
       if (error) {
         setSubmitting(false);
         console.warn("[Schedule] 更新日程失败：", error.message);
@@ -209,11 +205,7 @@ export function SchedulePage() {
       } catch (err) {
         ok = false;
       }
-      alert(
-        ok
-          ? "✅ 排练已发布！邮件通知已成功发送至全团！"
-          : "❌ 邮件发送失败，请检查控制台。",
-      );
+      alert(ok ? "✅ 排练已发布！邮件通知已成功发送至全团！" : "❌ 邮件发送失败，请检查控制台。");
     } else {
       alert(editingId === null ? "发布成功！" : "已保存。");
     }
@@ -238,10 +230,7 @@ export function SchedulePage() {
       return;
     }
 
-    const { error: rehearsalError } = await supabase
-      .from("rehearsals")
-      .delete()
-      .eq("id", id);
+    const { error: rehearsalError } = await supabase.from("rehearsals").delete().eq("id", id);
 
     if (rehearsalError) {
       console.warn("[Schedule] 删除日程失败：", rehearsalError.message);
@@ -253,11 +242,8 @@ export function SchedulePage() {
     void fetchSchedules();
   };
 
-  const [attendanceMap, setAttendanceMap] = React.useState<
-    Record<number, { status: string }>
-  >({});
-  const [codeModalRehearsal, setCodeModalRehearsal] =
-    React.useState<RehearsalRow | null>(null);
+  const [attendanceMap, setAttendanceMap] = React.useState<Record<number, { status: string }>>({});
+  const [codeModalRehearsal, setCodeModalRehearsal] = React.useState<RehearsalRow | null>(null);
   const [codeInput, setCodeInput] = React.useState("");
   const [codeSubmitting, setCodeSubmitting] = React.useState(false);
   const [codeError, setCodeError] = React.useState<string | null>(null);
@@ -423,12 +409,8 @@ export function SchedulePage() {
     <div className="space-y-4">
       <header className="mb-2 flex items-center justify-between gap-2">
         <div>
-          <h1 className="text-lg font-semibold text-zinc-900">
-            本周排练日程
-          </h1>
-          <p className="mt-1 text-xs text-zinc-500">
-            查看乐团合排与分排安排
-          </p>
+          <h1 className="text-lg font-semibold text-zinc-900">本周排练日程</h1>
+          <p className="mt-1 text-xs text-zinc-500">查看乐团合排与分排安排</p>
         </div>
         <div className="flex flex-col items-end gap-2">
           {isAdmin && (
@@ -450,17 +432,12 @@ export function SchedulePage() {
 
       <section className="space-y-3">
         {loading && schedules.length === 0 && (
-          <p className="py-6 text-center text-xs text-zinc-400">
-            正在加载日程…
-          </p>
+          <p className="py-6 text-center text-xs text-zinc-400">正在加载日程…</p>
         )}
 
         {!loading &&
           list.map((item) => {
-            const isExpired = isRehearsalExpired(
-              item.start_time,
-              item.end_time,
-            );
+            const isExpired = isRehearsalExpired(item.start_time, item.end_time);
             const hasSigned = !!attendanceMap[item.id];
             return (
               <article
@@ -493,9 +470,7 @@ export function SchedulePage() {
                         </span>
                       )}
                       {item.type === "full" && item.sign_in_code ? (
-                        <span className="text-[10px] text-zinc-500">
-                          密码: {item.sign_in_code}
-                        </span>
+                        <span className="text-[10px] text-zinc-500">密码: {item.sign_in_code}</span>
                       ) : null}
                       <div className="flex items-center gap-2">
                         <button
@@ -548,9 +523,7 @@ export function SchedulePage() {
           })}
 
         {!loading && list.length === 0 && (
-          <p className="py-8 text-center text-xs text-zinc-500">
-            暂无「{currentType}」安排。
-          </p>
+          <p className="py-8 text-center text-xs text-zinc-500">暂无「{currentType}」安排。</p>
         )}
       </section>
 
@@ -577,9 +550,7 @@ export function SchedulePage() {
           />
           <div className="relative w-full max-w-md rounded-3xl bg-white p-4 shadow-xl">
             <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-base font-semibold text-zinc-900">
-                出勤名单
-              </h2>
+              <h2 className="text-base font-semibold text-zinc-900">出勤名单</h2>
               <button
                 type="button"
                 onClick={handleCloseAttendanceModal}
@@ -595,18 +566,13 @@ export function SchedulePage() {
 
             <div className="max-h-64 space-y-2 overflow-y-auto pt-1">
               {attendanceLoading ? (
-                <p className="py-6 text-center text-[11px] text-zinc-400">
-                  正在加载...
-                </p>
+                <p className="py-6 text-center text-[11px] text-zinc-400">正在加载...</p>
               ) : attendanceList.length === 0 ? (
-                <p className="py-6 text-center text-[11px] text-zinc-400">
-                  暂无签到记录
-                </p>
+                <p className="py-6 text-center text-[11px] text-zinc-400">暂无签到记录</p>
               ) : (
                 attendanceList.map((row, index) => {
                   const userInfo = (row as any).users as
-                    | { name?: string; section?: string }
-                    | undefined;
+                    { name?: string; section?: string } | undefined;
                   const name = userInfo?.name ?? "未命名成员";
                   const section = userInfo?.section ?? "声部未登记";
                   const initials = name.slice(0, 2);
@@ -620,12 +586,8 @@ export function SchedulePage() {
                           {initials}
                         </div>
                         <div>
-                          <p className="text-[11px] font-medium text-zinc-900">
-                            {name}
-                          </p>
-                          <p className="text-[10px] text-zinc-500">
-                            {section}
-                          </p>
+                          <p className="text-[11px] font-medium text-zinc-900">{name}</p>
+                          <p className="text-[10px] text-zinc-500">{section}</p>
                         </div>
                       </div>
                     </div>
@@ -661,9 +623,7 @@ export function SchedulePage() {
             className="relative w-full max-w-md rounded-3xl bg-white p-4 shadow-xl"
           >
             <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-base font-semibold text-zinc-900">
-                输入签到码
-              </h2>
+              <h2 className="text-base font-semibold text-zinc-900">输入签到码</h2>
               <button
                 type="button"
                 onClick={handleCloseCodeModal}
@@ -677,9 +637,7 @@ export function SchedulePage() {
               本次排练：{codeModalRehearsal.repertoire}
             </p>
             <div className="space-y-1 text-xs">
-              <label className="block text-[11px] font-medium text-zinc-600">
-                四位数字签到码
-              </label>
+              <label className="block text-[11px] font-medium text-zinc-600">四位数字签到码</label>
               <input
                 type="text"
                 inputMode="numeric"
@@ -692,9 +650,7 @@ export function SchedulePage() {
                 className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-900 outline-none focus:border-zinc-400"
                 placeholder="如：8848"
               />
-              {codeError && (
-                <p className="text-[11px] text-red-500">{codeError}</p>
-              )}
+              {codeError && <p className="text-[11px] text-red-500">{codeError}</p>}
             </div>
             <div className="mt-4 flex items-center justify-end gap-2 text-xs">
               <button
@@ -736,9 +692,7 @@ function Toggle({ currentType, onChange }: ToggleProps) {
             type="button"
             onClick={() => onChange(type)}
             className={`min-w-[64px] rounded-full px-3 py-1 text-center transition-colors ${
-              active
-                ? "bg-zinc-900 text-white shadow-sm"
-                : "text-zinc-600 hover:text-zinc-900"
+              active ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-600 hover:text-zinc-900"
             }`}
           >
             {type}
@@ -790,10 +744,7 @@ type CreateRehearsalModalProps = {
   editingId: number | null;
   notifyByEmail: boolean;
   onNotifyByEmailChange: (v: boolean) => void;
-  onChange: (
-    field: keyof CreateFormState,
-    value: string | DbRehearsalType | Date | null,
-  ) => void;
+  onChange: (field: keyof CreateFormState, value: string | DbRehearsalType | Date | null) => void;
   onClose: () => void;
   onSubmit: (e: React.FormEvent) => void;
 };
@@ -838,17 +789,13 @@ function CreateRehearsalModal({
 
         <div className="space-y-3 text-xs">
           <div className="space-y-1">
-            <label className="block text-[11px] font-medium text-zinc-600">
-              排练类型
-            </label>
+            <label className="block text-[11px] font-medium text-zinc-600">排练类型</label>
             <div className="inline-flex rounded-full bg-zinc-100 p-1 text-[11px]">
               <button
                 type="button"
                 onClick={() => onChange("type", "full")}
                 className={`min-w-[72px] rounded-full px-3 py-1 ${
-                  form.type === "full"
-                    ? "bg-zinc-900 text-white"
-                    : "text-zinc-600"
+                  form.type === "full" ? "bg-zinc-900 text-white" : "text-zinc-600"
                 }`}
               >
                 合排
@@ -857,9 +804,7 @@ function CreateRehearsalModal({
                 type="button"
                 onClick={() => onChange("type", "section")}
                 className={`min-w-[72px] rounded-full px-3 py-1 ${
-                  form.type === "section"
-                    ? "bg-zinc-900 text-white"
-                    : "text-zinc-600"
+                  form.type === "section" ? "bg-zinc-900 text-white" : "text-zinc-600"
                 }`}
               >
                 分排
@@ -869,9 +814,7 @@ function CreateRehearsalModal({
 
           {isSection && (
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-zinc-600">
-                针对声部
-              </label>
+              <label className="block text-[11px] font-medium text-zinc-600">针对声部</label>
               <input
                 type="text"
                 value={form.targetSection}
@@ -883,9 +826,7 @@ function CreateRehearsalModal({
           )}
 
           <div className="space-y-1">
-            <label className="block text-[11px] font-medium text-zinc-600">
-              开始时间
-            </label>
+            <label className="block text-[11px] font-medium text-zinc-600">开始时间</label>
             <DatePicker
               selected={form.startTime}
               onChange={(date: Date | null) => onChange("startTime", date)}
@@ -900,9 +841,7 @@ function CreateRehearsalModal({
           </div>
 
           <div className="space-y-1">
-            <label className="block text-[11px] font-medium text-zinc-600">
-              结束时间
-            </label>
+            <label className="block text-[11px] font-medium text-zinc-600">结束时间</label>
             <DatePicker
               selected={form.endTime}
               onChange={(date: Date | null) => onChange("endTime", date)}
@@ -917,9 +856,7 @@ function CreateRehearsalModal({
           </div>
 
           <div className="space-y-1">
-            <label className="block text-[11px] font-medium text-zinc-600">
-              排练地点
-            </label>
+            <label className="block text-[11px] font-medium text-zinc-600">排练地点</label>
             <input
               type="text"
               value={form.location}
@@ -930,9 +867,7 @@ function CreateRehearsalModal({
           </div>
 
           <div className="space-y-1">
-            <label className="block text-[11px] font-medium text-zinc-600">
-              排练曲目
-            </label>
+            <label className="block text-[11px] font-medium text-zinc-600">排练曲目</label>
             <textarea
               value={form.repertoire}
               onChange={(e) => onChange("repertoire", e.target.value)}
@@ -985,11 +920,16 @@ function CreateRehearsalModal({
             disabled={submitting}
             className="rounded-full bg-zinc-900 px-4 py-1.5 text-[11px] font-medium text-white shadow-sm hover:bg-zinc-800 disabled:opacity-60"
           >
-            {submitting ? (editingId !== null ? "保存中…" : "发布中…") : editingId !== null ? "保存" : "发布"}
+            {submitting
+              ? editingId !== null
+                ? "保存中…"
+                : "发布中…"
+              : editingId !== null
+                ? "保存"
+                : "发布"}
           </button>
         </div>
       </form>
     </div>
   );
 }
-

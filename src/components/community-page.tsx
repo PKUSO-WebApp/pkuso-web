@@ -68,9 +68,7 @@ export default function CommunityPage() {
     imageFile: null,
   });
   const [submitting, setSubmitting] = React.useState(false);
-  const [imagePreviewUrl, setImagePreviewUrl] = React.useState<string | null>(
-    null,
-  );
+  const [imagePreviewUrl, setImagePreviewUrl] = React.useState<string | null>(null);
 
   const fetchPosts = React.useCallback(async () => {
     setLoading(true);
@@ -108,10 +106,7 @@ export default function CommunityPage() {
     void fetchPosts();
   }, [fetchPosts]);
 
-  const list = React.useMemo(
-    () => posts.filter((p) => p.type === view),
-    [posts, view],
-  );
+  const list = React.useMemo(() => posts.filter((p) => p.type === view), [posts, view]);
 
   const openPublish = (initial?: PostRow) => {
     if (initial) {
@@ -202,9 +197,7 @@ export default function CommunityPage() {
         setSubmitting(false);
         return;
       }
-      const { data: urlData } = supabase.storage
-        .from("community-images")
-        .getPublicUrl(path);
+      const { data: urlData } = supabase.storage.from("community-images").getPublicUrl(path);
       imageUrl = urlData.publicUrl;
     } else if (editId && imagePreviewUrl && imagePreviewUrl.startsWith("http")) {
       imageUrl = imagePreviewUrl;
@@ -227,10 +220,7 @@ export default function CommunityPage() {
 
     if (editId) {
       const payload = { ...basePayload };
-      const { error } = await supabase
-        .from("posts")
-        .update(basePayload)
-        .eq("id", editId);
+      const { error } = await supabase.from("posts").update(basePayload).eq("id", editId);
       setSubmitting(false);
       if (error) {
         console.warn("[Community] 更新失败：", error.message);
@@ -310,9 +300,7 @@ export default function CommunityPage() {
 
       <section className="space-y-3">
         {loading && posts.length === 0 && (
-          <p className="py-6 text-center text-xs text-zinc-400">
-            正在加载…
-          </p>
+          <p className="py-6 text-center text-xs text-zinc-400">正在加载…</p>
         )}
         {!loading &&
           list.map((post) => (
@@ -327,15 +315,12 @@ export default function CommunityPage() {
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
-                    <h2 className="text-sm font-semibold text-zinc-900">
-                      {post.title}
-                    </h2>
+                    <h2 className="text-sm font-semibold text-zinc-900">{post.title}</h2>
                     <p className="mt-0.5 text-[11px] text-zinc-500">
                       {TYPE_LABEL[post.type]}
                       {formatPostDate(post.created_at) && ` · ${formatPostDate(post.created_at)}`}
                     </p>
-                    {post.type === "ensemble" &&
-                      hasSectionText(post.missing_sections) && (
+                    {post.type === "ensemble" && hasSectionText(post.missing_sections) && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         <span className="inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">
                           缺：{post.missing_sections!.trim()}
@@ -343,9 +328,7 @@ export default function CommunityPage() {
                       </div>
                     )}
                     {post.content != null && post.content.trim() !== "" && (
-                      <p className="mt-1 line-clamp-2 text-xs text-zinc-600">
-                        {post.content}
-                      </p>
+                      <p className="mt-1 line-clamp-2 text-xs text-zinc-600">{post.content}</p>
                     )}
                   </div>
                 </div>
@@ -377,9 +360,7 @@ export default function CommunityPage() {
             </article>
           ))}
         {!loading && list.length === 0 && (
-          <p className="py-8 text-center text-xs text-zinc-500">
-            暂无「{TYPE_LABEL[view]}」公告。
-          </p>
+          <p className="py-8 text-center text-xs text-zinc-500">暂无「{TYPE_LABEL[view]}」公告。</p>
         )}
       </section>
 
@@ -407,13 +388,7 @@ export default function CommunityPage() {
   );
 }
 
-function ViewToggle({
-  value,
-  onChange,
-}: {
-  value: PostType;
-  onChange: (v: PostType) => void;
-}) {
+function ViewToggle({ value, onChange }: { value: PostType; onChange: (v: PostType) => void }) {
   return (
     <div className="inline-flex rounded-full bg-zinc-100 p-1 text-xs">
       {(["ensemble", "gathering"] as PostType[]).map((t) => (
@@ -422,9 +397,7 @@ function ViewToggle({
           type="button"
           onClick={() => onChange(t)}
           className={`min-w-[64px] rounded-full px-3 py-1 text-center transition-colors ${
-            value === t
-              ? "bg-zinc-900 text-white shadow-sm"
-              : "text-zinc-600 hover:text-zinc-900"
+            value === t ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-600 hover:text-zinc-900"
           }`}
         >
           {TYPE_LABEL[t]}
@@ -459,11 +432,7 @@ function DetailModal({
 
   return (
     <div className="fixed inset-0 z-30 flex items-end justify-center bg-black/40 px-4 pb-safe">
-      <button
-        aria-label="关闭详情"
-        className="absolute inset-0 h-full w-full"
-        onClick={onClose}
-      />
+      <button aria-label="关闭详情" className="absolute inset-0 h-full w-full" onClick={onClose} />
       <div className="relative w-full max-w-md max-h-[85vh] overflow-hidden rounded-3xl bg-white p-4 shadow-xl flex flex-col">
         <div className="mb-2 flex items-center justify-between flex-shrink-0">
           <h2 className="text-base font-semibold text-zinc-900">{post.title}</h2>
@@ -579,9 +548,7 @@ function PublishModal({
         </div>
         <div className="space-y-3 text-xs">
           <div className="space-y-1">
-            <label className="block text-[11px] font-medium text-zinc-600">
-              类型
-            </label>
+            <label className="block text-[11px] font-medium text-zinc-600">类型</label>
             <div className="inline-flex rounded-full bg-zinc-100 p-1 text-[11px]">
               {(["ensemble", "gathering"] as PostType[]).map((t) => (
                 <button
@@ -610,9 +577,7 @@ function PublishModal({
             />
           </div>
           <div className="space-y-1">
-            <label className="block text-[11px] font-medium text-zinc-600">
-              标题
-            </label>
+            <label className="block text-[11px] font-medium text-zinc-600">标题</label>
             <input
               type="text"
               value={form.title}
@@ -624,29 +589,21 @@ function PublishModal({
           {form.type === "ensemble" && (
             <>
               <div className="space-y-1">
-                <label className="block text-[11px] font-medium text-zinc-600">
-                  已有声部
-                </label>
+                <label className="block text-[11px] font-medium text-zinc-600">已有声部</label>
                 <input
                   type="text"
                   value={form.currentSections}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, currentSections: e.target.value }))
-                  }
+                  onChange={(e) => setForm((f) => ({ ...f, currentSections: e.target.value }))}
                   className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-900 outline-none focus:border-zinc-400"
                   placeholder="如：长笛、单簧管"
                 />
               </div>
               <div className="space-y-1">
-                <label className="block text-[11px] font-medium text-zinc-600">
-                  需要声部
-                </label>
+                <label className="block text-[11px] font-medium text-zinc-600">需要声部</label>
                 <input
                   type="text"
                   value={form.missingSections}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, missingSections: e.target.value }))
-                  }
+                  onChange={(e) => setForm((f) => ({ ...f, missingSections: e.target.value }))}
                   className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-900 outline-none focus:border-zinc-400"
                   placeholder="如：双簧管、大管"
                 />
@@ -654,9 +611,7 @@ function PublishModal({
             </>
           )}
           <div className="space-y-1">
-            <label className="block text-[11px] font-medium text-zinc-600">
-              内容
-            </label>
+            <label className="block text-[11px] font-medium text-zinc-600">内容</label>
             <textarea
               value={form.content ?? ""}
               onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}

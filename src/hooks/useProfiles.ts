@@ -19,7 +19,7 @@ type ProfileInsert = {
   join_date?: string;
 };
 
-export function useProfiles(filter?: ProfileFilter, client: typeof supabase = defaultClient) {
+export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient = defaultClient) {
   const [data, setData] = React.useState<ProfileRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);

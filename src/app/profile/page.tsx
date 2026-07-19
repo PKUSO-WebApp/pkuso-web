@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import type { ProfileRow } from "@/types/database";
+import { useProfiles } from "@/hooks/useProfiles";
+import { useAnnouncements } from "@/hooks/useAnnouncements";
 
 function formatTime(s: string | null) {
   if (!s) return "—";
@@ -41,53 +42,25 @@ export default function ProfilePage() {
   };
 
   // —— 管理员：入团审批 ——
-  const [pendingLoading, setPendingLoading] = React.useState(false);
-  const [pendingRows, setPendingRows] = React.useState<ProfileRow[]>([]);
+  const {
+    data: pendingRows,
+    loading: pendingLoading,
+    approve,
+  } = useProfiles(isAdmin ? { status: "pending" } : undefined);
   const [approvingId, setApprovingId] = React.useState<string | null>(null);
-
-  const fetchPending = React.useCallback(async () => {
-    setPendingLoading(true);
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id, full_name, email, instrument, status, created_at")
-      .eq("status", "pending")
-      .order("created_at", { ascending: false });
-
-    setPendingLoading(false);
-
-    if (error) {
-      console.warn("[Profile/Admin] 加载待审批列表失败：", error.message);
-      setPendingRows([]);
-      return;
-    }
-
-    setPendingRows((data as ProfileRow[]) ?? []);
-  }, []);
-
-  React.useEffect(() => {
-    if (!isAdmin) return;
-    void fetchPending();
-  }, [isAdmin, fetchPending]);
 
   const handleApprove = async (id: string) => {
     if (approvingId) return;
     setApprovingId(id);
-    const { error } = await supabase.from("profiles").update({ status: "approved" }).eq("id", id);
+    const ok = await approve(id);
     setApprovingId(null);
-
-    if (error) {
-      console.warn("[Profile/Admin] 审批失败：", error.message);
-      alert("审批失败，请稍后重试。");
-      return;
-    }
-
-    alert("已批准该用户。");
-    setPendingRows((prev) => prev.filter((r) => r.id !== id));
+    if (!ok) alert("审批失败，请稍后重试。");
+    else alert("已批准该用户。");
   };
 
   // —— 管理员：发布公告 ——
   const [announcementBody, setAnnouncementBody] = React.useState("");
-  const [announcementSubmitting, setAnnouncementSubmitting] = React.useState(false);
+  const { publish, publishing: announcementSubmitting } = useAnnouncements();
 
   const handlePublishAnnouncement = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,21 +69,12 @@ export default function ProfilePage() {
       alert("请输入公告内容。");
       return;
     }
-    setAnnouncementSubmitting(true);
-    // 若表结构不同（如字段名 message/body），请按实际 schema 调整
-    const { error } = await supabase.from("announcements").insert({
-      content: text,
-    });
-    setAnnouncementSubmitting(false);
-
-    if (error) {
-      console.warn("[Profile/Admin] 发布公告失败：", error.message);
-      alert(`发布失败：${error.message}`);
-      return;
+    const ok = await publish(text);
+    if (!ok) alert("发布失败");
+    else {
+      setAnnouncementBody("");
+      alert("公告已发布");
     }
-
-    setAnnouncementBody("");
-    alert("公告已发布");
   };
 
   const handleUpdatePassword = async (e: React.FormEvent) => {
@@ -179,9 +143,8 @@ export default function ProfilePage() {
               </p>
               <button
                 type="button"
-                onClick={() => void fetchPending()}
-                disabled={pendingLoading}
-                className="rounded-full px-2 py-1 text-[11px] text-zinc-600 hover:bg-zinc-200 disabled:opacity-60"
+                onClick={() => window.location.reload()}
+                className="rounded-full px-2 py-1 text-[11px] text-zinc-600 hover:bg-zinc-200"
               >
                 刷新
               </button>

@@ -92,7 +92,7 @@ export function useAuth(
       setProfileLoading(true);
       setProfileErrorMsg(null);
 
-      const { data, error } = await supabase
+      const { data, error } = await client
         .from("profiles")
         .select("id, status, role, full_name, instrument, email")
         .eq("id", sessionUserId)

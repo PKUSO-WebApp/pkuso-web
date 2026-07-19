@@ -2,55 +2,16 @@
 
 import React from "react";
 import { supabase } from "@/lib/supabase";
-
-/** 声部展示顺序：严格按此顺序分组，未在列表中的归入「其他」 */
-const INSTRUMENT_ORDER = [
-  "第一小提琴",
-  "第二小提琴",
-  "中提琴",
-  "大提琴",
-  "低音提琴",
-  "长笛",
-  "双簧管",
-  "单簧管",
-  "大管",
-  "圆号",
-  "小号",
-  "长号",
-  "大号",
-  "打击乐",
-  "键盘",
-  "竖琴",
-] as const;
-
-const OTHER_GROUP = "其他";
-
-type ProfileRow = {
-  id: string;
-  full_name: string | null;
-  email: string | null;
-  instrument: string | null;
-  status: string | null;
-  role: string | null;
-  college: string | null;
-  join_date: string | null;
-  created_at: string | null;
-};
-
-type RehearsalRow = {
-  id: string | number;
-  title: string | null;
-  date: string | null;
-  time: string | null;
-};
+import { INSTRUMENT_ORDER, OTHER_INSTRUMENT_GROUP } from "@/constants/instruments";
+import type { ProfileRow, RehearsalRow } from "@/types/database";
 
 function instrumentGroupKey(instrument: string | null): string {
-  if (!instrument) return OTHER_GROUP;
+  if (!instrument) return OTHER_INSTRUMENT_GROUP;
   const trimmed = instrument.trim();
   if (INSTRUMENT_ORDER.includes(trimmed as (typeof INSTRUMENT_ORDER)[number])) {
     return trimmed;
   }
-  return OTHER_GROUP;
+  return OTHER_INSTRUMENT_GROUP;
 }
 
 export default function MembersPage() {
@@ -113,9 +74,9 @@ export default function MembersPage() {
         ordered.push({ group: key, users });
       }
     }
-    const otherUsers = map.get(OTHER_GROUP);
+    const otherUsers = map.get(OTHER_INSTRUMENT_GROUP);
     if (otherUsers && otherUsers.length > 0) {
-      ordered.push({ group: OTHER_GROUP, users: otherUsers });
+      ordered.push({ group: OTHER_INSTRUMENT_GROUP, users: otherUsers });
     }
     return ordered;
   }, [rosterRows]);

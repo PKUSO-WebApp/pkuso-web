@@ -17,6 +17,7 @@
     "format:fix": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "gen-types": "supabase gen types typescript --linked --schema public > src/types/database.types.ts",
     "verify": "pnpm format && pnpm lint && pnpm typecheck && pnpm test",
     "prepare": "husky"
   },
@@ -26,6 +27,7 @@
     "date-fns": "^4.1.0",
     "lucide-react": "^0.577.0",
     "next": "16.1.6",
+    "nodemailer": "^9.0.3",
     "react": "19.2.3",
     "react-datepicker": "^9.1.0",
     "react-dom": "19.2.3",
@@ -44,6 +46,7 @@
     "@commitlint/config-conventional": "^21.2.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/nodemailer": "^8.0.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

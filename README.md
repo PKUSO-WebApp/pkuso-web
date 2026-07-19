@@ -34,7 +34,7 @@ pnpm dev            # http://localhost:3000
 
 ```
 NEXT_PUBLIC_SUPABASE_URL=<your-project-url>
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<your-publishable-key>
 SUPABASE_SERVICE_ROLE_KEY=<service-role-key>    # 仅服务端,用于 API route
 RESEND_API_KEY=<resend-api-key>                  # 排练通知邮件
 ```

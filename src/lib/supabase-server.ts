@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import type { Database } from "@/types/database.types";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -13,5 +14,5 @@ export function createServerSupabase() {
       "[Supabase Server] 缺少 NEXT_PUBLIC_SUPABASE_URL 或 SUPABASE_SERVICE_ROLE_KEY。",
     );
   }
-  return createClient(supabaseUrl, serviceRoleKey);
+  return createClient<Database>(supabaseUrl, serviceRoleKey);
 }

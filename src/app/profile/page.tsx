@@ -5,15 +5,7 @@ import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-
-type ProfileRow = {
-  id: string;
-  full_name: string | null;
-  email: string | null;
-  instrument: string | null;
-  status: string | null;
-  created_at: string | null;
-};
+import type { ProfileRow } from "@/types/database";
 
 function formatTime(s: string | null) {
   if (!s) return "—";

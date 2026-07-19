@@ -4,25 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-
-const INSTRUMENT_OPTIONS = [
-  "第一小提琴",
-  "第二小提琴",
-  "中提琴",
-  "大提琴",
-  "低音提琴",
-  "长笛",
-  "双簧管",
-  "单簧管",
-  "大管",
-  "圆号",
-  "小号",
-  "长号",
-  "大号",
-  "打击乐",
-  "键盘",
-  "竖琴",
-] as const;
+import { INSTRUMENT_ORDER as INSTRUMENT_OPTIONS } from "@/constants/instruments";
 
 export default function SignupPage() {
   const router = useRouter();

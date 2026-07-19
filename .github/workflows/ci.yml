@@ -24,6 +24,39 @@ jobs:
       - run: pnpm verify
 
       - run: pnpm build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+
+  gen-types-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.109.1
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: 验证远端 schema 与提交的类型文件一致
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          supabase link --project-ref "$SUPABASE_PROJECT_REF"
+          supabase gen types typescript --linked > /tmp/remote.ts
+          # 比对表列结构(忽略分号/缩进等 CLI 版本间格式差异)
+          node .github/scripts/compare-db-types.mjs src/types/database.types.ts /tmp/remote.ts
 
   branch-name:
     runs-on: ubuntu-latest

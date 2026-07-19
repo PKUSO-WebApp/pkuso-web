@@ -1,10 +1,9 @@
 ---
 name: 任务（Feat）
 about: 一个可交付的工作项
-title: ''
-labels: ''
+title: ""
+labels: ""
 assignees: DWangSE
-
 ---
 
 **任务：** 一句话描述要做什么

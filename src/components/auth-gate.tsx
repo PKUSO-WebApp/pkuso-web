@@ -6,15 +6,7 @@ import { useUser } from "@/context/UserContext";
 import type { UserRole } from "@/context/UserContext";
 import { TabBar } from "@/components/tab-bar";
 import { supabase } from "@/lib/supabase";
-
-type ProfileData = {
-  id: string;
-  status: string | null;
-  role: string | null;
-  full_name: string | null;
-  instrument: string | null;
-  email: string | null;
-};
+import type { ProfileRow } from "@/types/database";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, login, logout } = useUser();
@@ -116,20 +108,20 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       }
 
       setProfileErrorMsg(null);
-      setProfileStatus((data as ProfileData)?.status ?? null);
-      setProfileRole((data as ProfileData)?.role ?? null);
-      setProfileName((data as ProfileData)?.full_name ?? null);
-      setProfileInstrument((data as ProfileData)?.instrument ?? null);
-      setProfileEmail((data as ProfileData)?.email ?? null);
+      setProfileStatus((data as ProfileRow)?.status ?? null);
+      setProfileRole((data as ProfileRow)?.role ?? null);
+      setProfileName((data as ProfileRow)?.full_name ?? null);
+      setProfileInstrument((data as ProfileRow)?.instrument ?? null);
+      setProfileEmail((data as ProfileRow)?.email ?? null);
 
       // 将 profile 写回全局状态，兼容现有页面使用 useUser()
       login({
         id: sessionUserId,
-        name: ((data as ProfileData)?.full_name as string) ?? "未命名用户",
-        role: ((data as ProfileData)?.role ?? "member") as UserRole,
-        section: ((data as ProfileData)?.instrument as string) ?? "",
-        status: ((data as ProfileData)?.status as string) ?? undefined,
-        email: ((data as ProfileData)?.email as string) ?? undefined,
+        name: ((data as ProfileRow)?.full_name as string) ?? "未命名用户",
+        role: ((data as ProfileRow)?.role ?? "member") as UserRole,
+        section: ((data as ProfileRow)?.instrument as string) ?? "",
+        status: ((data as ProfileRow)?.status as string) ?? undefined,
+        email: ((data as ProfileRow)?.email as string) ?? undefined,
       });
 
       setProfileLoading(false);

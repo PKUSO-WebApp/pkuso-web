@@ -6,20 +6,11 @@ import { supabase } from "@/lib/supabase";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 
+import type { RehearsalRow, AttendanceRow, AttendanceRowWithUser } from "@/types/database";
+
 type RehearsalType = "合排" | "分排";
 
 type DbRehearsalType = "full" | "section";
-
-type RehearsalRow = {
-  id: number;
-  type: DbRehearsalType;
-  target_section: string | null;
-  start_time: string;
-  end_time: string | null;
-  location: string;
-  repertoire: string;
-  sign_in_code: string | null;
-};
 
 type CreateFormState = {
   type: DbRehearsalType;
@@ -29,13 +20,6 @@ type CreateFormState = {
   location: string;
   repertoire: string;
   signInCode: string;
-};
-
-type AttendanceRow = {
-  id: string | number;
-  user_id?: string;
-  status?: string;
-  users?: { name?: string; section?: string } | null;
 };
 
 export function SchedulePage() {
@@ -103,15 +87,15 @@ export function SchedulePage() {
   const handleOpenEdit = (item: RehearsalRow) => {
     if (!isAdmin) return;
     setEditingId(item.id);
-    const startDate = new Date(item.start_time);
+    const startDate = new Date(item.start_time!);
     const endDate = item.end_time ? new Date(item.end_time) : null;
     setForm({
-      type: item.type,
+      type: item.type as DbRehearsalType,
       targetSection: item.target_section ?? "",
       startTime: Number.isNaN(startDate.getTime()) ? null : startDate,
       endTime: endDate && !Number.isNaN(endDate.getTime()) ? endDate : null,
-      location: item.location,
-      repertoire: item.repertoire,
+      location: item.location!,
+      repertoire: item.repertoire!,
       signInCode: item.sign_in_code ?? "",
     });
     setIsCreateModalOpen(true);
@@ -289,7 +273,7 @@ export function SchedulePage() {
   const handleMemberSign = async (rehearsal: RehearsalRow) => {
     if (!user || user.role !== "member") return;
     if (attendanceMap[rehearsal.id]) return;
-    if (isRehearsalExpired(rehearsal.start_time, rehearsal.end_time)) return;
+    if (isRehearsalExpired(rehearsal.start_time!, rehearsal.end_time ?? null)) return;
 
     if (rehearsal.type === "section") {
       const { data, error } = await supabase
@@ -444,7 +428,7 @@ export function SchedulePage() {
 
         {!loading &&
           list.map((item) => {
-            const isExpired = isRehearsalExpired(item.start_time, item.end_time);
+            const isExpired = isRehearsalExpired(item.start_time!, item.end_time ?? null);
             const hasSigned = !!attendanceMap[item.id];
             return (
               <article
@@ -460,7 +444,7 @@ export function SchedulePage() {
                         : null}
                     </p>
                     <h2 className="text-base font-semibold text-zinc-900">
-                      {formatRehearsalRange(item.start_time, item.end_time)}
+                      {formatRehearsalRange(item.start_time!, item.end_time ?? null)}
                     </h2>
                     <p className="text-xs text-zinc-500">
                       地点：{item.location}
@@ -578,8 +562,7 @@ export function SchedulePage() {
                 <p className="py-6 text-center text-[11px] text-zinc-400">暂无签到记录</p>
               ) : (
                 attendanceList.map((row, index) => {
-                  const userInfo = (row as { users: unknown } | undefined)?.users as
-                    { name?: string; section?: string } | undefined;
+                  const userInfo = (row as AttendanceRowWithUser).users;
                   const name = userInfo?.name ?? "未命名成员";
                   const section = userInfo?.section ?? "声部未登记";
                   const initials = name.slice(0, 2);

@@ -191,11 +191,11 @@ describe("POST /api/notify 端到端", () => {
       }
       const token = session.session.access_token;
 
-      // 4. 注入 Ethereal SMTP
+      // 4. 注入 Ethereal SMTP（465 端口 TLS，通常比 587 更少被防火墙拦截）
       process.env.SMTP_USER = testAccount.user;
       process.env.SMTP_PASS = testAccount.pass;
       process.env.SMTP_HOST = "smtp.ethereal.email";
-      process.env.SMTP_PORT = "587";
+      process.env.SMTP_PORT = "465";
 
       try {
         // 5. 调用 POST handler

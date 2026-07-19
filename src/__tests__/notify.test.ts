@@ -90,7 +90,7 @@ describe("resolveTransporter() — 传输器选择", () => {
 // 3. Ethereal 集成测试
 // ============================================================
 
-async function createEtherealTransporter() {
+async function createEtherealClient() {
   const nodemailer = await import("nodemailer");
   const testAccount = await nodemailer.default.createTestAccount();
   const transporter = nodemailer.default.createTransport({
@@ -102,33 +102,35 @@ async function createEtherealTransporter() {
   return { nodemailer: nodemailer.default, transporter, testAccount };
 }
 
+function skipIfNoNetwork(err: unknown) {
+  if (
+    err instanceof Error &&
+    (err.message.includes("ETIMEDOUT") ||
+      err.message.includes("ECONNREFUSED") ||
+      err.message.includes("ENOTFOUND"))
+  ) {
+    console.log("⚠️ 无法连接 Ethereal，跳过（沙箱/CI 环境）");
+    return true;
+  }
+  return false;
+}
+
 describe("Ethereal SMTP 直连测试", () => {
   it("发送邮件并验证 SMTP 层面送达", { timeout: 30000 }, async () => {
     try {
-      const { nodemailer, transporter } = await createEtherealTransporter();
-
+      const { nodemailer, transporter } = await createEtherealClient();
       const info = await transporter.sendMail({
         from: "test@pkuso.org",
         to: "member@example.com",
         subject: "[排练通知] SMTP 直连测试",
         html: "<h2>排练通知</h2><p>测试邮件</p>",
       });
-
       expect(info.messageId).toBeTruthy();
       expect(info.accepted).toHaveLength(1);
       expect(info.rejected).toHaveLength(0);
       expect(nodemailer.getTestMessageUrl(info)).toBeTruthy();
     } catch (err) {
-      if (
-        err instanceof Error &&
-        (err.message.includes("ETIMEDOUT") ||
-          err.message.includes("ECONNREFUSED") ||
-          err.message.includes("ENOTFOUND"))
-      ) {
-        console.log("⚠️ 无法连接 Ethereal，跳过（沙箱/CI 环境）");
-        return;
-      }
-      throw err;
+      if (!skipIfNoNetwork(err)) throw err;
     }
   });
 });
@@ -136,7 +138,6 @@ describe("Ethereal SMTP 直连测试", () => {
 // ============================================================
 // 4. 端到端测试：POST /api/notify → Supabase → Ethereal
 //    需要 CI secrets: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
-//    缺少时优雅跳过。
 // ============================================================
 describe("POST /api/notify 端到端", () => {
   it("创建临时 admin → 调 POST → 验证 Ethereal 收到邮件 → 清理", { timeout: 60000 }, async () => {
@@ -149,8 +150,7 @@ describe("POST /api/notify 端到端", () => {
 
     try {
       const { createClient } = await import("@supabase/supabase-js");
-      const { nodemailer, testAccount } = await createEtherealTransporter();
-
+      const { nodemailer, testAccount } = await createEtherealClient();
       const sb = createClient(supabaseUrl, serviceRoleKey);
 
       // 1. 创建临时测试 admin 用户
@@ -162,12 +162,14 @@ describe("POST /api/notify 端到端", () => {
         password: testPassword,
         email_confirm: true,
       } as never);
+
       if (createErr || !newUser?.user?.id) {
         console.log("⚠️ 无法创建测试用户，跳过");
         return;
       }
 
-      await sb.from("profiles").insert({
+      // 2. upsert admin profile（createUser 的 trigger 已自动创建 profile，需 upsert）
+      await sb.from("profiles").upsert({
         id: newUser.user.id,
         email: testEmail,
         full_name: "E2E Test",
@@ -175,11 +177,12 @@ describe("POST /api/notify 端到端", () => {
         role: "admin",
       } as never);
 
-      // 2. 登录获取 access token
+      // 3. 登录获取 access token
       const { data: session } = await sb.auth.signInWithPassword({
         email: testEmail,
         password: testPassword,
       });
+
       if (!session?.session?.access_token) {
         console.log("⚠️ 无法登录测试用户，跳过");
         await sb.from("profiles").delete().eq("id", newUser.user.id);
@@ -188,14 +191,14 @@ describe("POST /api/notify 端到端", () => {
       }
       const token = session.session.access_token;
 
-      // 3. 注入 Ethereal SMTP
+      // 4. 注入 Ethereal SMTP
       process.env.SMTP_USER = testAccount.user;
       process.env.SMTP_PASS = testAccount.pass;
       process.env.SMTP_HOST = "smtp.ethereal.email";
       process.env.SMTP_PORT = "587";
 
       try {
-        // 4. 调用 POST handler
+        // 5. 调用 POST handler
         const { POST } = await import("@/app/api/notify/route");
         const req = new Request("http://localhost/api/notify", {
           method: "POST",
@@ -213,11 +216,11 @@ describe("POST /api/notify 端到端", () => {
         const res = await POST(req);
         const body = await res.json();
 
-        // 5. 验证响应
+        // 6. 验证响应
         expect(res.status).toBe(200);
         expect(body.success).toBe(true);
 
-        // 6. 验证邮件实际送达
+        // 7. 验证邮件实际送达
         await new Promise((r) => setTimeout(r, 2000));
         const msgRes = await fetch(
           `https://api.nodemailer.com/user/${testAccount.user}/message/latest`,
@@ -239,7 +242,7 @@ describe("POST /api/notify 端到端", () => {
           console.log(`⚠️ Ethereal API 返回 ${msgRes.status}，SMTP 层已验证发送`);
         }
       } finally {
-        // 7. 清理
+        // 8. 清理
         delete process.env.SMTP_USER;
         delete process.env.SMTP_PASS;
         delete process.env.SMTP_HOST;
@@ -250,16 +253,7 @@ describe("POST /api/notify 端到端", () => {
         console.log(`🧹 已清理测试用户 ${testEmail}`);
       }
     } catch (err) {
-      if (
-        err instanceof Error &&
-        (err.message.includes("ETIMEDOUT") ||
-          err.message.includes("ECONNREFUSED") ||
-          err.message.includes("ENOTFOUND"))
-      ) {
-        console.log("⚠️ 无法连接 Ethereal，跳过端到端测试");
-        return;
-      }
-      throw err;
+      if (!skipIfNoNetwork(err)) throw err;
     }
   });
 });

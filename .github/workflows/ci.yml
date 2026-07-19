@@ -36,6 +36,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: supabase/setup-cli@v1
+        with:
+          version: 2.109.1
 
       - name: 关联项目并生成最新类型,与提交版本比对
         env:

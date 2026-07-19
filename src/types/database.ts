@@ -15,15 +15,16 @@ export type AttendanceRow = PublicSchema["Tables"]["attendances"]["Row"];
 export type AnnouncementRow = PublicSchema["Tables"]["announcements"]["Row"];
 export type PostRow = PublicSchema["Tables"]["posts"]["Row"];
 
-// ---- 视图 ----
-export type UserRow = PublicSchema["Views"]["users"]["Row"];
-
-// ---- 业务类型(DB 有 CHECK 约束但 gen-types 给出 string,此处收紧) ----
-export type PostType = "ensemble" | "gathering";
-export type AttendanceStatus = "present" | "leave" | "absent";
+// ---- 枚举类型(从 database.types.ts Enums 派生) ----
+export type ProfileStatus = PublicSchema["Enums"]["profileStatus"];
+export type ProfileRole = PublicSchema["Enums"]["profileRole"];
+export type PostType = PublicSchema["Enums"]["postType"];
+export type AttendanceStatus = PublicSchema["Enums"]["attendanceStatus"];
 
 // ---- Join 扩展(Supabase join 返回的嵌套对象不在生成 schema 中) ----
-export type PostRowWithAuthor = PostRow & { users?: { name: string; section: string } | null };
+export type PostRowWithAuthor = PostRow & {
+  profiles?: { full_name?: string | null; instrument?: string | null } | null;
+};
 export type AttendanceRowWithUser = AttendanceRow & {
-  users?: { name?: string; section?: string } | null;
+  profiles?: { full_name?: string | null; instrument?: string | null } | null;
 };

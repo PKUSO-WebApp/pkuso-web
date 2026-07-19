@@ -4,16 +4,17 @@ import { createServerSupabase } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
 
-async function resolveTransporter() {
+export async function resolveTransporter() {
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
   if (smtpUser && smtpPass) {
+    const port = Number(process.env.SMTP_PORT) || 465;
     return {
       mode: "smtp" as const,
       transporter: nodemailer.createTransport({
         host: process.env.SMTP_HOST || "smtp.163.com",
-        port: Number(process.env.SMTP_PORT) || 465,
-        secure: true,
+        port,
+        secure: port === 465,
         auth: { user: smtpUser, pass: smtpPass },
       }),
     };
@@ -57,15 +58,17 @@ export async function POST(request: Request) {
     if (!title || !dateStr || !location)
       return NextResponse.json({ error: "缺少参数" }, { status: 400 });
 
-    // 3. 获取邮箱(service role 可访问 auth.users)
-    const { data: users, error: dbError } = await supabaseServer
-      .from("users")
+    // 3. 获取所有已批准用户的邮箱
+    const { data: recipients, error: dbError } = await supabaseServer
+      .from("profiles")
       .select("email")
+      .eq("status", "approved")
       .not("email", "is", null)
       .neq("email", "");
-    if (dbError || !users?.length) return NextResponse.json({ error: "无收件人" }, { status: 500 });
+    if (dbError || !recipients?.length)
+      return NextResponse.json({ error: "无收件人" }, { status: 500 });
 
-    const emails = (users as Array<{ email: string }>).map((u) => u.email);
+    const emails = (recipients as Array<{ email: string }>).map((r) => r.email);
 
     // 4. 发送
     const mailer = await resolveTransporter();
@@ -98,7 +101,7 @@ export async function POST(request: Request) {
   }
 }
 
-function e(s: string) {
+export function e(s: string) {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

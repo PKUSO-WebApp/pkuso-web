@@ -30,19 +30,19 @@ export type Database = {
         Row: {
           id: number;
           rehearsal_id: number;
-          status: string | null;
+          status: Database["public"]["Enums"]["attendanceStatus"] | null;
           user_id: string;
         };
         Insert: {
           id?: never;
           rehearsal_id: number;
-          status?: string | null;
+          status?: Database["public"]["Enums"]["attendanceStatus"] | null;
           user_id: string;
         };
         Update: {
           id?: never;
           rehearsal_id?: number;
-          status?: string | null;
+          status?: Database["public"]["Enums"]["attendanceStatus"] | null;
           user_id?: string;
         };
         Relationships: [
@@ -51,13 +51,6 @@ export type Database = {
             columns: ["rehearsal_id"];
             isOneToOne: false;
             referencedRelation: "rehearsals";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "attendances_user_id_fkey";
-            columns: ["user_id"];
-            isOneToOne: false;
-            referencedRelation: "users";
             referencedColumns: ["id"];
           },
         ];
@@ -73,7 +66,7 @@ export type Database = {
           image_url: string | null;
           missing_sections: string | null;
           title: string;
-          type: string;
+          type: Database["public"]["Enums"]["postType"];
         };
         Insert: {
           author_id: string;
@@ -85,7 +78,7 @@ export type Database = {
           image_url?: string | null;
           missing_sections?: string | null;
           title: string;
-          type?: string;
+          type?: Database["public"]["Enums"]["postType"];
         };
         Update: {
           author_id?: string;
@@ -97,17 +90,9 @@ export type Database = {
           image_url?: string | null;
           missing_sections?: string | null;
           title?: string;
-          type?: string;
+          type?: Database["public"]["Enums"]["postType"];
         };
-        Relationships: [
-          {
-            foreignKeyName: "posts_author_id_fkey";
-            columns: ["author_id"];
-            isOneToOne: false;
-            referencedRelation: "users";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
       };
       profiles: {
         Row: {
@@ -118,8 +103,8 @@ export type Database = {
           id: string;
           instrument: string | null;
           join_date: string | null;
-          role: string | null;
-          status: string | null;
+          role: Database["public"]["Enums"]["profileRole"] | null;
+          status: Database["public"]["Enums"]["profileStatus"] | null;
         };
         Insert: {
           college?: string | null;
@@ -129,8 +114,8 @@ export type Database = {
           id: string;
           instrument?: string | null;
           join_date?: string | null;
-          role?: string | null;
-          status?: string | null;
+          role?: Database["public"]["Enums"]["profileRole"] | null;
+          status?: Database["public"]["Enums"]["profileStatus"] | null;
         };
         Update: {
           college?: string | null;
@@ -140,18 +125,10 @@ export type Database = {
           id?: string;
           instrument?: string | null;
           join_date?: string | null;
-          role?: string | null;
-          status?: string | null;
+          role?: Database["public"]["Enums"]["profileRole"] | null;
+          status?: Database["public"]["Enums"]["profileStatus"] | null;
         };
-        Relationships: [
-          {
-            foreignKeyName: "profiles_id_fkey";
-            columns: ["id"];
-            isOneToOne: true;
-            referencedRelation: "users";
-            referencedColumns: ["id"];
-          },
-        ];
+        Relationships: [];
       };
       rehearsals: {
         Row: {
@@ -200,27 +177,16 @@ export type Database = {
       };
     };
     Views: {
-      users: {
-        Row: {
-          email: string | null;
-          id: string | null;
-        };
-        Insert: {
-          email?: string | null;
-          id?: string | null;
-        };
-        Update: {
-          email?: string | null;
-          id?: string | null;
-        };
-        Relationships: [];
-      };
+      [_ in never]: never;
     };
     Functions: {
       [_ in never]: never;
     };
     Enums: {
-      [_ in never]: never;
+      attendanceStatus: "present" | "late" | "absent" | "excused";
+      postType: "ensemble" | "gathering";
+      profileRole: "member" | "admin";
+      profileStatus: "pending" | "approved" | "rejected";
     };
     CompositeTypes: {
       [_ in never]: never;
@@ -341,6 +307,11 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      attendanceStatus: ["present", "late", "absent", "excused"],
+      postType: ["ensemble", "gathering"],
+      profileRole: ["member", "admin"],
+      profileStatus: ["pending", "approved", "rejected"],
+    },
   },
 } as const;

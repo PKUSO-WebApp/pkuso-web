@@ -22,9 +22,9 @@ export function AttendanceModal({ open, title, loading, list, onClose }: Props) 
           <p className="py-6 text-center text-label text-text-subtle">暂无签到记录</p>
         ) : (
           list.map((row, index) => {
-            const userInfo = row.users;
-            const name = userInfo?.name ?? "未命名成员";
-            const section = userInfo?.section ?? "声部未登记";
+            const profileInfo = row.profiles;
+            const name = profileInfo?.full_name ?? "未命名成员";
+            const section = profileInfo?.instrument ?? "声部未登记";
             return (
               <div
                 key={`${row.id ?? index}`}

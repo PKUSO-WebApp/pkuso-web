@@ -14,7 +14,7 @@ export function usePosts(client: typeof defaultClient = defaultClient) {
     const { data: rows, error: dbError } = await client
       .from("posts")
       .select(
-        "id, title, type, content, image_url, author_id, created_at, contact_info, current_sections, missing_sections, users!author_id(name, section)",
+        "id, title, type, content, image_url, author_id, created_at, contact_info, current_sections, missing_sections",
       )
       .order("created_at", { ascending: false });
     setLoading(false);

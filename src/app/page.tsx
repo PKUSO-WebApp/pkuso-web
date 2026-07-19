@@ -19,22 +19,6 @@ function ridKey(id: string | number): string {
   return String(id);
 }
 
-/** 用 title 判断排练类型，与发布时写入的 title 一致 */
-const REHEARSAL_TYPE_FULL = "全团合排";
-const REHEARSAL_TYPE_SECTION = "声部分排";
-
-function isFullRehearsal(r: RehearsalRow): boolean {
-  const t = (r.title ?? "").trim();
-  if (t === REHEARSAL_TYPE_FULL || t.includes("合排")) return true;
-  if (isSectionRehearsal(r)) return false;
-  return true;
-}
-
-function isSectionRehearsal(r: RehearsalRow): boolean {
-  const t = (r.title ?? "").trim();
-  return t === REHEARSAL_TYPE_SECTION || t.includes("分排");
-}
-
 /** date 为 yyyy-mm-dd 时格式化为 MM-DD */
 function formatDateMMDD(date: string | null): string {
   if (!date || date.length < 10) return "—";
@@ -43,22 +27,10 @@ function formatDateMMDD(date: string | null): string {
   return date;
 }
 
-const WEEKDAY = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-
-/** 格式化为 "3月10日 周二 19:30" */
-function formatDateLong(date: string | null, time: string | null): string {
-  if (!date || date.length < 10) return "—";
-  const [y, m, d] = date.split("-").map(Number);
-  if (Number.isNaN(m) || Number.isNaN(d)) return "—";
-  const day = new Date(y, m - 1, d).getDay();
-  const timeStr = (time ?? "").trim() || "—";
-  return `${m}月${d}日 ${WEEKDAY[day]} ${timeStr}`;
-}
-
 /** 日程卡片标题：月-日 时间（与社区卡片对齐） */
 function formatDateTitle(date: string | null, timeRange: string): string {
   if (!date || date.length < 10) return "—";
-  const [y, m, d] = date.split("-").map(Number);
+  const [, m, d] = date.split("-").map(Number);
   if (Number.isNaN(m) || Number.isNaN(d)) return "—";
   const timeStr = (timeRange ?? "").trim() || "—";
   return `${m}-${d} ${timeStr}`;
@@ -108,7 +80,7 @@ export default function Home() {
   const [myAttendanceByRehearsal, setMyAttendanceByRehearsal] = React.useState<
     Record<string, AttendanceStatus | string>
   >({});
-  const [myAttendanceLoading, setMyAttendanceLoading] = React.useState(false);
+  const [, setMyAttendanceLoading] = React.useState(false);
 
   // 管理员考勤校验 Modal
   const [attendanceModalRehearsal, setAttendanceModalRehearsal] =
@@ -181,7 +153,8 @@ export default function Home() {
       map[ridKey(row.rehearsal_id)] = row.status;
     }
     setMyAttendanceByRehearsal(map);
-  }, [user, isAdmin]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isAdmin derived from user.role
+  }, [user]);
 
   React.useEffect(() => {
     void fetchLatestAnnouncement();

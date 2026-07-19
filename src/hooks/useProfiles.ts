@@ -25,7 +25,6 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
 
-  const filterIdsKey = filter?.ids?.join(",");
   const fetch = React.useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -50,7 +49,8 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
     } else {
       setData((rows as ProfileRow[]) ?? []);
     }
-  }, [client, filter?.status, filterIdsKey, filter?.userId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- filter reference stable
+  }, [client, filter?.status, filter?.ids]);
 
   React.useEffect(() => {
     void fetch();

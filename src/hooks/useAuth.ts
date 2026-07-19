@@ -48,7 +48,7 @@ export function useAuth(
   const [profileLoading, setProfileLoading] = React.useState(false);
   const [profileErrorMsg, setProfileErrorMsg] = React.useState<string | null>(null);
 
-  // 1. Session 初始化 + 实时监听
+  // 1. Session 初始化 + 实时监听(client.auth 稳定,无需重跑)
   React.useEffect(() => {
     let mounted = true;
 
@@ -71,6 +71,7 @@ export function useAuth(
       mounted = false;
       sub.subscription.unsubscribe();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- client.auth stable
   }, []);
 
   // 2. 根据 sessionUserId 加载 profiles
@@ -138,7 +139,7 @@ export function useAuth(
     return () => {
       mounted = false;
     };
-  }, [sessionUserId, onProfileLoaded, onClearProfile]);
+  }, [client, sessionUserId, onProfileLoaded, onClearProfile]);
 
   const handleSignOut = async () => {
     await client.auth.signOut();

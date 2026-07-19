@@ -26,22 +26,25 @@ export function useAnnouncements(client: typeof defaultClient = defaultClient) {
     }
     const row = Array.isArray(rows) && rows.length > 0 ? (rows[0] as AnnouncementRow) : null;
     setData(row);
-  }, []);
+  }, [client]);
 
   React.useEffect(() => {
     void fetch();
   }, [fetch]);
 
-  const publish = React.useCallback(async (content: string) => {
-    setPublishing(true);
-    const { error: dbError } = await client.from("announcements").insert({ content });
-    setPublishing(false);
-    if (dbError) {
-      setError(dbError.message);
-      return false;
-    }
-    return true;
-  }, []);
+  const publish = React.useCallback(
+    async (content: string) => {
+      setPublishing(true);
+      const { error: dbError } = await client.from("announcements").insert({ content });
+      setPublishing(false);
+      if (dbError) {
+        setError(dbError.message);
+        return false;
+      }
+      return true;
+    },
+    [client],
+  );
 
   return { data, loading, error, publishing, fetch, publish };
 }

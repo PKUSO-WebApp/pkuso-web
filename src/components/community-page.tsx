@@ -225,12 +225,6 @@ export default function CommunityPage() {
     alert("请在新窗口中长按图片保存。");
   };
 
-  const authorLabel = (post: PostRowWithAuthor) => {
-    const u = post.users;
-    if (u?.name) return `${u.name}${u.section ? ` · ${u.section}` : ""}`;
-    return "未知";
-  };
-
   return (
     <div className="space-y-4">
       <header className="mb-1">

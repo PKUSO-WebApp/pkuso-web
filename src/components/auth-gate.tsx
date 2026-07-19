@@ -8,7 +8,7 @@ import { TabBar } from "@/components/tab-bar";
 import { useAuth } from "@/hooks/useAuth";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
-  const { user, login, logout } = useUser();
+  const { login, logout } = useUser();
   const pathname = usePathname();
   const router = useRouter();
 

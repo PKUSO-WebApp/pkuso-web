@@ -44,14 +44,14 @@ export function RehearsalCard({
         </div>
 
         {isAdmin ? (
-          <div className="flex flex-col items-end gap-1 text-[11px]">
+          <div className="flex flex-col items-end gap-1 text-label">
             {expired && (
-              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-text-muted">
+              <span className="rounded-full bg-muted px-2 py-0.5 text-caption text-text-muted">
                 已结束
               </span>
             )}
             {item.type === "full" && item.sign_in_code ? (
-              <span className="text-[10px] text-text-muted">密码: {item.sign_in_code}</span>
+              <span className="text-caption text-text-muted">密码: {item.sign_in_code}</span>
             ) : null}
             <div className="flex items-center gap-2">
               {onEdit && (
@@ -86,11 +86,11 @@ export function RehearsalCard({
         ) : (
           <div className="flex items-center">
             {hasSigned ? (
-              <span className="rounded-full bg-success-bg px-3 py-1 text-[11px] text-success">
+              <span className="rounded-full bg-success-bg px-3 py-1 text-label text-success">
                 ✅ 已签到
               </span>
             ) : expired ? (
-              <span className="rounded-full bg-muted px-3 py-1 text-[11px] text-text-subtle">
+              <span className="rounded-full bg-muted px-3 py-1 text-label text-text-subtle">
                 已结束
               </span>
             ) : (

@@ -91,7 +91,7 @@ export default function SignupPage() {
 
           <form onSubmit={handleSubmit} className="space-y-3">
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-text-muted">
+              <label className="block text-label font-medium text-text-muted">
                 乐团邀请码 (Invitation Code)
               </label>
               <input
@@ -107,7 +107,7 @@ export default function SignupPage() {
             </div>
 
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-text-muted">邮箱</label>
+              <label className="block text-label font-medium text-text-muted">邮箱</label>
               <input
                 type="email"
                 value={email}
@@ -122,7 +122,7 @@ export default function SignupPage() {
             </div>
 
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-text-muted">密码</label>
+              <label className="block text-label font-medium text-text-muted">密码</label>
               <input
                 type="password"
                 value={password}
@@ -137,7 +137,7 @@ export default function SignupPage() {
             </div>
 
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-text-muted">真实姓名</label>
+              <label className="block text-label font-medium text-text-muted">真实姓名</label>
               <input
                 value={fullName}
                 onChange={(e) => {
@@ -151,7 +151,7 @@ export default function SignupPage() {
             </div>
 
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-text-muted">所属声部</label>
+              <label className="block text-label font-medium text-text-muted">所属声部</label>
               <select
                 value={instrument}
                 onChange={(e) => {
@@ -172,7 +172,7 @@ export default function SignupPage() {
             </div>
 
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-text-muted">学院</label>
+              <label className="block text-label font-medium text-text-muted">学院</label>
               <input
                 value={college}
                 onChange={(e) => {
@@ -186,7 +186,7 @@ export default function SignupPage() {
             </div>
 
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-text-muted">入团时间</label>
+              <label className="block text-label font-medium text-text-muted">入团时间</label>
               <input
                 value={joinDate}
                 onChange={(e) => {

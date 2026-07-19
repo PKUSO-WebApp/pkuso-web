@@ -42,7 +42,7 @@ export function TabBar() {
                 </div>
                 <span
                   className={
-                    active ? "text-[11px] font-medium text-text" : "text-[11px] text-text-muted"
+                    active ? "text-label font-medium text-text" : "text-label text-text-muted"
                   }
                 >
                   {tab.label}

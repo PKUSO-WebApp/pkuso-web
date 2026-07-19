@@ -14,12 +14,12 @@ type Props = {
 export function AttendanceModal({ open, title, loading, list, onClose }: Props) {
   return (
     <Modal open={open} onClose={onClose} title="出勤名单" closeOnOverlay={!loading}>
-      <p className="mb-3 text-[11px] text-text-muted">排练：{title}</p>
+      <p className="mb-3 text-label text-text-muted">排练：{title}</p>
       <div className="max-h-64 space-y-2 overflow-y-auto pt-1">
         {loading ? (
-          <p className="py-6 text-center text-[11px] text-text-subtle">正在加载...</p>
+          <p className="py-6 text-center text-label text-text-subtle">正在加载...</p>
         ) : list.length === 0 ? (
-          <p className="py-6 text-center text-[11px] text-text-subtle">暂无签到记录</p>
+          <p className="py-6 text-center text-label text-text-subtle">暂无签到记录</p>
         ) : (
           list.map((row, index) => {
             const userInfo = row.users;
@@ -31,12 +31,12 @@ export function AttendanceModal({ open, title, loading, list, onClose }: Props) 
                 className="flex items-center justify-between rounded-2xl border border-border bg-card px-3 py-2 text-xs"
               >
                 <div className="flex items-center gap-2">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-[11px] font-medium text-primary-foreground">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-label font-medium text-primary-foreground">
                     {name.slice(0, 2)}
                   </div>
                   <div>
-                    <p className="text-[11px] font-medium text-text">{name}</p>
-                    <p className="text-[10px] text-text-muted">{section}</p>
+                    <p className="text-label font-medium text-text">{name}</p>
+                    <p className="text-caption text-text-muted">{section}</p>
                   </div>
                 </div>
               </div>
@@ -49,7 +49,7 @@ export function AttendanceModal({ open, title, loading, list, onClose }: Props) 
           type="button"
           onClick={onClose}
           disabled={loading}
-          className="rounded-full bg-primary px-4 py-1.5 text-[11px] font-medium text-primary-foreground shadow-sm hover:opacity-90 disabled:opacity-60"
+          className="rounded-full bg-primary px-4 py-1.5 text-label font-medium text-primary-foreground shadow-sm hover:opacity-90 disabled:opacity-60"
         >
           关闭
         </button>

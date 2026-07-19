@@ -138,7 +138,7 @@ export default function Home() {
             <button
               type="button"
               onClick={() => setPublishOpen(true)}
-              className="rounded-full bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground shadow-sm hover:opacity-90"
+              className="rounded-full bg-primary px-2.5 py-1 text-label font-medium text-primary-foreground shadow-sm hover:opacity-90"
             >
               ➕ 发布新日程
             </button>
@@ -176,14 +176,14 @@ export default function Home() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <h2 className="text-lg font-semibold text-text">{formatDateMMDD(r.date)}</h2>
-                    <p className="mt-0.5 text-[11px] text-text-muted">
+                    <p className="mt-0.5 text-label text-text-muted">
                       排练曲目：{r.repertoire || "—"}
                     </p>
-                    <p className="mt-1 text-[11px] text-text-subtle">📍 {r.location ?? "—"}</p>
+                    <p className="mt-1 text-label text-text-subtle">📍 {r.location ?? "—"}</p>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${ended ? "bg-muted text-text-muted" : "bg-info-bg text-info"}`}
+                      className={`rounded-full px-2 py-0.5 text-caption font-bold ${ended ? "bg-muted text-text-muted" : "bg-info-bg text-info"}`}
                     >
                       {ended ? "已结束" : "即将开始"}
                     </span>
@@ -191,7 +191,7 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={() => setAttendanceRehearsal(r)}
-                        className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-text hover:bg-border"
+                        className="rounded-full bg-muted px-2 py-0.5 text-caption font-bold text-text hover:bg-border"
                       >
                         查看出勤
                       </button>
@@ -199,7 +199,7 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={() => alert("请在排练现场扫码签到")}
-                        className="rounded border border-border bg-surface px-2 py-0.5 text-[10px] font-medium text-text"
+                        className="rounded border border-border bg-surface px-2 py-0.5 text-caption font-medium text-text"
                       >
                         签到
                       </button>
@@ -333,7 +333,7 @@ function PublishForm({
           onChange={(e) => setTime(e.target.value)}
           className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none"
         />
-        <span className="text-[11px] text-text-muted self-center">至</span>
+        <span className="text-label text-text-muted self-center">至</span>
         <input
           type="time"
           value={endTime}

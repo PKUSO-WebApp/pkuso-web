@@ -208,7 +208,7 @@ export default function SchedulePage() {
           <button
             type="button"
             onClick={openCreate}
-            className="rounded-full bg-primary px-3 py-1 text-[11px] font-medium text-primary-foreground shadow-sm hover:opacity-90"
+            className="rounded-full bg-primary px-3 py-1 text-label font-medium text-primary-foreground shadow-sm hover:opacity-90"
           >
             ➕ 发布新日程
           </button>

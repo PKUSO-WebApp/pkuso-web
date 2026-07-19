@@ -139,13 +139,13 @@ export default function ProfilePage() {
           {/* 入团审批 */}
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <p className="text-[11px] font-medium text-text-muted">
+              <p className="text-label font-medium text-text-muted">
                 入团审批 · 待处理（{pendingRows.length}）
               </p>
               <button
                 type="button"
                 onClick={() => window.location.reload()}
-                className="rounded-full px-2 py-1 text-[11px] text-text-muted hover:bg-border"
+                className="rounded-full px-2 py-1 text-label text-text-muted hover:bg-border"
               >
                 刷新
               </button>
@@ -171,7 +171,7 @@ export default function ProfilePage() {
                         {r.instrument || "未选择声部"}
                       </p>
                       <p className="mt-0.5 text-xs text-text-muted">{r.email || "未填写邮箱"}</p>
-                      <p className="mt-0.5 text-[11px] text-text-subtle">
+                      <p className="mt-0.5 text-label text-text-subtle">
                         注册时间：{formatTime(r.created_at)}
                       </p>
                     </div>
@@ -179,7 +179,7 @@ export default function ProfilePage() {
                       type="button"
                       onClick={() => handleApprove(r.id)}
                       disabled={approvingId === r.id}
-                      className="shrink-0 rounded-full bg-emerald-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                      className="shrink-0 rounded-full bg-emerald-600 px-3 py-1.5 text-label font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
                     >
                       {approvingId === r.id ? "处理中…" : "✅ 批准"}
                     </button>
@@ -191,7 +191,7 @@ export default function ProfilePage() {
 
           {/* 发布公告 */}
           <div className="border-t border-border pt-4">
-            <p className="mb-2 text-[11px] font-medium text-text-muted">发布全团公告</p>
+            <p className="mb-2 text-label font-medium text-text-muted">发布全团公告</p>
             <form onSubmit={handlePublishAnnouncement} className="space-y-2">
               <textarea
                 value={announcementBody}

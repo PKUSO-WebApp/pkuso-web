@@ -49,7 +49,7 @@ export function Modal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-full bg-muted px-3 py-1 text-[11px] text-text-muted hover:bg-border"
+              className="rounded-full bg-muted px-3 py-1 text-label text-text-muted hover:bg-border"
             >
               关闭
             </button>

@@ -147,13 +147,13 @@ export default function MembersPage() {
 
       {attendanceOpen && (
         <Modal open onClose={() => setAttendanceOpen(false)} title="总排练考勤统计">
-          <p className="mb-2 text-[11px] text-text-muted">仅统计标题含「合排」或「全团」的排练</p>
+          <p className="mb-2 text-label text-text-muted">仅统计标题含「合排」或「全团」的排练</p>
           {rehearsalList.length === 0 ? (
             <p className="text-xs text-warning">暂无合排日程</p>
           ) : (
             <div className="mb-3 space-y-2">
               <div>
-                <label className="block text-[11px] font-medium text-text-muted">起始</label>
+                <label className="block text-label font-medium text-text-muted">起始</label>
                 <select
                   value={startIdx}
                   onChange={(e) => setStartIdx(Number(e.target.value))}
@@ -167,7 +167,7 @@ export default function MembersPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-[11px] font-medium text-text-muted">结束</label>
+                <label className="block text-label font-medium text-text-muted">结束</label>
                 <select
                   value={endIdx}
                   onChange={(e) => setEndIdx(Number(e.target.value))}
@@ -232,7 +232,7 @@ export default function MembersPage() {
               <div className="space-y-5">
                 {grouped.map(({ group, users }) => (
                   <div key={group}>
-                    <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-text-muted">
+                    <p className="mb-2 text-label font-medium uppercase tracking-wide text-text-muted">
                       {group}
                     </p>
                     <ul className="space-y-2">

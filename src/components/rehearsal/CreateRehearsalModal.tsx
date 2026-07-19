@@ -53,7 +53,7 @@ export function CreateRehearsalModal({
       <form onSubmit={onSubmit}>
         <div className="space-y-3 text-xs">
           <div className="space-y-1">
-            <label className="block text-[11px] font-medium text-text-muted">排练类型</label>
+            <label className="block text-label font-medium text-text-muted">排练类型</label>
             <Toggle
               options={["full", "section"] as const}
               value={form.type}
@@ -64,7 +64,7 @@ export function CreateRehearsalModal({
 
           {isSection && (
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-text-muted">针对声部</label>
+              <label className="block text-label font-medium text-text-muted">针对声部</label>
               <input
                 type="text"
                 value={form.targetSection}
@@ -76,7 +76,7 @@ export function CreateRehearsalModal({
           )}
 
           <div className="space-y-1">
-            <label className="block text-[11px] font-medium text-text-muted">开始时间</label>
+            <label className="block text-label font-medium text-text-muted">开始时间</label>
             <DatePicker
               selected={form.startTime}
               onChange={(date: Date | null) => onChange("startTime", date)}
@@ -91,7 +91,7 @@ export function CreateRehearsalModal({
           </div>
 
           <div className="space-y-1">
-            <label className="block text-[11px] font-medium text-text-muted">结束时间</label>
+            <label className="block text-label font-medium text-text-muted">结束时间</label>
             <DatePicker
               selected={form.endTime}
               onChange={(date: Date | null) => onChange("endTime", date)}
@@ -106,7 +106,7 @@ export function CreateRehearsalModal({
           </div>
 
           <div className="space-y-1">
-            <label className="block text-[11px] font-medium text-text-muted">排练地点</label>
+            <label className="block text-label font-medium text-text-muted">排练地点</label>
             <input
               type="text"
               value={form.location}
@@ -117,7 +117,7 @@ export function CreateRehearsalModal({
           </div>
 
           <div className="space-y-1">
-            <label className="block text-[11px] font-medium text-text-muted">排练曲目</label>
+            <label className="block text-label font-medium text-text-muted">排练曲目</label>
             <textarea
               value={form.repertoire}
               onChange={(e) => onChange("repertoire", e.target.value)}
@@ -129,7 +129,7 @@ export function CreateRehearsalModal({
 
           {form.type === "full" && (
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-text-muted">
+              <label className="block text-label font-medium text-text-muted">
                 签到密码（4 位数字）
               </label>
               <input
@@ -161,14 +161,14 @@ export function CreateRehearsalModal({
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="rounded-full px-4 py-1.5 text-[11px] text-text-muted hover:bg-muted"
+            className="rounded-full px-4 py-1.5 text-label text-text-muted hover:bg-muted"
           >
             取消
           </button>
           <button
             type="submit"
             disabled={submitting}
-            className="rounded-full bg-primary px-4 py-1.5 text-[11px] font-medium text-primary-foreground shadow-sm hover:opacity-90 disabled:opacity-60"
+            className="rounded-full bg-primary px-4 py-1.5 text-label font-medium text-primary-foreground shadow-sm hover:opacity-90 disabled:opacity-60"
           >
             {submitting ? (editing ? "保存中…" : "发布中…") : editing ? "保存" : "发布"}
           </button>

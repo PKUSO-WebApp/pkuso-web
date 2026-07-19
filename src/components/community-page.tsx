@@ -3,7 +3,7 @@
 import React from "react";
 import imageCompression from "browser-image-compression";
 import { useUser } from "@/context/UserContext";
-import { supabase } from "@/lib/supabase";
+import { usePosts } from "@/hooks/usePosts";
 import type { PostType, PostRow, PostRowWithAuthor } from "@/types/database";
 
 type FormState = {
@@ -38,8 +38,6 @@ const TYPE_LABEL: Record<PostType, string> = {
 export default function CommunityPage() {
   const { user } = useUser();
   const [view, setView] = React.useState<PostType>("ensemble");
-  const [posts, setPosts] = React.useState<PostRow[]>([]);
-  const [loading, setLoading] = React.useState(true);
   const [detailPost, setDetailPost] = React.useState<PostRow | null>(null);
   const [publishOpen, setPublishOpen] = React.useState(false);
   const [editId, setEditId] = React.useState<string | null>(null);
@@ -52,47 +50,35 @@ export default function CommunityPage() {
     missingSections: "",
     imageFile: null,
   });
-  const [submitting, setSubmitting] = React.useState(false);
   const [imagePreviewUrl, setImagePreviewUrl] = React.useState<string | null>(null);
 
-  const fetchPosts = React.useCallback(async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("posts")
-      .select(
-        "id, title, type, content, image_url, author_id, created_at, contact_info, current_sections, missing_sections, users!author_id(name, section)",
-      )
-      .order("created_at", { ascending: false });
+  const {
+    data: rawPosts,
+    loading,
+    saving: submitting,
+    create,
+    update,
+    remove,
+    uploadImage,
+  } = usePosts();
 
-    if (error) {
-      console.warn("[Community] 加载公告失败：", error.message);
-      setPosts([]);
-    } else {
-      // Supabase join: users 可能返回单对象或数组，统一取第一项
-      const raw = (data ?? []) as unknown as Array<
-        PostRow & {
-          users?:
-            { name: string; section: string } | Array<{ name: string; section: string }> | null;
-        }
-      >;
-      const normalized: PostRowWithAuthor[] = raw.map((row) => {
-        const u = row.users;
-        const users =
-          Array.isArray(u) && u.length > 0
-            ? { name: u[0].name, section: u[0].section }
-            : u && !Array.isArray(u)
-              ? u
-              : null;
-        return { ...row, users };
-      });
-      setPosts(normalized);
-    }
-    setLoading(false);
-  }, []);
-
-  React.useEffect(() => {
-    void fetchPosts();
-  }, [fetchPosts]);
+  // normalize Supabase join: users → single object
+  const posts = React.useMemo(() => {
+    return (rawPosts as unknown[]).map((row) => {
+      const r = row as PostRow & { users?: unknown };
+      const u = r.users as Record<string, unknown> | undefined;
+      const users =
+        Array.isArray(u) && u.length > 0
+          ? {
+              name: (u[0] as Record<string, string>).name,
+              section: (u[0] as Record<string, string>).section,
+            }
+          : u && typeof u === "object" && !Array.isArray(u)
+            ? (u as unknown as { name: string; section: string })
+            : null;
+      return { ...r, users };
+    }) as PostRowWithAuthor[];
+  }, [rawPosts]);
 
   const list = React.useMemo(
     () => posts.filter((p) => (p.type as PostType) === view),
@@ -160,37 +146,29 @@ export default function CommunityPage() {
       return;
     }
     if (!form.contactInfo.trim()) {
-      alert("请填写联系方式（微信号或手机号）。");
+      alert("请填写联系方式。");
       return;
     }
 
-    setSubmitting(true);
     let imageUrl: string | null = null;
     if (form.imageFile) {
       let fileToUpload: File = form.imageFile;
       try {
-        const options = {
+        fileToUpload = await imageCompression(form.imageFile, {
           maxSizeMB: 0.3,
           maxWidthOrHeight: 1024,
           useWebWorker: true,
-        };
-        fileToUpload = await imageCompression(form.imageFile, options);
-      } catch (err) {
-        console.warn("[Community] 图片压缩失败，使用原图上传：", err);
+        });
+      } catch {
+        /* fall through */
       }
-      const path = `${user?.id ?? "anon"}/${Date.now()}-${fileToUpload.name}`;
-      const { error: uploadError } = await supabase.storage
-        .from("community-images")
-        .upload(path, fileToUpload, { upsert: false });
-      if (uploadError) {
-        console.warn("[Community] 图片上传失败：", uploadError.message);
-        alert("图片上传失败，请重试。");
-        setSubmitting(false);
+      const result = await uploadImage(fileToUpload, user?.id ?? "anon");
+      if ("error" in result) {
+        alert("图片上传失败");
         return;
       }
-      const { data: urlData } = supabase.storage.from("community-images").getPublicUrl(path);
-      imageUrl = urlData.publicUrl;
-    } else if (editId && imagePreviewUrl && imagePreviewUrl.startsWith("http")) {
+      imageUrl = result.url;
+    } else if (editId && imagePreviewUrl?.startsWith("http")) {
       imageUrl = imagePreviewUrl;
     }
 
@@ -210,48 +188,36 @@ export default function CommunityPage() {
     if (imageUrl !== null) basePayload.image_url = imageUrl;
 
     if (editId) {
-      const payload = { ...basePayload };
-      const { error } = await supabase.from("posts").update(basePayload).eq("id", editId);
-      setSubmitting(false);
-      if (error) {
-        console.warn("[Community] 更新失败：", error.message);
-        alert("更新失败，请重试。");
+      const ok = await update(editId, basePayload);
+      if (!ok) {
+        alert("更新失败");
         return;
       }
       alert("已更新。");
     } else {
       if (!user) {
         alert("请先登录。");
-        setSubmitting(false);
         return;
       }
-      const { error } = await supabase.from("posts").insert(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Record spread 与 Insert 类型不兼容
-        { ...basePayload, image_url: imageUrl, author_id: user.id } as any,
-      );
-      setSubmitting(false);
-      if (error) {
-        console.warn("[Community] 发布失败：", error.message);
-        alert("发布失败，请重试。");
+      const ok = await create({ ...basePayload, image_url: imageUrl, author_id: user.id });
+      if (!ok) {
+        alert("发布失败");
         return;
       }
       alert("发布成功！");
     }
     closePublish();
-    void fetchPosts();
   };
 
   const handleDelete = async (id: string) => {
     if (!window.confirm("确定要删除这条公告吗？")) return;
-    const { error } = await supabase.from("posts").delete().eq("id", id);
-    if (error) {
-      console.warn("[Community] 删除失败：", error.message);
-      alert("删除失败，请重试。");
+    const ok = await remove(id);
+    if (!ok) {
+      alert("删除失败");
       return;
     }
     setDetailPost(null);
     alert("已删除。");
-    void fetchPosts();
   };
 
   const handleSaveQr = (imageUrl: string) => {

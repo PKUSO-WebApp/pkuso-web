@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase as defaultClient } from "@/lib/supabase";
 import type { ProfileRow } from "@/types/database";
 
 export type AuthState = {
@@ -34,7 +34,10 @@ type UseAuthOptions = {
   onClearProfile: () => void;
 };
 
-export function useAuth({ onProfileLoaded, onClearProfile }: UseAuthOptions) {
+export function useAuth(
+  { onProfileLoaded, onClearProfile }: UseAuthOptions,
+  client: typeof defaultClient = defaultClient,
+) {
   const [sessionUserId, setSessionUserId] = React.useState<string | null>(null);
   const [sessionLoading, setSessionLoading] = React.useState(true);
   const [profileStatus, setProfileStatus] = React.useState<string | null>(null);
@@ -51,7 +54,7 @@ export function useAuth({ onProfileLoaded, onClearProfile }: UseAuthOptions) {
 
     const init = async () => {
       setSessionLoading(true);
-      const { data, error } = await supabase.auth.getSession();
+      const { data, error } = await client.auth.getSession();
       if (!mounted) return;
       if (error) console.warn("[useAuth] getSession 失败:", error.message);
       setSessionUserId(data.session?.user?.id ?? null);
@@ -59,7 +62,7 @@ export function useAuth({ onProfileLoaded, onClearProfile }: UseAuthOptions) {
     };
     void init();
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
+    const { data: sub } = client.auth.onAuthStateChange((_event, next) => {
       if (!mounted) return;
       setSessionUserId(next?.user?.id ?? null);
     });
@@ -138,7 +141,7 @@ export function useAuth({ onProfileLoaded, onClearProfile }: UseAuthOptions) {
   }, [sessionUserId, onProfileLoaded, onClearProfile]);
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
+    await client.auth.signOut();
     onClearProfile();
   };
 

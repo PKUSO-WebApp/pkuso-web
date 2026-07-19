@@ -1,10 +1,10 @@
 "use client";
 
 import React from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase as defaultClient } from "@/lib/supabase";
 import type { AnnouncementRow } from "@/types/database";
 
-export function useAnnouncements() {
+export function useAnnouncements(client: typeof defaultClient = defaultClient) {
   const [data, setData] = React.useState<AnnouncementRow | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -13,7 +13,7 @@ export function useAnnouncements() {
   const fetch = React.useCallback(async () => {
     setLoading(true);
     setError(null);
-    const { data: rows, error: dbError } = await supabase
+    const { data: rows, error: dbError } = await client
       .from("announcements")
       .select("id, content, created_at")
       .order("created_at", { ascending: false })
@@ -34,7 +34,7 @@ export function useAnnouncements() {
 
   const publish = React.useCallback(async (content: string) => {
     setPublishing(true);
-    const { error: dbError } = await supabase.from("announcements").insert({ content });
+    const { error: dbError } = await client.from("announcements").insert({ content });
     setPublishing(false);
     if (dbError) {
       setError(dbError.message);

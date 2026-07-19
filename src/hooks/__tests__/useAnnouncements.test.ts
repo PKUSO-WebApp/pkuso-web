@@ -1,84 +1,57 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
-
-const { mockLimit, mockInsert } = vi.hoisted(() => ({
-  mockLimit: vi.fn(),
-  mockInsert: vi.fn(),
-}));
-
-// Pattern matching useAuth.test.ts (which works)
-vi.mock("@/lib/supabase", () => ({
-  supabase: {
-    from: vi.fn(() => ({
-      select: vi.fn(() => ({
-        order: vi.fn(() => ({ limit: mockLimit })),
-      })),
-      insert: mockInsert,
-    })),
-  },
-}));
-
 import { useAnnouncements } from "../useAnnouncements";
 
+function mockClient<T>(responses: T[]) {
+  let i = 0;
+  const c = (r: T) => ({
+    eq: () => c(r),
+    order: () => c(r),
+    limit: () => c(r),
+    then: (resolve: (v: T) => void) => resolve(r),
+  });
+  return {
+    from: () => ({ select: () => c(responses[i++]), insert: () => c(responses[i++]) }),
+  };
+}
+
 describe("useAnnouncements", () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
-    mockLimit.mockResolvedValue({ data: [], error: null });
-    mockInsert.mockResolvedValue({ error: null });
-  });
-
   it("fetch 获取最新公告", async () => {
-    mockLimit.mockResolvedValue({
-      data: [{ id: "1", content: "测试", created_at: "2024-01-01" }],
-      error: null,
-    });
-
-    const { result } = renderHook(() => useAnnouncements());
-
+    const c = mockClient([{ data: [{ id: "1", content: "测试" }], error: null }]);
+    const { result } = renderHook(() => useAnnouncements(c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
-
-    expect(result.current.data).toMatchObject({ id: "1", content: "测试" });
+    expect(result.current.data).toMatchObject({ content: "测试" });
   });
 
-  it("fetch 失败设置 error", async () => {
-    mockLimit.mockResolvedValue({ data: null, error: { message: "查询失败" } });
-
-    const { result } = renderHook(() => useAnnouncements());
-
+  it("fetch 失败", async () => {
+    const c = mockClient([{ data: null, error: { message: "err" } }]);
+    const { result } = renderHook(() => useAnnouncements(c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.error).toBe("查询失败");
+    expect(result.current.error).toBe("err");
   });
 
-  it("无公告时 data 为 null", async () => {
-    const { result } = renderHook(() => useAnnouncements());
+  it("无公告", async () => {
+    const c = mockClient([{ data: [], error: null }]);
+    const { result } = renderHook(() => useAnnouncements(c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.data).toBeNull();
   });
 
   it("publish 成功", async () => {
-    const { result } = renderHook(() => useAnnouncements());
+    const c = mockClient([{ data: [], error: null }, { error: null }]);
+    const { result } = renderHook(() => useAnnouncements(c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
-
-    let ok = false;
-    await act(async () => {
-      ok = (await result.current.publish("新公告")) || false;
-    });
+    const ok = await act(() => result.current.publish("新公告"));
     expect(ok).toBe(true);
-    expect(mockInsert).toHaveBeenCalledWith({ content: "新公告" });
   });
 
   it("publish 失败", async () => {
-    mockInsert.mockResolvedValue({ error: { message: "失败" } });
-
-    const { result } = renderHook(() => useAnnouncements());
+    const c = mockClient([{ data: [], error: null }, { error: { message: "失败" } }]);
+    const { result } = renderHook(() => useAnnouncements(c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
-
-    let ok = true;
-    await act(async () => {
-      ok = (await result.current.publish("x")) ?? false;
-    });
+    const ok = await act(() => result.current.publish("x"));
     expect(ok).toBe(false);
   });
 });

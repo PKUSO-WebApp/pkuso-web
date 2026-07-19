@@ -14,7 +14,8 @@ export default function SignupPage() {
   const [fullName, setFullName] = React.useState("");
   const [instrument, setInstrument] = React.useState<(typeof INSTRUMENT_OPTIONS)[number] | "">("");
   const [college, setCollege] = React.useState("");
-  const [joinDate, setJoinDate] = React.useState("");
+  const [joinYear, setJoinYear] = React.useState("");
+  const [joinSemester, setJoinSemester] = React.useState<"春" | "秋" | "">("");
   const [submitting, setSubmitting] = React.useState(false);
   const [errorMsg, setErrorMsg] = React.useState("");
 
@@ -35,7 +36,8 @@ export default function SignupPage() {
       !fullName.trim() ||
       !instrument ||
       !college.trim() ||
-      !joinDate.trim()
+      !joinYear ||
+      !joinSemester
     ) {
       setErrorMsg("请填写完整信息后再提交。");
       return;
@@ -60,13 +62,14 @@ export default function SignupPage() {
       return;
     }
 
-    const { error: profileError } = await supabase.from("profiles").insert({
+    // upsert: createUser trigger 已自动建 profile，需覆盖
+    const { error: profileError } = await supabase.from("profiles").upsert({
       id: userId,
       email: email.trim(),
       full_name: fullName.trim(),
       instrument,
       college: college.trim(),
-      join_date: joinDate.trim(),
+      join_date: `${joinYear}${joinSemester}`,
     });
 
     setSubmitting(false);
@@ -187,15 +190,42 @@ export default function SignupPage() {
 
             <div className="space-y-1">
               <label className="block text-label font-medium text-text-muted">入团时间</label>
-              <input
-                value={joinDate}
-                onChange={(e) => {
-                  setJoinDate(e.target.value);
-                  setErrorMsg("");
-                }}
-                className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-sm text-text outline-none focus:border-text-muted"
-                placeholder="例如：2024秋"
-              />
+              <div className="flex gap-2">
+                <select
+                  value={joinYear}
+                  onChange={(e) => {
+                    setJoinYear(e.target.value);
+                    setErrorMsg("");
+                  }}
+                  className="flex-1 rounded-xl border border-border bg-muted px-3 py-2 text-sm text-text outline-none focus:border-text-muted"
+                >
+                  <option value="" disabled>
+                    年份
+                  </option>
+                  {Array.from({ length: 8 }, (_, i) => {
+                    const y = new Date().getFullYear() - i;
+                    return (
+                      <option key={y} value={String(y)}>
+                        {y}
+                      </option>
+                    );
+                  })}
+                </select>
+                <select
+                  value={joinSemester}
+                  onChange={(e) => {
+                    setJoinSemester(e.target.value as "春" | "秋");
+                    setErrorMsg("");
+                  }}
+                  className="w-20 rounded-xl border border-border bg-muted px-3 py-2 text-sm text-text outline-none focus:border-text-muted"
+                >
+                  <option value="" disabled>
+                    学期
+                  </option>
+                  <option value="春">春</option>
+                  <option value="秋">秋</option>
+                </select>
+              </div>
             </div>
 
             {errorMsg ? (

@@ -32,6 +32,23 @@ body {
   color: var(--color-text);
 }
 
+/* 字号工具类 */
+.text-caption {
+  font-size: var(--text-caption);
+}
+.text-label {
+  font-size: var(--text-label);
+}
+/* 输入框工具类 */
+.input {
+  height: var(--input-height);
+  border-radius: var(--input-radius);
+  @apply w-full border border-border bg-muted px-3 text-xs text-text outline-none;
+}
+.input:focus {
+  @apply border-text-muted;
+}
+
 .pb-safe {
   padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
 }

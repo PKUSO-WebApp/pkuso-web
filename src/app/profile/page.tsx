@@ -7,6 +7,7 @@ import { LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
+import { Modal } from "@/components/ui/Modal";
 
 function formatTime(s: string | null) {
   if (!s) return "—";
@@ -109,20 +110,20 @@ export default function ProfilePage() {
   return (
     <div className="space-y-6">
       {/* 顶部个人信息 */}
-      <section className="rounded-2xl border border-zinc-100 bg-white p-4 shadow-[0_1px_4px_rgba(15,23,42,0.06)]">
+      <section className="rounded-2xl border border-border-light bg-surface p-4 shadow-[0_1px_4px_rgba(15,23,42,0.06)]">
         <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-base font-medium text-white">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary text-base font-medium text-white">
             {initials}
           </div>
           <div className={`min-w-0 flex-1 ${isAdmin ? "flex items-center" : "space-y-1"}`}>
-            <h1 className="text-lg font-semibold text-zinc-900">{fullName}</h1>
+            <h1 className="text-lg font-semibold text-text">{fullName}</h1>
             {!isAdmin ? (
               <>
-                <p className="text-sm text-zinc-600">
-                  <span className="text-zinc-500">声部</span> {instrument}
+                <p className="text-sm text-text-muted">
+                  <span className="text-text-muted">声部</span> {instrument}
                 </p>
-                <p className="text-xs text-zinc-500">
-                  <span className="text-zinc-400">邮箱</span> {email}
+                <p className="text-xs text-text-muted">
+                  <span className="text-text-subtle">邮箱</span> {email}
                 </p>
               </>
             ) : null}
@@ -132,27 +133,27 @@ export default function ProfilePage() {
 
       {/* 管理员控制台：仅 admin */}
       {isAdmin && (
-        <section className="space-y-4 rounded-2xl border-2 border-zinc-900 bg-zinc-50 p-4 shadow-sm">
-          <h2 className="text-base font-semibold text-zinc-900">💃 管理员控制台</h2>
+        <section className="space-y-4 rounded-2xl border-2 border-primary bg-muted p-4 shadow-sm">
+          <h2 className="text-base font-semibold text-text">💃 管理员控制台</h2>
 
           {/* 入团审批 */}
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <p className="text-[11px] font-medium text-zinc-600">
+              <p className="text-label font-medium text-text-muted">
                 入团审批 · 待处理（{pendingRows.length}）
               </p>
               <button
                 type="button"
                 onClick={() => window.location.reload()}
-                className="rounded-full px-2 py-1 text-[11px] text-zinc-600 hover:bg-zinc-200"
+                className="rounded-full px-2 py-1 text-label text-text-muted hover:bg-border"
               >
                 刷新
               </button>
             </div>
             {pendingLoading ? (
-              <p className="py-4 text-center text-xs text-zinc-400">加载中…</p>
+              <p className="py-4 text-center text-xs text-text-subtle">加载中…</p>
             ) : pendingRows.length === 0 ? (
-              <p className="rounded-xl bg-white/80 py-4 text-center text-xs text-zinc-500">
+              <p className="rounded-xl bg-surface/80 py-4 text-center text-xs text-text-muted">
                 暂无待审批用户
               </p>
             ) : (
@@ -160,15 +161,17 @@ export default function ProfilePage() {
                 {pendingRows.map((r) => (
                   <div
                     key={r.id}
-                    className="flex items-start justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2"
+                    className="flex items-start justify-between gap-3 rounded-xl border border-border bg-surface px-3 py-2"
                   >
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold text-zinc-900">
+                      <p className="text-sm font-semibold text-text">
                         {r.full_name || "未填写姓名"}
                       </p>
-                      <p className="mt-0.5 text-xs text-zinc-500">{r.instrument || "未选择声部"}</p>
-                      <p className="mt-0.5 text-xs text-zinc-500">{r.email || "未填写邮箱"}</p>
-                      <p className="mt-0.5 text-[11px] text-zinc-400">
+                      <p className="mt-0.5 text-xs text-text-muted">
+                        {r.instrument || "未选择声部"}
+                      </p>
+                      <p className="mt-0.5 text-xs text-text-muted">{r.email || "未填写邮箱"}</p>
+                      <p className="mt-0.5 text-label text-text-subtle">
                         注册时间：{formatTime(r.created_at)}
                       </p>
                     </div>
@@ -176,7 +179,7 @@ export default function ProfilePage() {
                       type="button"
                       onClick={() => handleApprove(r.id)}
                       disabled={approvingId === r.id}
-                      className="shrink-0 rounded-full bg-emerald-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                      className="shrink-0 rounded-full bg-emerald-600 px-3 py-1.5 text-label font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
                     >
                       {approvingId === r.id ? "处理中…" : "✅ 批准"}
                     </button>
@@ -187,20 +190,20 @@ export default function ProfilePage() {
           </div>
 
           {/* 发布公告 */}
-          <div className="border-t border-zinc-200 pt-4">
-            <p className="mb-2 text-[11px] font-medium text-zinc-600">发布全团公告</p>
+          <div className="border-t border-border pt-4">
+            <p className="mb-2 text-label font-medium text-text-muted">发布全团公告</p>
             <form onSubmit={handlePublishAnnouncement} className="space-y-2">
               <textarea
                 value={announcementBody}
                 onChange={(e) => setAnnouncementBody(e.target.value)}
                 rows={4}
-                className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+                className="w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text outline-none focus:border-text-muted"
                 placeholder="输入公告内容…"
               />
               <button
                 type="submit"
                 disabled={announcementSubmitting}
-                className="w-full rounded-xl bg-zinc-900 py-2.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+                className="w-full rounded-xl bg-primary py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
               >
                 {announcementSubmitting ? "发布中…" : "发布"}
               </button>
@@ -214,7 +217,7 @@ export default function ProfilePage() {
         <button
           type="button"
           onClick={() => setIsPwdModalOpen(true)}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
         >
           <span>🔒 修改密码</span>
         </button>
@@ -233,71 +236,58 @@ export default function ProfilePage() {
       </section>
 
       {/* 修改密码弹窗 */}
-      {isPwdModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="update-password-title"
-        >
-          <button
-            type="button"
-            aria-label="关闭"
-            className="absolute inset-0"
-            onClick={() => {
-              if (isUpdatingPwd) return;
-              setIsPwdModalOpen(false);
-            }}
-          />
-          <div className="relative w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-            <h2 id="update-password-title" className="text-base font-semibold text-zinc-900">
-              修改登录密码
-            </h2>
-            <form onSubmit={handleUpdatePassword} className="mt-4 space-y-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-zinc-600">新密码</label>
-                <input
-                  type="password"
-                  value={newPwd}
-                  onChange={(e) => setNewPwd(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
-                  placeholder="至少 6 位"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-zinc-600">确认新密码</label>
-                <input
-                  type="password"
-                  value={confirmPwd}
-                  onChange={(e) => setConfirmPwd(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
-                  placeholder="再次输入新密码"
-                />
-              </div>
-              <div className="mt-2 flex justify-end gap-2">
-                <button
-                  type="button"
-                  disabled={isUpdatingPwd}
-                  onClick={() => {
-                    if (isUpdatingPwd) return;
-                    setIsPwdModalOpen(false);
-                  }}
-                  className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-60"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={isUpdatingPwd}
-                  className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
-                >
-                  {isUpdatingPwd ? "提交中..." : "确认修改"}
-                </button>
-              </div>
-            </form>
+      <Modal
+        open={isPwdModalOpen}
+        onClose={() => {
+          if (!isUpdatingPwd) setIsPwdModalOpen(false);
+        }}
+        title="修改登录密码"
+        position="center"
+        closeOnOverlay={!isUpdatingPwd}
+      >
+        <form onSubmit={handleUpdatePassword} className="mt-4 space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-text-muted">新密码</label>
+            <input
+              type="password"
+              value={newPwd}
+              onChange={(e) => setNewPwd(e.target.value)}
+              className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-sm text-text outline-none focus:border-text-muted"
+              placeholder="至少 6 位"
+            />
           </div>
-        </div>
-      )}
+          <div>
+            <label className="mb-1 block text-xs font-medium text-text-muted">确认新密码</label>
+            <input
+              type="password"
+              value={confirmPwd}
+              onChange={(e) => setConfirmPwd(e.target.value)}
+              className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-sm text-text outline-none focus:border-text-muted"
+              placeholder="再次输入新密码"
+            />
+          </div>
+          <div className="mt-2 flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={isUpdatingPwd}
+              onClick={() => {
+                if (isUpdatingPwd) return;
+                setIsPwdModalOpen(false);
+              }}
+              className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted disabled:opacity-60"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              disabled={isUpdatingPwd}
+              className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
+            >
+              {isUpdatingPwd ? "提交中..." : "确认修改"}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

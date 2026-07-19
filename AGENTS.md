@@ -1,6 +1,6 @@
-# AGENT.md
+# AGENTS.md
 
-本文件是 Agent（交付工程师）在本仓库工作时的核心指导。详细背景见 `CLAUDE.md`，可复用操作流程见 `.agents/skills/`。
+本文件是 Agent（交付工程师）在本仓库工作时的**唯一核心指导文档**（Source of Truth）。详细背景见 `CLAUDE.md`，可复用操作流程见 `.agents/skills/`。
 
 ## 项目概况
 
@@ -40,14 +40,25 @@ pnpm gen-types    # 同步 Supabase 类型到 src/types/database.types.ts
 
 全局用户状态在 `src/context/user-context.tsx`；页面访问由 `auth-gate` 组件把关；登录/注册页在 `src/app/(auth)/`。
 
-## 分支工作流
+## 六阶段工作流（强制执行）
 
-- 分支命名：`<type>/<简述>`，type = `feat|fix|docs|refactor|test|chore|build|ci`（CI 强制校验）
-- 每个 PR 从 main 切新分支，合并后删分支。禁止在原分支上继续追加。
-- 提交遵循 Conventional Commits（commitlint 强制，type 白名单：`build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test`）。PR 用 Squash & merge。
-- CI 自动验证 typecheck + lint + test + build + gen-types 一致性 + 分支命名规范。
+每个需求严格按顺序执行，**禁止跳步**：
 
-六阶段流程详见 `.agents/DEVELOPMENT_WORKFLOW.md`：Issue → 分支 → 实现+测试 → PR → CI → Squash Merge。提交信息必须含 `Closes #<issue>`。
+| 阶段 | 动作                                                                                        | 完成信号                       |
+| ---- | ------------------------------------------------------------------------------------------- | ------------------------------ |
+| 1    | 解析需求 → 查重 → 创建 Issue                                                                | `Issue #<n> 已创建`            |
+| 2    | `git checkout main && git pull && git checkout -b <type>/<issue>-<slug>`                    | `分支 <name> 已创建`           |
+| 3    | 实现 + 测试 + `pnpm verify`                                                                 | `已完成实现，测试通过（n 个）` |
+| 4    | `git add -A && git commit -m "<type>(<scope>): <subject>` + `Closes #<issue>"` + `git push` | `分支已推送，commit <hash>`    |
+| 5    | `gh pr create`                                                                              | `PR #<n> 已创建`               |
+| 6    | 等待 CI 全绿 → `gh pr merge --squash --delete-branch`                                       | `PR #<n> 已 Squash Merge`      |
+
+**关键规则：**
+
+- 分支命名：`<type>/<issue>-<slug>`，type = `feat|fix|docs|refactor|test|chore|build|ci`（CI 强制校验）
+- 提交遵循 Conventional Commits（commitlint 强制，type 白名单：`build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test`）
+- PR 用 Squash & merge，提交信息必须含 `Closes #<issue>`
+- CI 自动验证：`verify`（format+lint+typecheck+test+build）、`gen-types-check`、`branch-name`
 
 ## 前端设计原则
 
@@ -108,14 +119,24 @@ pnpm gen-types    # 同步 Supabase 类型到 src/types/database.types.ts
 
 | 经验性质                         | 去处                             |
 | -------------------------------- | -------------------------------- |
-| 项目级事实、约定、陷阱           | 本文件（AGENT.md）对应小节       |
+| 项目级事实、约定、陷阱           | 本文件（AGENTS.md）对应小节      |
 | 可复用的多步操作流程             | `.agents/skills/<名字>/SKILL.md` |
 | 用户偏好、决策背景、时效性上下文 | Agent 持久 memory                |
 | git 历史 / 代码本身已能查到的    | 不存，避免重复                   |
 
 会话结束前可用 `.agents/skills/save-lesson` 的流程做沉淀。新 skill 的 frontmatter `description` 必须写清触发时机（"当…时使用"），否则不会被调用。
 
-## 常见坑
+## 常见坑与经验总结
+
+### 文档迁移经验（2026-07-20）
+
+- **文件名选择**：IDE 对复数形式文件名（如 `AGENTS.md`）支持更好，单数字符文件可能被忽略。
+- **引用更新**：重命名后必须全局搜索更新所有引用，否则链接断裂。
+- **git 操作**：`git mv` 保留文件历史，优于删除重建。
+- **格式问题**：`pnpm format:fix` 可自动修复 prettier 风格问题，但修复后 Edit 工具无法匹配原字符串，需重新读取文件。
+- **PowerShell 引号**：多行字符串用 here-string（`@"..."@`）或多个 `-m` 参数，避免单引号嵌套问题。
+
+### 技术坑
 
 - **Supabase trigger 自动建 profile**：`createUser` 后 trigger 已插 profile，代码里用 `.upsert()` 不用 `.insert()`
 - **sed 改代码**：prettier 格式化后 Edit 工具无法匹配原字符串，始终用 Edit/Write
@@ -123,3 +144,9 @@ pnpm gen-types    # 同步 Supabase 类型到 src/types/database.types.ts
 - **commitlint type 白名单**：仅 `build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test`
 - **Windows 开发环境**：仓库内为 LF，git 输出 CRLF 转换警告属正常，不要为此改动文件
 - **`.trae/specs/`**（本地目录，已 gitignore）存有历代功能 spec。做相关模块改动前值得先翻阅对应 spec
+
+### CI 经验
+
+- CI 三个 job：`verify`（format+lint+typecheck+test+build）、`gen-types-check`、`branch-name`
+- `branch-name` job 强制分支名匹配 `^(feat|fix|docs|refactor|test|chore|build|ci|style)/`
+- CI 失败后分析原因，修复后 `git commit --amend` + `git push --force` 重新触发

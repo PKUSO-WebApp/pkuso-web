@@ -30,7 +30,7 @@ jobs:
 
   gen-types-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
 
     steps:
       - uses: actions/checkout@v4
@@ -39,27 +39,24 @@ jobs:
         with:
           version: 2.109.1
 
-      - name: 关联项目并生成最新类型,与提交版本比对
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: 验证远端 schema 与提交的类型文件一致
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
         run: |
           supabase link --project-ref "$SUPABASE_PROJECT_REF"
-          supabase gen types typescript --linked > /tmp/database.types.ts
-
-          # 去掉尾随空白后比对,避免跨平台换行差异
-          sed 's/[[:space:]]*$//' src/types/database.types.ts > /tmp/committed.clean
-          sed 's/[[:space:]]*$//' /tmp/database.types.ts > /tmp/remote.clean
-
-          if ! diff -q /tmp/committed.clean /tmp/remote.clean; then
-            echo "::error::database.types.ts 与 Supabase schema 不一致"
-            echo "请本地运行: pnpm gen-types"
-            echo ""
-            echo "--- 差异(committed vs remote) ---"
-            diff /tmp/committed.clean /tmp/remote.clean || true
-            exit 1
-          fi
-          echo "✅ database.types.ts 与 Supabase schema 一致"
+          supabase gen types typescript --linked > /tmp/remote.ts
+          # 比对表列结构(忽略分号/缩进等 CLI 版本间格式差异)
+          node .github/scripts/compare-db-types.mjs src/types/database.types.ts /tmp/remote.ts
 
   branch-name:
     runs-on: ubuntu-latest

@@ -7,6 +7,7 @@ import { LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
+import { Modal } from "@/components/ui/Modal";
 
 function formatTime(s: string | null) {
   if (!s) return "—";
@@ -233,71 +234,58 @@ export default function ProfilePage() {
       </section>
 
       {/* 修改密码弹窗 */}
-      {isPwdModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="update-password-title"
-        >
-          <button
-            type="button"
-            aria-label="关闭"
-            className="absolute inset-0"
-            onClick={() => {
-              if (isUpdatingPwd) return;
-              setIsPwdModalOpen(false);
-            }}
-          />
-          <div className="relative w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-            <h2 id="update-password-title" className="text-base font-semibold text-zinc-900">
-              修改登录密码
-            </h2>
-            <form onSubmit={handleUpdatePassword} className="mt-4 space-y-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-zinc-600">新密码</label>
-                <input
-                  type="password"
-                  value={newPwd}
-                  onChange={(e) => setNewPwd(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
-                  placeholder="至少 6 位"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-zinc-600">确认新密码</label>
-                <input
-                  type="password"
-                  value={confirmPwd}
-                  onChange={(e) => setConfirmPwd(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
-                  placeholder="再次输入新密码"
-                />
-              </div>
-              <div className="mt-2 flex justify-end gap-2">
-                <button
-                  type="button"
-                  disabled={isUpdatingPwd}
-                  onClick={() => {
-                    if (isUpdatingPwd) return;
-                    setIsPwdModalOpen(false);
-                  }}
-                  className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-60"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={isUpdatingPwd}
-                  className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
-                >
-                  {isUpdatingPwd ? "提交中..." : "确认修改"}
-                </button>
-              </div>
-            </form>
+      <Modal
+        open={isPwdModalOpen}
+        onClose={() => {
+          if (!isUpdatingPwd) setIsPwdModalOpen(false);
+        }}
+        title="修改登录密码"
+        position="center"
+        closeOnOverlay={!isUpdatingPwd}
+      >
+        <form onSubmit={handleUpdatePassword} className="mt-4 space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-zinc-600">新密码</label>
+            <input
+              type="password"
+              value={newPwd}
+              onChange={(e) => setNewPwd(e.target.value)}
+              className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+              placeholder="至少 6 位"
+            />
           </div>
-        </div>
-      )}
+          <div>
+            <label className="mb-1 block text-xs font-medium text-zinc-600">确认新密码</label>
+            <input
+              type="password"
+              value={confirmPwd}
+              onChange={(e) => setConfirmPwd(e.target.value)}
+              className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+              placeholder="再次输入新密码"
+            />
+          </div>
+          <div className="mt-2 flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={isUpdatingPwd}
+              onClick={() => {
+                if (isUpdatingPwd) return;
+                setIsPwdModalOpen(false);
+              }}
+              className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-60"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              disabled={isUpdatingPwd}
+              className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+            >
+              {isUpdatingPwd ? "提交中..." : "确认修改"}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

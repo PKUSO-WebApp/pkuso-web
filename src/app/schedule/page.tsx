@@ -136,9 +136,16 @@ export default function SchedulePage() {
     if (notifyByEmail) {
       const dateStr = `${form.startTime.toLocaleDateString("zh-CN")}`;
       try {
+        const { supabase } = await import("@/lib/supabase");
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
         const res = await fetch("/api/notify", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
           body: JSON.stringify({ title: form.repertoire, dateStr, location: form.location }),
         });
         alert(res.ok ? "✅ 排练已发布,邮件已发送" : "❌ 邮件发送失败");

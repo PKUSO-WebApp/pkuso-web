@@ -195,7 +195,7 @@ describe("POST /api/notify 端到端", () => {
       process.env.SMTP_USER = testAccount.user;
       process.env.SMTP_PASS = testAccount.pass;
       process.env.SMTP_HOST = "smtp.ethereal.email";
-      process.env.SMTP_PORT = "465";
+      process.env.SMTP_PORT = "587";
 
       try {
         // 5. 调用 POST handler

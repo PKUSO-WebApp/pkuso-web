@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthGate } from "@/components/auth-gate";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ToastProvider } from "@/components/ui/Toast";
 import { UserProvider } from "@/context/UserContext";
 
 const geistSans = Geist({
@@ -28,7 +30,11 @@ export default function RootLayout({
     <html lang="zh-CN">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-page-bg`}>
         <UserProvider>
-          <AuthGate>{children}</AuthGate>
+          <ToastProvider>
+            <ErrorBoundary>
+              <AuthGate>{children}</AuthGate>
+            </ErrorBoundary>
+          </ToastProvider>
         </UserProvider>
       </body>
     </html>

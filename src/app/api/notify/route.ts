@@ -8,12 +8,13 @@ export async function resolveTransporter() {
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
   if (smtpUser && smtpPass) {
+    const port = Number(process.env.SMTP_PORT) || 465;
     return {
       mode: "smtp" as const,
       transporter: nodemailer.createTransport({
         host: process.env.SMTP_HOST || "smtp.163.com",
-        port: Number(process.env.SMTP_PORT) || 465,
-        secure: true,
+        port,
+        secure: port === 465,
         auth: { user: smtpUser, pass: smtpPass },
       }),
     };

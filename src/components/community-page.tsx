@@ -2,7 +2,7 @@
 
 import React from "react";
 import imageCompression from "browser-image-compression";
-import { useUser } from "@/context/UserContext";
+import { useUser } from "@/context/user-context";
 import { usePosts } from "@/hooks/usePosts";
 import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";

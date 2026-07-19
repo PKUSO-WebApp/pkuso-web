@@ -1,17 +1,17 @@
 "use client";
 
 import React from "react";
-import { useUser } from "@/context/UserContext";
+import { useUser } from "@/context/user-context";
 import { useRehearsals } from "@/hooks/useRehearsals";
 import { useAttendance } from "@/hooks/useAttendance";
 import { Toggle } from "@/components/ui/Toggle";
-import { RehearsalCard } from "@/components/rehearsal/RehearsalCard";
+import { RehearsalCard } from "@/app/schedule/components/rehearsal-card";
 import {
   CreateRehearsalModal,
   type CreateFormState,
-} from "@/components/rehearsal/CreateRehearsalModal";
-import { CodeVerifyModal } from "@/components/rehearsal/CodeVerifyModal";
-import { AttendanceModal } from "@/components/rehearsal/AttendanceModal";
+} from "@/app/schedule/components/create-rehearsal-modal";
+import { CodeVerifyModal } from "@/app/schedule/components/code-verify-modal";
+import { AttendanceModal } from "@/app/schedule/components/attendance-modal";
 import type { RehearsalRow, AttendanceRowWithUser } from "@/types/database";
 
 type RehearsalType = "合排" | "分排";

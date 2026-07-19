@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useRouter } from "next/navigation";
-import { useUser } from "@/context/UserContext";
+import { useUser } from "@/context/user-context";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { user } = useUser();

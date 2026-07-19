@@ -6,7 +6,7 @@ type ModalProps = {
   open: boolean;
   onClose: () => void;
   title?: string;
-  children: React.ReactNode;
+  children?: React.ReactNode;
   /** 底部弹出(默认)｜居中 */
   position?: "bottom" | "center";
   /** 点击遮罩关闭,默认 true */
@@ -28,7 +28,8 @@ export function Modal({
 
   return (
     <div
-      className={`fixed inset-0 z-30 flex ${align} justify-center bg-black/40 px-4 pb-safe`}
+      className={`fixed inset-0 flex ${align} justify-center bg-black/40 px-4 pb-safe`}
+      style={{ zIndex: "var(--z-modal)" } as React.CSSProperties}
       role="dialog"
       aria-modal="true"
     >
@@ -40,15 +41,15 @@ export function Modal({
         />
       )}
       <div
-        className={`relative w-full max-w-md ${radius} border border-zinc-100 bg-white p-4 shadow-xl`}
+        className={`relative w-full max-w-md ${radius} border border-border bg-surface p-4 shadow-xl`}
       >
         {title && (
           <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-zinc-900">{title}</h2>
+            <h2 className="text-base font-semibold text-text">{title}</h2>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-full bg-zinc-100 px-3 py-1 text-[11px] text-zinc-600 hover:bg-zinc-200"
+              className="rounded-full bg-muted px-3 py-1 text-[11px] text-text-muted hover:bg-border"
             >
               关闭
             </button>

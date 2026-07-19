@@ -24,7 +24,7 @@ describe("Toggle", () => {
   it("激活项有深色样式", () => {
     render(<Toggle options={OPTIONS} value="合排" onChange={vi.fn()} />);
     const active = screen.getByText("合排");
-    expect(active.className).toContain("bg-zinc-900");
+    expect(active.className).toContain("bg-primary");
   });
 
   it("支持自定义标签", () => {

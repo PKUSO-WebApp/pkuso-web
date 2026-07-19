@@ -28,6 +28,40 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
 
+  gen-types-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: 生成远端 schema 并与提交版本比对
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          supabase gen types typescript \
+            --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}" \
+            --schema public \
+            > /tmp/database.types.ts
+
+          # 去掉尾随空白后比对,避免跨平台换行差异
+          sed 's/[[:space:]]*$//' src/types/database.types.ts > /tmp/committed.clean
+          sed 's/[[:space:]]*$//' /tmp/database.types.ts > /tmp/remote.clean
+
+          if ! diff -q /tmp/committed.clean /tmp/remote.clean; then
+            echo "::error::database.types.ts 与 Supabase schema 不一致"
+            echo "请本地运行: pnpm gen-types"
+            echo ""
+            echo "--- 差异(committed vs remote) ---"
+            diff /tmp/committed.clean /tmp/remote.clean || true
+            exit 1
+          fi
+          echo "✅ database.types.ts 与 Supabase schema 一致"
+
   branch-name:
     runs-on: ubuntu-latest
     timeout-minutes: 1

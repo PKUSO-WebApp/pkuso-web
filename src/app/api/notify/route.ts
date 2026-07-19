@@ -21,8 +21,8 @@ export async function POST(request: Request) {
     console.log("[Env] has RESEND key:", !!resendKey);
     console.log("[Env] has NEXT_PUBLIC_SUPABASE_URL:", !!process.env.NEXT_PUBLIC_SUPABASE_URL);
     console.log(
-      "[Env] has NEXT_PUBLIC_SUPABASE_ANON_KEY:",
-      !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      "[Env] has NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:",
+      !!process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
     );
     if (!resendKey) {
       throw new Error("缺少 RESEND_API_KEY 环境变量");
@@ -30,15 +30,15 @@ export async function POST(request: Request) {
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
       throw new Error("缺少 SUPABASE_URL");
     }
-    if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-      throw new Error("缺少 NEXT_PUBLIC_SUPABASE_ANON_KEY");
+    if (!process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY) {
+      throw new Error("缺少 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY");
     }
 
     // 2. 初始化客户端 (一定要放在函数内部，防止顶层崩溃)
     const resend = new Resend(resendKey);
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
     );
 
     // 3. 解析请求体

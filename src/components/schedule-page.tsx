@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 
-import type { RehearsalRow, AttendanceRow } from "@/types/database";
+import type { RehearsalRow, AttendanceRow, AttendanceRowWithUser } from "@/types/database";
 
 type RehearsalType = "合排" | "分排";
 
@@ -562,8 +562,7 @@ export function SchedulePage() {
                 <p className="py-6 text-center text-[11px] text-zinc-400">暂无签到记录</p>
               ) : (
                 attendanceList.map((row, index) => {
-                  const userInfo = (row as { users: unknown } | undefined)?.users as
-                    { name?: string; section?: string } | undefined;
+                  const userInfo = (row as AttendanceRowWithUser).users;
                   const name = userInfo?.name ?? "未命名成员";
                   const section = userInfo?.section ?? "声部未登记";
                   const initials = name.slice(0, 2);

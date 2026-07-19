@@ -4,7 +4,7 @@ import React from "react";
 import imageCompression from "browser-image-compression";
 import { useUser } from "@/context/UserContext";
 import { supabase } from "@/lib/supabase";
-import type { PostType, PostRow } from "@/types/database";
+import type { PostType, PostRow, PostRowWithAuthor } from "@/types/database";
 
 type FormState = {
   title: string;
@@ -68,11 +68,14 @@ export default function CommunityPage() {
       console.warn("[Community] 加载公告失败：", error.message);
       setPosts([]);
     } else {
-      // Supabase 嵌套 users 可能返回单对象或数组，统一取第一项以符合 PostRow
-      const raw = (data ?? []) as Array<
-        PostRow & { users?: PostRow["users"] | Array<{ name: string; section: string }> }
+      // Supabase join: users 可能返回单对象或数组，统一取第一项
+      const raw = (data ?? []) as unknown as Array<
+        PostRow & {
+          users?:
+            { name: string; section: string } | Array<{ name: string; section: string }> | null;
+        }
       >;
-      const normalized: PostRow[] = raw.map((row) => {
+      const normalized: PostRowWithAuthor[] = raw.map((row) => {
         const u = row.users;
         const users =
           Array.isArray(u) && u.length > 0
@@ -91,7 +94,10 @@ export default function CommunityPage() {
     void fetchPosts();
   }, [fetchPosts]);
 
-  const list = React.useMemo(() => posts.filter((p) => p.type === view), [posts, view]);
+  const list = React.useMemo(
+    () => posts.filter((p) => (p.type as PostType) === view),
+    [posts, view],
+  );
 
   const openPublish = (initial?: PostRow) => {
     if (initial) {
@@ -99,7 +105,7 @@ export default function CommunityPage() {
       setForm({
         title: initial.title,
         content: initial.content ?? "",
-        type: initial.type,
+        type: initial.type as PostType,
         contactInfo: initial.contact_info ?? "",
         currentSections: initial.current_sections ?? "",
         missingSections: initial.missing_sections ?? "",
@@ -219,11 +225,10 @@ export default function CommunityPage() {
         setSubmitting(false);
         return;
       }
-      const { error } = await supabase.from("posts").insert({
-        ...basePayload,
-        image_url: imageUrl,
-        author_id: user.id,
-      });
+      const { error } = await supabase.from("posts").insert(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Record spread 与 Insert 类型不兼容
+        { ...basePayload, image_url: imageUrl, author_id: user.id } as any,
+      );
       setSubmitting(false);
       if (error) {
         console.warn("[Community] 发布失败：", error.message);
@@ -254,7 +259,7 @@ export default function CommunityPage() {
     alert("请在新窗口中长按图片保存。");
   };
 
-  const authorLabel = (post: PostRow) => {
+  const authorLabel = (post: PostRowWithAuthor) => {
     const u = post.users;
     if (u?.name) return `${u.name}${u.section ? ` · ${u.section}` : ""}`;
     return "未知";
@@ -302,7 +307,7 @@ export default function CommunityPage() {
                   <div className="flex-1 min-w-0">
                     <h2 className="text-sm font-semibold text-zinc-900">{post.title}</h2>
                     <p className="mt-0.5 text-[11px] text-zinc-500">
-                      {TYPE_LABEL[post.type]}
+                      {TYPE_LABEL[post.type as PostType]}
                       {formatPostDate(post.created_at) && ` · ${formatPostDate(post.created_at)}`}
                     </p>
                     {post.type === "ensemble" && hasSectionText(post.missing_sections) && (
@@ -397,7 +402,7 @@ function DetailModal({
   onClose,
   onSaveQr,
 }: {
-  post: PostRow;
+  post: PostRowWithAuthor;
   onClose: () => void;
   onSaveQr: (url: string) => void;
 }) {
@@ -430,7 +435,7 @@ function DetailModal({
           </button>
         </div>
         <p className="text-[11px] text-zinc-500 flex-shrink-0">
-          {TYPE_LABEL[post.type]} · {author}
+          {TYPE_LABEL[post.type as PostType]} · {author}
         </p>
         {(showCurrent || showMissing) && (
           <div className="mt-2 flex flex-wrap gap-1.5 flex-shrink-0">

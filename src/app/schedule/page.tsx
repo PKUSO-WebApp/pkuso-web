@@ -32,7 +32,6 @@ export default function SchedulePage() {
   const { data: schedules, loading, create, update, remove } = useRehearsals();
   const {
     map: attendanceMap,
-    list: attendanceList,
     loading: attendanceLoading,
     fetchMyAttendances,
     fetchByRehearsal,

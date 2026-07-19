@@ -53,6 +53,7 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
   }, [client, filter?.status, filter?.ids]);
 
   React.useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetch();
   }, [fetch]);
 

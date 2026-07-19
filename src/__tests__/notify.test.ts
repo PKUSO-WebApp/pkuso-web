@@ -94,9 +94,9 @@ async function createEtherealClient() {
   const nodemailer = await import("nodemailer");
   const testAccount = await nodemailer.default.createTestAccount();
   const transporter = nodemailer.default.createTransport({
-    host: "smtp.ethereal.email",
-    port: 587,
-    secure: false,
+    host: testAccount.smtp.host,
+    port: testAccount.smtp.port,
+    secure: testAccount.smtp.secure,
     auth: { user: testAccount.user, pass: testAccount.pass },
   });
   return { nodemailer: nodemailer.default, transporter, testAccount };
@@ -191,11 +191,11 @@ describe("POST /api/notify 端到端", () => {
       }
       const token = session.session.access_token;
 
-      // 4. 注入 Ethereal SMTP（465 端口 TLS，通常比 587 更少被防火墙拦截）
+      // 4. 注入 Ethereal SMTP（使用 createTestAccount 返回的实际配置）
       process.env.SMTP_USER = testAccount.user;
       process.env.SMTP_PASS = testAccount.pass;
-      process.env.SMTP_HOST = "smtp.ethereal.email";
-      process.env.SMTP_PORT = "587";
+      process.env.SMTP_HOST = testAccount.smtp.host;
+      process.env.SMTP_PORT = String(testAccount.smtp.port);
 
       try {
         // 5. 调用 POST handler

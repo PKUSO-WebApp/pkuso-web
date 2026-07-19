@@ -17,6 +17,7 @@
     "format:fix": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "gen-types": "supabase gen types typescript --linked > src/types/database.types.ts",
     "verify": "pnpm format && pnpm lint && pnpm typecheck && pnpm test",
     "prepare": "husky"
   },
@@ -52,6 +53,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.0.8",
     "prettier": "^3.9.5",
+    "supabase": "^2.109.1",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.10"

@@ -82,6 +82,11 @@ pnpm verify       # 一键:format → lint → typecheck → test
 ## 其他约定
 
 - Windows 开发环境;仓库内为 LF,git 输出 CRLF 转换警告属正常,不要为此改动文件。
+- **Windows 编码注意事项**:
+  - PowerShell 默认编码可能不是 UTF-8(尤其是 PowerShell 5.1)。写文件、读文件、管道传递中文时务必显式指定 `UTF8` 编码,避免乱码。
+  - 仓库内文件统一保存为 **UTF-8 无 BOM**。不要让编辑器自动加 BOM,否则 prettier / ESLint 可能误报。
+  - git 已配置 `core.autocrlf` 时,本地 checkout 可能是 CRLF,提交回库时会自动转回 LF。不要手动改行尾。
+  - PowerShell here-string(`@"..."@`)在多行中文场景下更可靠,优于多个 `-m` 拼接 commit message。
 - `.trae/specs/`(本地目录,已 gitignore)存有历代功能 spec(颜色系统、admin/member 拆分、hooks-modal 重构、排练房预订等)。做相关模块改动前值得先翻阅对应 spec。
 - 经验沉淀机制:项目级约定写进本文件;可复用操作流程写成 `.claude/skills/<名字>/SKILL.md`;会话中的偏好与决策背景由 Claude 记入其持久 memory。会话结束前可用 `.claude/skills/save-lesson` 的流程做沉淀。
 

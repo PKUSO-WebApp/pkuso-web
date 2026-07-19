@@ -193,7 +193,7 @@ export function SchedulePage() {
           }),
         });
         ok = res.ok;
-      } catch (err) {
+      } catch {
         ok = false;
       }
       alert(ok ? "✅ 排练已发布！邮件通知已成功发送至全团！" : "❌ 邮件发送失败，请检查控制台。");

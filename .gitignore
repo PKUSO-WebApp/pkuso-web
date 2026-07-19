@@ -44,8 +44,6 @@ next-env.d.ts
 
 # claude code
 .claude/settings.local.json
-/.claude
-CLAUDE.md
 
 # supabase cli 本地状态
 supabase/.temp/

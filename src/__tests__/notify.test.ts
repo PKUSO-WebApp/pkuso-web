@@ -196,6 +196,9 @@ describe("POST /api/notify 端到端", () => {
       process.env.SMTP_PASS = testAccount.pass;
       process.env.SMTP_HOST = testAccount.smtp.host;
       process.env.SMTP_PORT = String(testAccount.smtp.port);
+      console.log(
+        `📡 Ethereal SMTP 配置: host=${testAccount.smtp.host}, port=${testAccount.smtp.port}, secure=${testAccount.smtp.secure}`,
+      );
 
       try {
         // 5. 调用 POST handler

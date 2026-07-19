@@ -1,43 +1,47 @@
-// 对比两份 Supabase gen-types 输出,忽略格式差异,只检查表列结构一致性
+// 对比两份 Supabase gen-types 输出:提取表/视图的列名结构,忽略格式差异
 import { readFileSync } from "node:fs";
 
 const [a, b] = process.argv.slice(2).map((f) => readFileSync(f, "utf8"));
 
-function extract(s) {
+/** 剥离注释和空白,提取所有对象字面量 */
+function extractTableColumns(s) {
   const result = {};
-  // 匹配 Row 块中的字段: 字段名: 类型
-  const tableRe = /(\w+):\s*\{[^}]*Row:\s*\{([^}]*)\}/gs;
-  let m;
-  while ((m = tableRe.exec(s))) {
-    const name = m[1];
-    const body = m[2];
-    const cols = {};
-    for (const cm of body.matchAll(/(\w+)\??:\s*(.+?)(?:,|\n)/g)) {
-      cols[cm[1]] = cm[2].trim().replace(/\s+/g, " ");
+
+  // 匹配形如 TableName: { ... Row: { field1: type1, field2: type2 } ... }
+  // 先找到所有 Row: 块,用平衡括号跟踪关闭位置
+  const rowBlocks = [];
+  const rowRe = /(\w+):\s*\{[^}]*Row:\s*\{/g;
+  let rm;
+  while ((rm = rowRe.exec(s))) {
+    const tableName = rm[1];
+    const start = rm.index + rm[0].length;
+    // 从 Row: { 之后的第一列开始,跟踪括号深度找到匹配的 }
+    let depth = 1;
+    let end = start;
+    while (depth > 0 && end < s.length) {
+      if (s[end] === "{") depth++;
+      else if (s[end] === "}") depth--;
+      end++;
     }
-    result[name] = Object.keys(cols).sort();
+    const body = s.slice(start, end - 1);
+    rowBlocks.push({ tableName, body });
   }
-  // 也收集 Views
-  const viewRe = /Views:\s*\{(.*?)\}\s*,?\s*(?:Functions|Enums)/gs;
-  let vm;
-  while ((vm = viewRe.exec(s))) {
-    const inner = vm[1];
-    for (const tm of inner.matchAll(/(\w+):\s*\{[^}]*Row:\s*\{([^}]*)\}/gs)) {
-      const name = tm[1];
-      const body = tm[2];
-      const cols = {};
-      for (const cm of body.matchAll(/(\w+)\??:\s*(.+?)(?:,|\n)/g)) {
-        cols[cm[1]] = cm[2].trim().replace(/\s+/g, " ");
-      }
-      result[name] = Object.keys(cols).sort();
+
+  for (const { tableName, body } of rowBlocks) {
+    const cols = [];
+    // 匹配 field?: type 或 field: type
+    for (const cm of body.matchAll(/^\s*(\w+)\??:\s*(.+)/gm)) {
+      cols.push(cm[1]);
+    }
+    if (cols.length > 0 && tableName !== "Relationships") {
+      result[tableName] = cols.sort();
     }
   }
   return result;
 }
 
-const aSchema = extract(a);
-const bSchema = extract(b);
-
+const aSchema = extractTableColumns(a);
+const bSchema = extractTableColumns(b);
 const aKeys = Object.keys(aSchema).sort();
 const bKeys = Object.keys(bSchema).sort();
 
@@ -65,4 +69,6 @@ if (!ok) {
   process.exit(1);
 }
 
-console.log(`✅ database.types.ts 与 Supabase schema 一致 (${aKeys.length} 表/视图)`);
+console.log(
+  `✅ database.types.ts 与 Supabase schema 一致 (${aKeys.length} 表/视图: ${aKeys.join(", ")})`,
+);

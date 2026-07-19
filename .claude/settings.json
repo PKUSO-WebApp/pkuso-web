@@ -1,0 +1,22 @@
+{
+  "worktree": {
+    "bgIsolation": "none"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git branch:*)",
+      "Bash(git show:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npx tsc --noEmit)",
+      "PowerShell(git status:*)",
+      "PowerShell(git log:*)",
+      "PowerShell(git diff:*)",
+      "PowerShell(git branch:*)",
+      "PowerShell(npm run lint:*)",
+      "PowerShell(npx tsc --noEmit)"
+    ]
+  }
+}

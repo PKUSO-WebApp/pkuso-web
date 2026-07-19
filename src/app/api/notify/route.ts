@@ -4,7 +4,7 @@ import { createServerSupabase } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
 
-async function resolveTransporter() {
+export async function resolveTransporter() {
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
   if (smtpUser && smtpPass) {
@@ -100,7 +100,7 @@ export async function POST(request: Request) {
   }
 }
 
-function e(s: string) {
+export function e(s: string) {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

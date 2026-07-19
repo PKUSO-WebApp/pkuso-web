@@ -1,0 +1,86 @@
+/* ============================================================
+   PKUSO Design Tokens — 设计令牌
+   所有颜色/尺寸/阴影/层级以此文件为单一可信源。
+   亮色模式: :root   暗色模式: [data-theme="dark"]
+   ============================================================ */
+
+/* ---- 颜色 Token ---- */
+:root {
+  /* 主色(按钮/导航/强调) */
+  --color-primary: #18181b; /* zinc-900 */
+  --color-primary-foreground: #ffffff;
+
+  /* 背景层级 */
+  --color-surface: #ffffff; /* white */
+  --color-card: #fafafa; /* zinc-50 */
+  --color-muted: #f4f4f5; /* zinc-100 */
+  --color-page-bg: #f4f4f5; /* zinc-100 */
+
+  /* 文字层级 */
+  --color-text: #18181b; /* zinc-900 */
+  --color-text-muted: #71717a; /* zinc-500 */
+  --color-text-subtle: #a1a1aa; /* zinc-400 */
+
+  /* 边框 */
+  --color-border: #e4e4e7; /* zinc-200 */
+  --color-border-light: #f4f4f5; /* zinc-100 */
+
+  /* 语义色 */
+  --color-danger: #dc2626; /* red-600 */
+  --color-danger-bg: #fef2f2; /* red-50 */
+  --color-success: #059669; /* emerald-600 */
+  --color-success-bg: #ecfdf5; /* emerald-50 */
+  --color-warning: #d97706; /* amber-600 */
+  --color-warning-bg: #fffbeb; /* amber-50 */
+  --color-info: #0ea5e9; /* sky-500 */
+  --color-info-bg: #f0f9ff; /* sky-50 */
+
+  /* ---- 尺寸 Token ---- */
+  --page-width: 448px; /* max-w-md */
+
+  /* ---- 阴影 Token ---- */
+  --shadow-card: 0 1px 4px rgba(15, 23, 42, 0.06);
+  --shadow-modal: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+
+  /* ---- Z-index Token ---- */
+  --z-modal: 30;
+  --z-overlay: 40;
+  --z-toast: 50;
+
+  /* ---- 圆角 Token ---- */
+  --radius-sm: 0.5rem; /* 8px  */
+  --radius-md: 0.75rem; /* 12px = rounded-xl */
+  --radius-lg: 1rem; /* 16px = rounded-2xl */
+  --radius-xl: 1.5rem; /* 24px = rounded-3xl */
+  --radius-full: 9999px; /* rounded-full */
+}
+
+/* ---- 暗色模式 ---- */
+[data-theme="dark"] {
+  --color-primary: #f4f4f5; /* zinc-100 */
+  --color-primary-foreground: #18181b; /* zinc-900 */
+
+  --color-surface: #09090b; /* zinc-950 */
+  --color-card: #18181b; /* zinc-900 */
+  --color-muted: #27272a; /* zinc-800 */
+  --color-page-bg: #09090b; /* zinc-950 */
+
+  --color-text: #f4f4f5; /* zinc-100 */
+  --color-text-muted: #a1a1aa; /* zinc-400 */
+  --color-text-subtle: #71717a; /* zinc-500 */
+
+  --color-border: #27272a; /* zinc-800 */
+  --color-border-light: #18181b; /* zinc-900 */
+
+  --color-danger: #f87171; /* red-400 */
+  --color-danger-bg: #1f1315;
+  --color-success: #34d399; /* emerald-400 */
+  --color-success-bg: #0a1f1a;
+  --color-warning: #fbbf24; /* amber-400 */
+  --color-warning-bg: #1f1808;
+  --color-info: #38bdf8; /* sky-400 */
+  --color-info-bg: #091a26;
+
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.3);
+  --shadow-modal: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}

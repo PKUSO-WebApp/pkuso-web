@@ -5,8 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import type { UserRole } from "@/context/UserContext";
 import { TabBar } from "@/components/tab-bar";
-import { supabase } from "@/lib/supabase";
-import type { ProfileRow } from "@/types/database";
+import { useAuth } from "@/hooks/useAuth";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, login, logout } = useUser();
@@ -15,43 +14,39 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   const isAuthPage = pathname === "/login" || pathname === "/signup";
 
-  const [sessionLoading, setSessionLoading] = React.useState(true);
-  const [sessionUserId, setSessionUserId] = React.useState<string | null>(null);
-  const [profileLoading, setProfileLoading] = React.useState(false);
-  const [profileStatus, setProfileStatus] = React.useState<string | null>(null);
-  const [profileRole, setProfileRole] = React.useState<string | null>(null);
-  const [profileName, setProfileName] = React.useState<string | null>(null);
-  const [profileInstrument, setProfileInstrument] = React.useState<string | null>(null);
-  const [profileEmail, setProfileEmail] = React.useState<string | null>(null);
-  const [profileErrorMsg, setProfileErrorMsg] = React.useState<string | null>(null);
+  const onProfileLoaded = React.useCallback(
+    (profile: {
+      id: string;
+      name: string;
+      role: string;
+      section: string;
+      status: string;
+      email: string;
+    }) => {
+      login({
+        id: profile.id,
+        name: profile.name,
+        role: (profile.role as UserRole) ?? "member",
+        section: profile.section,
+        status: profile.status,
+        email: profile.email,
+      });
+    },
+    [login],
+  );
 
-  React.useEffect(() => {
-    let mounted = true;
+  const onClearProfile = React.useCallback(() => {
+    logout();
+  }, [logout]);
 
-    const init = async () => {
-      setSessionLoading(true);
-      const { data, error } = await supabase.auth.getSession();
-      if (!mounted) return;
-      if (error) {
-        console.warn("[AuthGate] getSession 失败：", error.message);
-      }
-      const id = data.session?.user?.id ?? null;
-      setSessionUserId(id);
-      setSessionLoading(false);
-    };
-
-    void init();
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
-      if (!mounted) return;
-      setSessionUserId(next?.user?.id ?? null);
-    });
-
-    return () => {
-      mounted = false;
-      sub.subscription.unsubscribe();
-    };
-  }, []);
+  const {
+    sessionUserId,
+    sessionLoading,
+    profileStatus,
+    profileLoading,
+    profileErrorMsg,
+    handleSignOut,
+  } = useAuth({ onProfileLoaded, onClearProfile });
 
   React.useEffect(() => {
     if (!sessionLoading && !sessionUserId && !isAuthPage) {
@@ -59,86 +54,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }, [sessionLoading, sessionUserId, isAuthPage, router]);
 
-  const shouldShowShell = true;
-
-  React.useEffect(() => {
-    let mounted = true;
-    const fetchProfile = async () => {
-      if (!sessionUserId) {
-        setProfileStatus(null);
-        setProfileRole(null);
-        setProfileName(null);
-        setProfileInstrument(null);
-        setProfileEmail(null);
-        setProfileErrorMsg(null);
-        logout();
-        return;
-      }
-
-      setProfileLoading(true);
-      setProfileErrorMsg(null);
-
-      console.log("[AuthGate] 查询 profiles 前，session.user.id =", sessionUserId);
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, status, role, full_name, instrument, email")
-        .eq("id", sessionUserId)
-        .maybeSingle();
-
-      console.log("[AuthGate] profiles 查询结果 data =", data, ", error =", error);
-
-      if (!mounted) return;
-
-      if (error) {
-        console.warn("[AuthGate] 加载 profiles 失败：", error.message);
-        setProfileLoading(false);
-        setProfileErrorMsg(`查询失败：${error.message}`);
-        setProfileStatus(null);
-        return;
-      }
-
-      if (data == null) {
-        setProfileLoading(false);
-        setProfileErrorMsg(
-          `未查到 profile 记录（id = ${sessionUserId}）。请确认 public.profiles 表中存在该用户。`,
-        );
-        setProfileStatus(null);
-        return;
-      }
-
-      setProfileErrorMsg(null);
-      setProfileStatus((data as ProfileRow)?.status ?? null);
-      setProfileRole((data as ProfileRow)?.role ?? null);
-      setProfileName((data as ProfileRow)?.full_name ?? null);
-      setProfileInstrument((data as ProfileRow)?.instrument ?? null);
-      setProfileEmail((data as ProfileRow)?.email ?? null);
-
-      // 将 profile 写回全局状态，兼容现有页面使用 useUser()
-      login({
-        id: sessionUserId,
-        name: ((data as ProfileRow)?.full_name as string) ?? "未命名用户",
-        role: ((data as ProfileRow)?.role ?? "member") as UserRole,
-        section: ((data as ProfileRow)?.instrument as string) ?? "",
-        status: ((data as ProfileRow)?.status as string) ?? undefined,
-        email: ((data as ProfileRow)?.email as string) ?? undefined,
-      });
-
-      setProfileLoading(false);
-    };
-
-    void fetchProfile();
-    return () => {
-      mounted = false;
-    };
-  }, [sessionUserId, login, logout]);
-
   const isPending = !!sessionUserId && profileStatus === "pending";
   const isApproved = !!sessionUserId && profileStatus === "approved";
 
   const handleLogout = () => {
-    void supabase.auth.signOut();
-    logout();
+    void handleSignOut();
     router.replace("/login");
   };
 
@@ -165,7 +85,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                 {profileErrorMsg}
               </p>
               <p className="mt-2 text-xs text-zinc-500">
-                请打开浏览器控制台查看 [AuthGate] 的详细日志（session.user.id、查询结果、error）。
+                请打开浏览器控制台查看 [AuthGate] 的详细日志。
               </p>
               <button
                 type="button"

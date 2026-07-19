@@ -65,21 +65,21 @@ export default function CommunityPage() {
     uploadImage,
   } = usePosts();
 
-  // normalize Supabase join: users → single object
+  // normalize Supabase join: profiles → single object
   const posts = React.useMemo(() => {
     return (rawPosts as unknown[]).map((row) => {
-      const r = row as PostRow & { users?: unknown };
-      const u = r.users as Record<string, unknown> | undefined;
-      const users =
-        Array.isArray(u) && u.length > 0
+      const r = row as PostRow & { profiles?: unknown };
+      const p = r.profiles as Record<string, unknown> | undefined;
+      const profiles =
+        Array.isArray(p) && p.length > 0
           ? {
-              name: (u[0] as Record<string, string>).name,
-              section: (u[0] as Record<string, string>).section,
+              full_name: (p[0] as Record<string, string>).full_name,
+              instrument: (p[0] as Record<string, string>).instrument,
             }
-          : u && typeof u === "object" && !Array.isArray(u)
-            ? (u as unknown as { name: string; section: string })
+          : p && typeof p === "object" && !Array.isArray(p)
+            ? (p as unknown as { full_name: string; instrument: string })
             : null;
-      return { ...r, users };
+      return { ...r, profiles };
     }) as PostRowWithAuthor[];
   }, [rawPosts]);
 
@@ -354,8 +354,10 @@ function DetailModal({
   onClose: () => void;
   onSaveQr: (url: string) => void;
 }) {
-  const u = post.users;
-  const author = u?.name ? `${u.name}${u.section ? ` · ${u.section}` : ""}` : "未知";
+  const p = post.profiles;
+  const author = p?.full_name
+    ? `${p.full_name}${p.instrument ? ` · ${p.instrument}` : ""}`
+    : "未知";
   const showCurrent = post.type === "ensemble" && hasSectionText(post.current_sections);
   const showMissing = post.type === "ensemble" && hasSectionText(post.missing_sections);
 

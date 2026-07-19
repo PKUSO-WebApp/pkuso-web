@@ -6,7 +6,7 @@ import { supabase as defaultClient } from "@/lib/supabase";
 export type AttendanceEntry = {
   rehearsal_id: number;
   user_id: string;
-  status: "present" | "leave" | "absent";
+  status: "present" | "late" | "absent" | "excused";
 };
 
 export function useAttendance(client: typeof defaultClient = defaultClient) {
@@ -47,7 +47,7 @@ export function useAttendance(client: typeof defaultClient = defaultClient) {
       setLoading(true);
       const { data, error } = await client
         .from("attendances")
-        .select("*, users(name, section)")
+        .select("*")
         .eq("rehearsal_id", rehearsalId);
       setLoading(false);
       if (error) {

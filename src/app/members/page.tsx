@@ -68,7 +68,7 @@ export default function MembersPage() {
   >([]);
   const [statsError, setStatsError] = React.useState<string | null>(null);
 
-  const loadStats = async () => {
+  const loadStats = React.useCallback(async () => {
     const lo = Math.min(startIdx, endIdx);
     const hi = Math.max(startIdx, endIdx);
     const ids = rehearsalList.slice(lo, hi + 1).map((r) => r.id);
@@ -109,14 +109,15 @@ export default function MembersPage() {
       })
       .sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
     setStatsRows(result);
-  };
+  }, [rehearsalList, startIdx, endIdx]);
 
   React.useEffect(() => {
     if (attendanceOpen && rehearsalList.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setEndIdx(rehearsalList.length - 1);
       void loadStats();
     }
-  }, [attendanceOpen, startIdx, endIdx, rehearsalList]);
+  }, [attendanceOpen, rehearsalList, loadStats]);
 
   const exportCsv = () => {
     const csv =

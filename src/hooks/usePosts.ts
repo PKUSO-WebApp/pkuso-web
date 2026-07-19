@@ -27,6 +27,7 @@ export function usePosts(client: typeof defaultClient = defaultClient) {
   }, [client]);
 
   React.useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetch();
   }, [fetch]);
 

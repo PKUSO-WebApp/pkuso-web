@@ -2,8 +2,8 @@
 
 import React from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { useUser } from "@/context/UserContext";
-import type { UserRole } from "@/context/UserContext";
+import { useUser } from "@/context/user-context";
+import type { UserRole } from "@/context/user-context";
 import { TabBar } from "@/components/tab-bar";
 import { useAuth } from "@/hooks/useAuth";
 

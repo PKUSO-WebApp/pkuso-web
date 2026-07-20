@@ -14,6 +14,7 @@ export type RehearsalRow = PublicSchema["Tables"]["rehearsals"]["Row"];
 export type AttendanceRow = PublicSchema["Tables"]["attendances"]["Row"];
 export type AnnouncementRow = PublicSchema["Tables"]["announcements"]["Row"];
 export type PostRow = PublicSchema["Tables"]["posts"]["Row"];
+export type ScheduleRow = PublicSchema["Tables"]["schedules"]["Row"];
 
 // ---- 枚举类型(从 database.types.ts Enums 派生) ----
 export type ProfileStatus = PublicSchema["Enums"]["profileStatus"];

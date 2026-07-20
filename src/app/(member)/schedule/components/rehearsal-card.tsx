@@ -9,7 +9,9 @@ type Props = {
 };
 
 export function RehearsalCard({ item, hasSigned, onSignIn }: Props) {
-  const expired = isRehearsalExpired(item.start_time!, item.end_time ?? null);
+  const expired = item.start_time
+    ? isRehearsalExpired(item.start_time, item.end_time ?? null)
+    : false;
 
   return (
     <Card>
@@ -20,7 +22,9 @@ export function RehearsalCard({ item, hasSigned, onSignIn }: Props) {
             {item.type === "section" && item.target_section ? ` · ${item.target_section}` : null}
           </p>
           <h2 className="text-base font-semibold text-text">
-            {formatRehearsalRange(item.start_time!, item.end_time ?? null)}
+            {item.start_time
+              ? formatRehearsalRange(item.start_time, item.end_time ?? null)
+              : "时间未设置"}
           </h2>
           <p className="text-xs text-text-muted">
             地点：{item.location}

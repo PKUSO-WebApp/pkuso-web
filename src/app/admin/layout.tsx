@@ -38,7 +38,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <div className="flex items-center justify-around px-4 py-2">
             {tabs.map((tab) => {
               const Icon = tab.icon;
-              const active = pathname === tab.href || pathname.startsWith(tab.href + "/");
+              const active =
+                tab.href === "/admin"
+                  ? pathname === "/admin"
+                  : pathname === tab.href || pathname.startsWith(tab.href + "/");
 
               return (
                 <Link

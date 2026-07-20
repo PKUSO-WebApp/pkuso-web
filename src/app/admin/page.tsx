@@ -76,7 +76,7 @@ export default function AdminPage() {
         ) : pendingRows.length === 0 ? (
           <p className="py-4 text-center text-xs text-text-muted">暂无待审批用户</p>
         ) : (
-          <div className="max-h-[50vh] space-y-2 overflow-y-auto">
+          <div className="max-h-[300px] space-y-2 overflow-y-auto">
             {pendingRows.map((r) => (
               <div
                 key={r.id}
@@ -94,7 +94,7 @@ export default function AdminPage() {
                   type="button"
                   onClick={() => handleApprove(r.id)}
                   disabled={approvingId === r.id}
-                  className="shrink-0 rounded-full bg-emerald-600 px-3 py-1.5 text-label font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                  className="shrink-0 rounded-full bg-success px-3 py-1.5 text-label font-medium text-success-foreground hover:bg-success/90 disabled:opacity-60"
                 >
                   {approvingId === r.id ? "处理中…" : "✅ 批准"}
                 </button>

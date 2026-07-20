@@ -44,6 +44,7 @@
   --color-danger-bg: #fef2f2; /* red-50 */
   --color-success: #059669; /* emerald-600 */
   --color-success-bg: #ecfdf5; /* emerald-50 */
+  --color-success-foreground: #ffffff; /* success按钮文字颜色 */
   --color-warning: #d97706; /* amber-600 */
   --color-warning-bg: #fffbeb; /* amber-50 */
   --color-info: #0ea5e9; /* sky-500 */
@@ -98,6 +99,7 @@
   --color-danger-bg: #1f1315;
   --color-success: #34d399; /* emerald-400 */
   --color-success-bg: #0a1f1a;
+  --color-success-foreground: #064e3b; /* emerald-900 - 提高暗色模式对比度 */
   --color-warning: #fbbf24; /* amber-400 */
   --color-warning-bg: #1f1808;
   --color-info: #38bdf8; /* sky-400 */

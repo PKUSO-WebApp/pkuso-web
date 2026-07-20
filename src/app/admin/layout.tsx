@@ -4,11 +4,12 @@ import React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useUser } from "@/context/user-context";
-import { ClipboardList, Music, User, UsersRound } from "lucide-react";
+import { ClipboardList, Calendar, Music, User, UsersRound } from "lucide-react";
 
 const tabs = [
   { href: "/admin", label: "控制台", icon: ClipboardList },
   { href: "/admin/rehearsals", label: "排练", icon: Music },
+  { href: "/admin/schedule", label: "日程", icon: Calendar },
   { href: "/admin/members", label: "成员", icon: UsersRound },
   { href: "/admin/profile", label: "我的", icon: User },
 ];

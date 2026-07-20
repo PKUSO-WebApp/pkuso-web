@@ -180,6 +180,7 @@ export type Database = {
           author_id: string | null;
           created_at: string | null;
           end_time: string | null;
+          group_id: string | null;
           id: number;
           rehearsal_id: number | null;
           start_time: string;
@@ -189,6 +190,7 @@ export type Database = {
           author_id?: string | null;
           created_at?: string | null;
           end_time?: string | null;
+          group_id?: string | null;
           id?: never;
           rehearsal_id?: number | null;
           start_time: string;
@@ -198,6 +200,7 @@ export type Database = {
           author_id?: string | null;
           created_at?: string | null;
           end_time?: string | null;
+          group_id?: string | null;
           id?: never;
           rehearsal_id?: number | null;
           start_time?: string;

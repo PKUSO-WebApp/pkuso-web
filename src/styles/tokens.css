@@ -10,6 +10,15 @@
   --color-primary: #18181b; /* zinc-900 */
   --color-primary-foreground: #ffffff;
 
+  /* 日程甘特图颜色(7个鲜艳且分辨性强的颜色) */
+  --color-schedule-1: #ef4444; /* red-500 */
+  --color-schedule-2: #f97316; /* orange-500 */
+  --color-schedule-3: #eab308; /* yellow-500 */
+  --color-schedule-4: #22c55e; /* green-500 */
+  --color-schedule-5: #3b82f6; /* blue-500 */
+  --color-schedule-6: #a855f7; /* purple-500 */
+  --color-schedule-7: #ec4899; /* pink-500 */
+
   /* 背景层级 */
   --color-surface: #ffffff; /* white */
   --color-card: #fafafa; /* zinc-50 */
@@ -24,6 +33,11 @@
   /* 边框 */
   --color-border: #e4e4e7; /* zinc-200 */
   --color-border-light: #f4f4f5; /* zinc-100 */
+
+  /* 甘特图 */
+  --color-gantt-sidebar: #dbeafe; /* sky-100 */
+  --color-schedule-text: #ffffff; /* 日程块文字颜色 */
+  --color-schedule-text-muted: rgba(255, 255, 255, 0.8); /* 日程块辅助文字颜色 */
 
   /* 语义色 */
   --color-danger: #dc2626; /* red-600 */
@@ -88,6 +102,11 @@
   --color-warning-bg: #1f1808;
   --color-info: #38bdf8; /* sky-400 */
   --color-info-bg: #091a26;
+
+  /* 甘特图 */
+  --color-gantt-sidebar: #0c4a6e; /* sky-950 */
+  --color-schedule-text: #ffffff; /* 日程块文字颜色 */
+  --color-schedule-text-muted: rgba(255, 255, 255, 0.8); /* 日程块辅助文字颜色 */
 
   --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.3);
   --shadow-modal: 0 25px 50px -12px rgba(0, 0, 0, 0.5);

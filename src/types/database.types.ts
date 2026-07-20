@@ -181,6 +181,7 @@ export type Database = {
           created_at: string | null;
           end_time: string | null;
           id: number;
+          rehearsal_id: number | null;
           start_time: string;
           title: string | null;
         };
@@ -189,6 +190,7 @@ export type Database = {
           created_at?: string | null;
           end_time?: string | null;
           id?: never;
+          rehearsal_id?: number | null;
           start_time: string;
           title?: string | null;
         };
@@ -197,6 +199,7 @@ export type Database = {
           created_at?: string | null;
           end_time?: string | null;
           id?: never;
+          rehearsal_id?: number | null;
           start_time?: string;
           title?: string | null;
         };
@@ -206,6 +209,13 @@ export type Database = {
             columns: ["author_id"];
             isOneToOne: false;
             referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "schedules_rehearsal_id_fkey";
+            columns: ["rehearsal_id"];
+            isOneToOne: false;
+            referencedRelation: "rehearsals";
             referencedColumns: ["id"];
           },
         ];

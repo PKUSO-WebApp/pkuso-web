@@ -141,7 +141,7 @@ export function ScheduleGantt({ schedules, user, remove, selectedDate }: Props) 
 
   return (
     <>
-      <div className="relative flex w-full" style={{ height: "960px" }}>
+      <div className="relative flex w-full" style={{ height: "480px" }}>
         {/* 左侧时间轴 */}
         <div
           className="flex-shrink-0 w-12 border-r border-border"

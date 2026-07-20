@@ -47,7 +47,12 @@ export default function AdminRehearsalsPage() {
   }, [attendanceRehearsal, fetchByRehearsal]);
 
   const list = React.useMemo(
-    () => schedules.filter((r) => (r.type === "full" ? "合排" : "分排") === currentType),
+    () =>
+      schedules.filter((r) => {
+        if (r.type === "full") return currentType === "合排";
+        if (r.type === "section") return currentType === "分排";
+        return false;
+      }),
     [schedules, currentType],
   );
 
@@ -159,7 +164,7 @@ export default function AdminRehearsalsPage() {
 
       <Toggle options={["合排", "分排"] as const} value={currentType} onChange={setCurrentType} />
 
-      <section className="space-y-3">
+      <section className="max-h-[300px] space-y-3 overflow-y-auto">
         {loading && <p className="py-6 text-center text-xs text-text-subtle">加载中…</p>}
         {!loading &&
           list.map((item) => (

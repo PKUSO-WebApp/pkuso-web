@@ -62,9 +62,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="min-h-screen flex justify-center">
-      <div className="flex min-h-screen w-full max-w-md flex-col bg-page-bg">
-        <main className={`flex-1 overflow-y-auto ${isAuthPage ? "px-4 pt-4 pb-4" : ""}`}>
+    <div className="h-screen flex justify-center">
+      <div className="flex h-screen w-full max-w-md flex-col bg-page-bg">
+        <main
+          className={`flex-1 flex flex-col overflow-hidden ${isAuthPage ? "px-4 pt-4 pb-4" : ""}`}
+        >
           {sessionLoading ? (
             <div className="flex h-full items-center justify-center text-xs text-text-subtle">
               正在检查登录状态…

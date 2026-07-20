@@ -44,48 +44,34 @@ export default function SignupPage() {
     }
 
     setSubmitting(true);
-    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+    const { error: signUpError } = await supabase.auth.signUp({
       email: email.trim(),
       password: password,
-    });
-
-    if (signUpError) {
-      setSubmitting(false);
-      setErrorMsg(signUpError.message || "注册失败，请稍后重试。");
-      return;
-    }
-
-    const userId = signUpData.user?.id;
-    if (!userId) {
-      setSubmitting(false);
-      setErrorMsg("注册成功但未获取到用户信息，请稍后重试。");
-      return;
-    }
-
-    // upsert: createUser trigger 已自动建 profile，需覆盖
-    const { error: profileError } = await supabase.from("profiles").upsert({
-      id: userId,
-      email: email.trim(),
-      full_name: fullName.trim(),
-      instrument,
-      college: college.trim(),
-      join_date: `${joinYear}${joinSemester}`,
+      options: {
+        data: {
+          full_name: fullName.trim(),
+          instrument,
+          college: college.trim(),
+          join_date: `${joinYear}${joinSemester}`,
+        },
+      },
     });
 
     setSubmitting(false);
 
-    if (profileError) {
-      setErrorMsg(profileError.message || "写入资料失败，请稍后重试。");
+    if (signUpError) {
+      setErrorMsg(signUpError.message || "注册失败，请稍后重试。");
       return;
     }
 
     alert("注册成功，请等待管理员审核");
+    await new Promise((resolve) => setTimeout(resolve, 500));
     router.replace("/login");
   };
 
   return (
     <div className="flex min-h-[80vh] items-center justify-center">
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-md">
         <div className="rounded-3xl border border-border bg-surface p-5 shadow-sm">
           <div className="mb-4 text-center">
             <h1 className="text-xl font-semibold text-text">创建账号</h1>
@@ -229,7 +215,7 @@ export default function SignupPage() {
             </div>
 
             {errorMsg ? (
-              <div className="rounded-xl bg-red-50 px-3 py-2 text-center text-sm text-red-600">
+              <div className="rounded-xl bg-danger-bg px-3 py-2 text-center text-sm text-danger">
                 {errorMsg}
               </div>
             ) : null}
@@ -237,7 +223,7 @@ export default function SignupPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="mt-1 flex w-full items-center justify-center rounded-2xl bg-primary px-4 py-3 text-sm font-medium text-white shadow-md hover:opacity-90 disabled:opacity-60"
+              className="mt-1 flex w-full items-center justify-center rounded-2xl bg-primary px-4 py-3 text-sm font-medium text-primary-foreground shadow-md hover:opacity-90 disabled:opacity-60"
             >
               {submitting ? "注册中…" : "注册"}
             </button>

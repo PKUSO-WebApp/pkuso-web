@@ -42,6 +42,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     sessionUserId,
     sessionLoading,
     profileStatus,
+    profileRole,
     profileLoading,
     profileErrorMsg,
     handleSignOut,
@@ -53,8 +54,58 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }, [sessionLoading, sessionUserId, isAuthPage, router]);
 
+  // 管理员用户自动路由到 admin 端
+  React.useEffect(() => {
+    const isAdminPage = pathname === "/admin" || pathname.startsWith("/admin/");
+    if (
+      !sessionLoading &&
+      !profileLoading &&
+      sessionUserId &&
+      profileRole === "admin" &&
+      profileStatus === "approved" &&
+      !isAuthPage &&
+      !isAdminPage
+    ) {
+      router.replace("/admin");
+    }
+  }, [
+    sessionLoading,
+    profileLoading,
+    sessionUserId,
+    profileRole,
+    profileStatus,
+    isAuthPage,
+    pathname,
+    router,
+  ]);
+
+  // 非 admin 用户访问 admin 路由时自动跳转到成员端
+  React.useEffect(() => {
+    const isAdminPage = pathname === "/admin" || pathname.startsWith("/admin/");
+    if (
+      !sessionLoading &&
+      !profileLoading &&
+      sessionUserId &&
+      profileRole !== "admin" &&
+      profileStatus === "approved" &&
+      !isAuthPage &&
+      isAdminPage
+    ) {
+      router.replace("/");
+    }
+  }, [
+    sessionLoading,
+    profileLoading,
+    sessionUserId,
+    profileRole,
+    profileStatus,
+    isAuthPage,
+    pathname,
+    router,
+  ]);
+
   const isPending = !!sessionUserId && profileStatus === "pending";
-  const isApproved = !!sessionUserId && profileStatus === "approved";
+  const isRejected = !!sessionUserId && profileStatus === "rejected";
 
   const handleLogout = () => {
     void handleSignOut();
@@ -82,7 +133,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           ) : sessionUserId && profileErrorMsg && !isAuthPage ? (
             <div className="flex min-h-[70vh] flex-col items-center justify-center px-4 text-center">
               <h1 className="text-lg font-semibold text-text">账户信息异常</h1>
-              <p className="mt-3 max-w-sm text-left text-sm leading-relaxed text-red-600">
+              <p className="mt-3 max-w-sm text-left text-sm leading-relaxed text-danger">
                 {profileErrorMsg}
               </p>
               <p className="mt-2 text-xs text-text-muted">
@@ -96,7 +147,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                 退出登录
               </button>
             </div>
-          ) : sessionUserId && isPending && !isAuthPage ? (
+          ) : isPending && !isAuthPage ? (
             <div className="flex min-h-[70vh] flex-col items-center justify-center text-center">
               <div className="text-5xl">⏳</div>
               <h1 className="mt-4 text-lg font-semibold text-text">账号审核中...</h1>
@@ -111,12 +162,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                 退出登录
               </button>
             </div>
-          ) : sessionUserId && !isApproved && !isAuthPage ? (
+          ) : isRejected && !isAuthPage ? (
             <div className="flex min-h-[70vh] flex-col items-center justify-center text-center">
-              <div className="text-5xl">⏳</div>
-              <h1 className="mt-4 text-lg font-semibold text-text">账号审核中...</h1>
+              <div className="text-5xl">❌</div>
+              <h1 className="mt-4 text-lg font-semibold text-text">账号已被拒绝</h1>
               <p className="mt-2 max-w-xs text-sm text-text-muted">
-                请等待管理员审批后访问乐团系统
+                您的申请未通过审核，无法访问乐团系统
               </p>
               <button
                 type="button"

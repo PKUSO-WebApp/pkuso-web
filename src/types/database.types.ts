@@ -175,6 +175,41 @@ export type Database = {
         };
         Relationships: [];
       };
+      schedules: {
+        Row: {
+          author_id: string | null;
+          created_at: string | null;
+          end_time: string | null;
+          id: number;
+          start_time: string;
+          title: string | null;
+        };
+        Insert: {
+          author_id?: string | null;
+          created_at?: string | null;
+          end_time?: string | null;
+          id?: never;
+          start_time: string;
+          title?: string | null;
+        };
+        Update: {
+          author_id?: string | null;
+          created_at?: string | null;
+          end_time?: string | null;
+          id?: never;
+          start_time?: string;
+          title?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "schedules_author_id_fkey";
+            columns: ["author_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: {
       [_ in never]: never;

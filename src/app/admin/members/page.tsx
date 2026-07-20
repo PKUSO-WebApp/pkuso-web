@@ -3,8 +3,7 @@
 import React from "react";
 import { useRehearsals } from "@/hooks/useRehearsals";
 import { useProfiles } from "@/hooks/useProfiles";
-import { Modal } from "@/components/ui/Modal";
-import { Card } from "@/components/ui/Card";
+import { Toggle } from "@/components/ui/Toggle";
 import { INSTRUMENT_ORDER, OTHER_INSTRUMENT_GROUP } from "@/constants/instruments";
 import type { ProfileRow } from "@/types/database";
 
@@ -15,16 +14,17 @@ function instrumentGroupKey(instrument: string | null): string {
   return OTHER_INSTRUMENT_GROUP;
 }
 
+type ViewMode = "attendance" | "roster";
+
 export default function MembersPage() {
-  const [attendanceOpen, setAttendanceOpen] = React.useState(false);
-  const [rosterOpen, setRosterOpen] = React.useState(false);
+  const [currentView, setCurrentView] = React.useState<ViewMode>("attendance");
 
   // 花名册
   const {
     data: allProfiles,
     loading: rosterLoading,
     error: rosterError,
-  } = useProfiles(rosterOpen ? { status: "approved" } : undefined);
+  } = useProfiles({ status: "approved" });
   const rosterRows = React.useMemo(
     () => allProfiles.filter((r) => (r.role ?? "") !== "admin") as ProfileRow[],
     [allProfiles],
@@ -112,12 +112,12 @@ export default function MembersPage() {
   }, [rehearsalList, startIdx, endIdx]);
 
   React.useEffect(() => {
-    if (attendanceOpen && rehearsalList.length > 0) {
+    if (currentView === "attendance" && rehearsalList.length > 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setEndIdx(rehearsalList.length - 1);
       void loadStats();
     }
-  }, [attendanceOpen, rehearsalList, loadStats]);
+  }, [currentView, rehearsalList, loadStats]);
 
   const exportCsv = () => {
     const csv =
@@ -137,17 +137,14 @@ export default function MembersPage() {
         <p className="mt-1 text-xs text-text-muted">排练考勤与乐团花名册</p>
       </header>
 
-      <Card onClick={() => setAttendanceOpen(true)}>
-        <p className="text-sm font-semibold text-text">排练考勤</p>
-        <p className="mt-1 text-xs text-text-muted">按合排日程区间统计出勤并导出</p>
-      </Card>
-      <Card onClick={() => setRosterOpen(true)}>
-        <p className="text-sm font-semibold text-text">全团成员信息</p>
-        <p className="mt-1 text-xs text-text-muted">点击查看乐团最新花名册</p>
-      </Card>
+      <Toggle
+        options={["排练考勤", "全团成员"] as const}
+        value={currentView === "attendance" ? "排练考勤" : "全团成员"}
+        onChange={(v) => setCurrentView(v === "排练考勤" ? "attendance" : "roster")}
+      />
 
-      {attendanceOpen && (
-        <Modal open onClose={() => setAttendanceOpen(false)} title="总排练考勤统计">
+      {currentView === "attendance" && (
+        <section>
           <p className="mb-2 text-label text-text-muted">仅统计标题含「合排」或「全团」的排练</p>
           {rehearsalList.length === 0 ? (
             <p className="text-xs text-warning">暂无合排日程</p>
@@ -217,48 +214,44 @@ export default function MembersPage() {
               </table>
             )}
           </div>
-        </Modal>
+        </section>
       )}
 
-      {rosterOpen && (
-        <Modal open onClose={() => setRosterOpen(false)} title="全团成员信息统计">
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-            {rosterLoading ? (
-              <p className="py-8 text-center text-xs text-text-subtle">加载中…</p>
-            ) : rosterError ? (
-              <p className="rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">{rosterError}</p>
-            ) : grouped.length === 0 ? (
-              <p className="py-8 text-center text-xs text-text-muted">暂无已通过成员</p>
-            ) : (
-              <div className="space-y-5">
-                {grouped.map(({ group, users }) => (
-                  <div key={group}>
-                    <p className="mb-2 text-label font-medium uppercase tracking-wide text-text-muted">
-                      {group}
-                    </p>
-                    <ul className="space-y-2">
-                      {users.map((u) => (
-                        <li
-                          key={u.id}
-                          className="rounded-xl border border-border bg-card px-3 py-2 text-xs"
-                        >
-                          <p className="font-medium text-text">
-                            {(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}
-                          </p>
-                          <p className="mt-0.5 text-text-muted">学院：{u.college?.trim() || "—"}</p>
-                          <p className="mt-0.5 text-text-muted">邮箱：{u.email ?? "—"}</p>
-                          <p className="mt-0.5 text-text-subtle">
-                            入团时间：{u.join_date?.trim() || "—"}
-                          </p>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
+      {currentView === "roster" && (
+        <div className="max-h-[300px] space-y-5 overflow-y-auto">
+          {rosterLoading ? (
+            <p className="py-8 text-center text-xs text-text-subtle">加载中…</p>
+          ) : rosterError ? (
+            <p className="rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">{rosterError}</p>
+          ) : grouped.length === 0 ? (
+            <p className="py-8 text-center text-xs text-text-muted">暂无已通过成员</p>
+          ) : (
+            grouped.map(({ group, users }) => (
+              <div key={group}>
+                <p className="mb-2 text-label font-medium uppercase tracking-wide text-text-muted">
+                  {group}
+                </p>
+                <ul className="space-y-2">
+                  {users.map((u) => (
+                    <li
+                      key={u.id}
+                      className="rounded-xl border border-border bg-card px-3 py-2 text-xs"
+                    >
+                      <p className="font-medium text-text">
+                        {(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}
+                      </p>
+                      <p className="mt-0.5 text-text-muted">学院：{u.college?.trim() || "—"}</p>
+                      <p className="mt-0.5 text-text-muted">邮箱：{u.email ?? "—"}</p>
+                      <p className="mt-0.5 text-text-subtle">
+                        入团时间：{u.join_date?.trim() || "—"}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
               </div>
-            )}
-          </div>
-        </Modal>
+            ))
+          )}
+        </div>
       )}
     </div>
   );

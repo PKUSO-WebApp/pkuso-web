@@ -37,7 +37,7 @@ pnpm verify       # 一键:format → lint → typecheck → test
 
 ### 认证
 
-全局用户状态在 `src/context/UserContext.tsx`;页面访问由 auth-gate 组件把关;登录/注册页在 `src/app/(auth)/`。
+全局用户状态在 `src/context/user-context.tsx`;页面访问由 auth-gate 组件把关;登录/注册页在 `src/app/(auth)/`。
 
 ## 分支工作流
 

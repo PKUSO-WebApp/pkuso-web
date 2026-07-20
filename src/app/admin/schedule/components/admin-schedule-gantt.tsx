@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Modal } from "@/components/ui/Modal";
 import type { ProfileRow, ScheduleRow } from "@/types/database";
@@ -41,6 +42,7 @@ function formatTime(timeStr: string | null): string {
 }
 
 export function AdminScheduleGantt({ schedules, remove, removeGroup, selectedDate }: Props) {
+  const router = useRouter();
   const [selectedSchedule, setSelectedSchedule] = React.useState<ScheduleRow | null>(null);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [authorName, setAuthorName] = React.useState<string | null>(null);
@@ -50,6 +52,9 @@ export function AdminScheduleGantt({ schedules, remove, removeGroup, selectedDat
   const [deleteMode, setDeleteMode] = React.useState<"single" | "group" | null>(null);
 
   const queryingScheduleId = React.useRef<number | null>(null);
+
+  const isRehearsalSchedule =
+    selectedSchedule?.author_id === null || selectedSchedule?.rehearsal_id !== null;
 
   const handleDelete = async () => {
     if (!selectedSchedule) return;
@@ -225,7 +230,19 @@ export function AdminScheduleGantt({ schedules, remove, removeGroup, selectedDat
               </div>
             )}
             <div className="pt-2 border-t border-border">
-              {!deleteMode ? (
+              {isRehearsalSchedule && !deleteMode ? (
+                <div className="space-y-2">
+                  <button
+                    onClick={() => router.push("/admin/rehearsals")}
+                    className="w-full py-2 text-sm font-medium text-primary bg-primary/10 rounded-lg hover:bg-primary/20 transition-colors"
+                  >
+                    前往排练页面查看
+                  </button>
+                  <p className="text-xs text-text-muted text-center">
+                    此预约由排练自动创建，请在排练页面进行管理
+                  </p>
+                </div>
+              ) : !deleteMode ? (
                 <div className="space-y-2">
                   <button
                     onClick={() => setDeleteMode("single")}

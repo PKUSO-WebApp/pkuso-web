@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Calendar, House, MessageSquare, User } from "lucide-react";
+import { Calendar, Users, House, MessageSquare, User } from "lucide-react";
 
 const tabs = [
   { href: "/", label: "首页", icon: House },
-  { href: "/schedule", label: "日程", icon: Calendar },
   { href: "/community", label: "社区", icon: MessageSquare },
+  { href: "/schedule", label: "日程", icon: Calendar },
+  { href: "/members", label: "成员", icon: Users },
   { href: "/profile", label: "我的", icon: User },
 ];
 

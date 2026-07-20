@@ -3,15 +3,18 @@
 import React from "react";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
 import { useRehearsals } from "@/hooks/useRehearsals";
+import { useUser } from "@/context/user-context";
 import { Toggle } from "@/components/ui/Toggle";
 import { Card } from "@/components/ui/Card";
 
 export default function Home() {
   const { data: announcement, loading: announcementLoading } = useAnnouncements();
   const { data: rehearsals, loading: rehearsalsLoading } = useRehearsals();
+  const { user } = useUser();
   const [scheduleTab, setScheduleTab] = React.useState<"full" | "section">("full");
 
   const list = React.useMemo(() => {
+    if (!rehearsals) return [];
     return rehearsals.filter((r) => {
       const t = (r.title ?? "").trim();
       if (scheduleTab === "full") return t.includes("合排") && !t.includes("分排");
@@ -20,7 +23,15 @@ export default function Home() {
   }, [rehearsals, scheduleTab]);
 
   return (
-    <div className="min-h-screen pb-6">
+    <div className="min-h-screen pb-safe">
+      {/* 欢迎语 */}
+      {user && (
+        <div className="mb-4">
+          <p className="text-sm text-text-muted">
+            欢迎{user.name?.trim() ? `，${user.name}` : ""}！
+          </p>
+        </div>
+      )}
       <header className="mb-1">
         <div className="flex items-center justify-between gap-2">
           <div>

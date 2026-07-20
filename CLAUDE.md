@@ -43,16 +43,16 @@ pnpm verify       # 一键:format → lint → typecheck → test
 
 ```
 src/app/
-├── (auth)/           # 登录/注册（角色无关）
-├── (member)/         # 成员端 tab bar + 页面
-│   ├── layout.tsx    # 首页/日程/社区/我的
+├── (auth)/           # route group, URL: /login, /signup
+├── (member)/         # route group, URL: /, /schedule, /community, /profile
+│   ├── layout.tsx    # member tab bar（首页/日程/社区/我的）
 │   ├── page.tsx      # 排练日程展示
 │   ├── schedule/     # 日程浏览+签到
 │   │   └── components/  # rehearsal-card, code-verify-modal, utils
 │   ├── community/    # 社区帖子
-│   └── profile/      # 个人信息+密码
-├── (admin)/          # 管理员端 tab bar + 页面
-│   ├── layout.tsx    # 控制台/排练/成员/我的 + 角色鉴权
+│   └── profile/      # 个人信息+密码修改
+├── admin/            # 普通目录, URL: /admin, /admin/rehearsals, /admin/members, /admin/profile
+│   ├── layout.tsx    # admin tab bar（控制台/排练/成员/我的）+ 角色鉴权
 │   ├── page.tsx      # 仪表盘（审批+公告）
 │   ├── rehearsals/   # 排练管理（CRUD+考勤查看）
 │   │   └── components/  # admin-rehearsal-card
@@ -61,7 +61,22 @@ src/app/
 └── api/              # API routes（notify）
 ```
 
-Admin 和 Member 各自独立的 tab bar，不再通过 `isAdmin` 条件分支混合 UI。
+### 开发方式：admin/member 分端独立
+
+项目虽然部署在同一个 Next.js app 中，但 **admin 和 member 已完全分离**，可按两个独立应用对待：
+
+| 维度     | Member 端                                   | Admin 端                             |
+| -------- | ------------------------------------------- | ------------------------------------ |
+| 路由前缀 | `/`                                         | `/admin`                             |
+| 布局     | `(member)/layout.tsx`                       | `admin/layout.tsx`                   |
+| Tab bar  | 首页 · 日程 · 社区 · 我的                   | 控制台 · 排练 · 成员 · 我的          |
+| 角色守卫 | 无（AuthGate 统一鉴权）                     | `layout.tsx` 检查 `role === "admin"` |
+| 开发入口 | 新功能加在 `(member)/` 下                   | 新功能加在 `admin/` 下               |
+| 组件     | 各端组件放在各自目录的 `components/` 子目录 | 同                                   |
+| 数据层   | 共享 `src/hooks/` 和 `src/lib/`             | 同                                   |
+| UI 原语  | 共享 `src/components/ui/`                   | 同                                   |
+
+**不再通过 `isAdmin` 条件分支混合 UI**。开发 member 端新功能时不需要关心 admin 代码，反之亦然。唯一共享的部分是 hooks、lib、UI 原语、类型定义。
 
 ## 分支工作流
 

@@ -52,7 +52,7 @@ export default function AdminPage() {
   };
 
   return (
-    <div className="space-y-4 p-4">
+    <div className="space-y-4">
       <h1 className="text-lg font-semibold text-text">管理员控制台</h1>
 
       {/* 入团审批 */}

@@ -169,6 +169,92 @@ SMTP 测试用 Mailpit 替代 Ethereal（Ethereal 公网 SMTP 在北大校园网
 
 `pnpm gen-types` 需 Supabase CLI 已 link。CI 通过 `SUPABASE_ACCESS_TOKEN` + `SUPABASE_PROJECT_REF` secrets 动态 link。
 
+### 级联删除优先使用外键约束
+
+当需要实现"删除 A 时自动删除 B"的功能时，优先使用外键约束的 `ON DELETE CASCADE`，而非自定义触发器：
+
+```sql
+ALTER TABLE schedules
+ADD CONSTRAINT schedules_rehearsal_id_fkey
+FOREIGN KEY (rehearsal_id) REFERENCES rehearsals(id)
+ON DELETE CASCADE;
+```
+
+优点：
+
+- PostgreSQL 原生支持，性能更好
+- 保证数据完整性，触发器可能被绕过
+- 代码更简洁，无需维护触发器函数
+
+### Supabase CLI 交互问题
+
+`supabase db push` 在某些情况下会进入交互模式（要求输入 Y/n），导致自动化任务卡死。解决方案：
+
+- 使用 `supabase db push --force` 跳过确认
+- 或在 CI 中设置 `SUPABASE_FORCE_PUSH=true` 环境变量
+
+## 前端开发防坑指南
+
+### 防止重复提交
+
+表单提交时必须添加 `isSubmitting` 状态控制，防止用户快速点击多次提交：
+
+```tsx
+const [isSubmitting, setIsSubmitting] = useState(false);
+
+const handleSubmit = async () => {
+  if (isSubmitting) return;
+  setIsSubmitting(true);
+  try {
+    // 提交逻辑
+  } finally {
+    setIsSubmitting(false);
+  }
+};
+```
+
+按钮需配合 `disabled={isSubmitting}` 使用。
+
+### 竞态条件处理
+
+当用户快速切换操作（如快速点击多个预约窗口查看详情）时，异步请求可能返回乱序，导致显示错误数据。解决方案：
+
+```tsx
+const queryingScheduleId = useRef<string | null>(null);
+
+const fetchAuthorName = async (scheduleId: string) => {
+  queryingScheduleId.current = scheduleId;
+  const { data } = await supabase.from("profiles").select("full_name").eq("id", authorId);
+  if (queryingScheduleId.current === scheduleId) {
+    // 只有当前查询的结果才更新状态
+    setAuthorName(data?.[0]?.full_name || "未知");
+  }
+};
+```
+
+使用 `useRef` 追踪当前操作的 ID，在异步回调中检查是否仍为当前操作。
+
+### 时间验证
+
+预约时间选择需注意：
+
+- 结束时间必须晚于开始时间（不能等于）
+- 使用 `select` 下拉框限制时间选项为半小时间隔，而非原生 `time` input（step 属性可能被忽略）
+- 时区问题：使用本地时间而非 UTC，避免日期偏移
+
+### 滚动同步
+
+当页面包含固定时间轴和可滚动内容区域时，需确保两者同步滚动：
+
+```tsx
+<div className="flex overflow-y-auto">
+  <div className="flex-shrink-0 w-12">{/* 时间轴（随容器同步滚动） */}</div>
+  <div className="flex-1">{/* 内容区域 */}</div>
+</div>
+```
+
+将时间轴和内容放在同一滚动容器内，移除内容区域单独的 `overflow-y-auto`。
+
 ## 交付流程
 
 功能开发走 **Issue → 分支 → 实现+测试 → PR → CI → Squash Merge**。Conventional Commits 含 `Closes #<issue>`。

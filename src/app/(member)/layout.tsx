@@ -1,34 +1,18 @@
 "use client";
 
-import React from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useUser } from "@/context/user-context";
-import { ClipboardList, Music, User, UsersRound } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { Calendar, House, MessageSquare, User } from "lucide-react";
 
 const tabs = [
-  { href: "/admin", label: "控制台", icon: ClipboardList },
-  { href: "/admin/rehearsals", label: "排练", icon: Music },
-  { href: "/admin/members", label: "成员", icon: UsersRound },
-  { href: "/admin/profile", label: "我的", icon: User },
+  { href: "/", label: "首页", icon: House },
+  { href: "/schedule", label: "日程", icon: Calendar },
+  { href: "/community", label: "社区", icon: MessageSquare },
+  { href: "/profile", label: "我的", icon: User },
 ];
 
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const { user } = useUser();
-  const router = useRouter();
+export default function MemberLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-
-  React.useEffect(() => {
-    if (user && user.role !== "admin") router.replace("/");
-  }, [user, router]);
-
-  if (!user || user.role !== "admin") {
-    return (
-      <div className="flex min-h-[70vh] items-center justify-center text-sm text-text-muted">
-        仅限管理员访问…
-      </div>
-    );
-  }
 
   return (
     <>
@@ -38,7 +22,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <div className="flex items-center justify-around px-4 py-2">
             {tabs.map((tab) => {
               const Icon = tab.icon;
-              const active = pathname === tab.href || pathname.startsWith(tab.href + "/");
+              const active =
+                tab.href === "/"
+                  ? pathname === "/"
+                  : pathname === tab.href || pathname.startsWith(tab.href + "/");
 
               return (
                 <Link

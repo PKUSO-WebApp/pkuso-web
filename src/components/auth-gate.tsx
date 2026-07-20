@@ -4,7 +4,6 @@ import React from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useUser } from "@/context/user-context";
 import type { UserRole } from "@/context/user-context";
-import { TabBar } from "@/components/tab-bar";
 import { useAuth } from "@/hooks/useAuth";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
@@ -64,8 +63,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen flex justify-center">
-      <div className="flex min-h-screen w-full max-w-md flex-col bg-white shadow-lg">
-        <main className={`flex-1 overflow-y-auto px-4 pt-4 ${isAuthPage ? "pb-4" : "pb-20"}`}>
+      <div className="flex min-h-screen w-full max-w-md flex-col bg-page-bg">
+        <main className={`flex-1 overflow-y-auto ${isAuthPage ? "px-4 pt-4 pb-4" : ""}`}>
           {sessionLoading ? (
             <div className="flex h-full items-center justify-center text-xs text-text-subtle">
               正在检查登录状态…
@@ -129,7 +128,6 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             children
           )}
         </main>
-        {!isAuthPage && sessionUserId && isApproved && <TabBar />}
       </div>
     </div>
   );

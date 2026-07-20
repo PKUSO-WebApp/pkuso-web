@@ -39,6 +39,30 @@ pnpm verify       # 一键:format → lint → typecheck → test
 
 全局用户状态在 `src/context/user-context.tsx`;页面访问由 auth-gate 组件把关;登录/注册页在 `src/app/(auth)/`。
 
+### 路由结构（Route Group 分离 Admin/Member）
+
+```
+src/app/
+├── (auth)/           # 登录/注册（角色无关）
+├── (member)/         # 成员端 tab bar + 页面
+│   ├── layout.tsx    # 首页/日程/社区/我的
+│   ├── page.tsx      # 排练日程展示
+│   ├── schedule/     # 日程浏览+签到
+│   │   └── components/  # rehearsal-card, code-verify-modal, utils
+│   ├── community/    # 社区帖子
+│   └── profile/      # 个人信息+密码
+├── (admin)/          # 管理员端 tab bar + 页面
+│   ├── layout.tsx    # 控制台/排练/成员/我的 + 角色鉴权
+│   ├── page.tsx      # 仪表盘（审批+公告）
+│   ├── rehearsals/   # 排练管理（CRUD+考勤查看）
+│   │   └── components/  # admin-rehearsal-card
+│   ├── members/      # 花名册+考勤统计
+│   └── profile/      # 个人设置
+└── api/              # API routes（notify）
+```
+
+Admin 和 Member 各自独立的 tab bar，不再通过 `isAdmin` 条件分支混合 UI。
+
 ## 分支工作流
 
 - 分支命名: `<type>/<简述>`,type = feat|fix|docs|refactor|test|chore|build|ci

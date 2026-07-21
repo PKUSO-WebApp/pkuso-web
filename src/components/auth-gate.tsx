@@ -41,6 +41,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const {
     sessionUserId,
     sessionLoading,
+    emailConfirmed,
     profileStatus,
     profileRole,
     profileLoading,
@@ -61,6 +62,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       !sessionLoading &&
       !profileLoading &&
       sessionUserId &&
+      emailConfirmed &&
       profileRole === "admin" &&
       profileStatus === "approved" &&
       !isAuthPage &&
@@ -72,6 +74,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     sessionLoading,
     profileLoading,
     sessionUserId,
+    emailConfirmed,
     profileRole,
     profileStatus,
     isAuthPage,
@@ -86,6 +89,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       !sessionLoading &&
       !profileLoading &&
       sessionUserId &&
+      emailConfirmed &&
       profileRole !== "admin" &&
       profileStatus === "approved" &&
       !isAuthPage &&
@@ -97,6 +101,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     sessionLoading,
     profileLoading,
     sessionUserId,
+    emailConfirmed,
     profileRole,
     profileStatus,
     isAuthPage,
@@ -106,6 +111,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   const isPending = !!sessionUserId && profileStatus === "pending";
   const isRejected = !!sessionUserId && profileStatus === "rejected";
+  const isEmailUnconfirmed = !!sessionUserId && !emailConfirmed;
 
   const handleLogout = () => {
     void handleSignOut();
@@ -168,6 +174,24 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               <h1 className="mt-4 text-lg font-semibold text-text">账号已被拒绝</h1>
               <p className="mt-2 max-w-xs text-sm text-text-muted">
                 您的申请未通过审核，无法访问乐团系统
+              </p>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="mt-6 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
+              >
+                退出登录
+              </button>
+            </div>
+          ) : isEmailUnconfirmed && !isAuthPage ? (
+            <div className="flex min-h-[70vh] flex-col items-center justify-center text-center">
+              <div className="text-5xl">📧</div>
+              <h1 className="mt-4 text-lg font-semibold text-text">邮箱未验证</h1>
+              <p className="mt-2 max-w-xs text-sm text-text-muted">
+                请检查您的邮箱，点击验证链接完成邮箱验证
+              </p>
+              <p className="mt-2 text-xs text-text-muted">
+                如果未收到邮件，请检查垃圾邮件箱或重新登录触发验证邮件
               </p>
               <button
                 type="button"

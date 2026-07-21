@@ -11,13 +11,45 @@ export default function SignupPage() {
   const [invitationCode, setInvitationCode] = React.useState("");
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [confirmPassword, setConfirmPassword] = React.useState("");
   const [fullName, setFullName] = React.useState("");
-  const [instrument, setInstrument] = React.useState<(typeof INSTRUMENT_OPTIONS)[number] | "">("");
+  const [instrument, setInstrument] = React.useState<
+    (typeof INSTRUMENT_OPTIONS)[number] | "其他" | ""
+  >("");
   const [college, setCollege] = React.useState("");
   const [joinYear, setJoinYear] = React.useState("");
   const [joinSemester, setJoinSemester] = React.useState<"春" | "秋" | "">("");
   const [submitting, setSubmitting] = React.useState(false);
   const [errorMsg, setErrorMsg] = React.useState("");
+
+  const validateInvitationCode = async (code: string): Promise<string | null> => {
+    const { data, error } = await supabase
+      .from("invitation_codes")
+      .select("code, expires_at, used")
+      .eq("code", code)
+      .maybeSingle();
+
+    if (error) {
+      return "邀请码验证失败，请稍后重试。";
+    }
+
+    if (!data) {
+      return "邀请码不存在，请联系乐团管理员获取。";
+    }
+
+    if (data.used) {
+      return "邀请码已被使用，请联系乐团管理员获取新的邀请码。";
+    }
+
+    if (data.expires_at) {
+      const expires = new Date(data.expires_at);
+      if (expires < new Date()) {
+        return "邀请码已过期，请联系乐团管理员获取新的邀请码。";
+      }
+    }
+
+    return null;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,14 +57,17 @@ export default function SignupPage() {
     setErrorMsg("");
 
     const normalizedCode = invitationCode.trim().toUpperCase();
-    if (normalizedCode !== "PKUSO2026") {
-      alert("邀请码错误，请联系乐团管理员获取");
+
+    const codeError = await validateInvitationCode(normalizedCode);
+    if (codeError) {
+      setErrorMsg(codeError);
       return;
     }
 
     if (
       !email.trim() ||
       !password.trim() ||
+      !confirmPassword.trim() ||
       !fullName.trim() ||
       !instrument ||
       !college.trim() ||
@@ -40,6 +75,11 @@ export default function SignupPage() {
       !joinSemester
     ) {
       setErrorMsg("请填写完整信息后再提交。");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setErrorMsg("两次输入的密码不一致，请重新输入。");
       return;
     }
 
@@ -126,6 +166,21 @@ export default function SignupPage() {
             </div>
 
             <div className="space-y-1">
+              <label className="block text-label font-medium text-text-muted">确认密码</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => {
+                  setConfirmPassword(e.target.value);
+                  setErrorMsg("");
+                }}
+                className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-sm text-text outline-none focus:border-text-muted"
+                placeholder="再次输入密码"
+                autoComplete="new-password"
+              />
+            </div>
+
+            <div className="space-y-1">
               <label className="block text-label font-medium text-text-muted">真实姓名</label>
               <input
                 value={fullName}
@@ -144,7 +199,7 @@ export default function SignupPage() {
               <select
                 value={instrument}
                 onChange={(e) => {
-                  setInstrument(e.target.value as (typeof INSTRUMENT_OPTIONS)[number]);
+                  setInstrument(e.target.value as (typeof INSTRUMENT_OPTIONS)[number] | "其他");
                   setErrorMsg("");
                 }}
                 className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-sm text-text outline-none focus:border-text-muted"
@@ -157,6 +212,9 @@ export default function SignupPage() {
                     {opt}
                   </option>
                 ))}
+                <option key="其他" value="其他">
+                  其他
+                </option>
               </select>
             </div>
 

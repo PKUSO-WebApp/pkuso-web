@@ -4,6 +4,7 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Modal } from "@/components/ui/Modal";
+import { parseLocalISO } from "@/lib/date-utils";
 import type { ProfileRow, ScheduleRow } from "@/types/database";
 
 type Props = {
@@ -29,14 +30,14 @@ function getScheduleColor(id: number): string {
 
 function parseTimeToHours(timeStr: string | null): number {
   if (!timeStr) return 0;
-  const date = new Date(timeStr);
+  const date = parseLocalISO(timeStr);
   if (isNaN(date.getTime())) return 0;
   return date.getHours() + date.getMinutes() / 60;
 }
 
 function formatTime(timeStr: string | null): string {
   if (!timeStr) return "--:--";
-  const date = new Date(timeStr);
+  const date = parseLocalISO(timeStr);
   if (isNaN(date.getTime())) return "--:--";
   return date.toTimeString().slice(0, 5);
 }

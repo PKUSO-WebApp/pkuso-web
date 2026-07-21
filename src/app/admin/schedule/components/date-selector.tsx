@@ -10,8 +10,8 @@ type Props = {
 
 export function DateSelector({ selectedDate, onDateChange }: Props) {
   const [currentMonth, setCurrentMonth] = React.useState(() => {
-    const date = new Date(selectedDate);
-    return { year: date.getFullYear(), month: date.getMonth() };
+    const [year, month] = selectedDate.split("-").map(Number);
+    return { year, month: month - 1 };
   });
 
   const today = new Date();

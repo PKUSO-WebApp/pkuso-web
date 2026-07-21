@@ -3,6 +3,7 @@
 import React from "react";
 import { supabase } from "@/lib/supabase";
 import { Modal } from "@/components/ui/Modal";
+import { parseLocalISO, formatTime } from "@/lib/date-utils";
 import type { ProfileRow, ScheduleRow } from "@/types/database";
 
 type Props = {
@@ -29,17 +30,9 @@ function getScheduleColor(id: number): string {
 // 解析时间字符串为小时数（0-24）
 function parseTimeToHours(timeStr: string | null): number {
   if (!timeStr) return 0;
-  const date = new Date(timeStr);
+  const date = parseLocalISO(timeStr);
   if (isNaN(date.getTime())) return 0;
   return date.getHours() + date.getMinutes() / 60;
-}
-
-// 格式化时间为 HH:mm
-function formatTime(timeStr: string | null): string {
-  if (!timeStr) return "--:--";
-  const date = new Date(timeStr);
-  if (isNaN(date.getTime())) return "--:--";
-  return date.toTimeString().slice(0, 5);
 }
 
 export function ScheduleGantt({ schedules, user, remove, selectedDate }: Props) {

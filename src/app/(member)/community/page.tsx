@@ -7,6 +7,7 @@ import { usePosts } from "@/hooks/usePosts";
 import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
 import { Card } from "@/components/ui/Card";
+import { parseLocalISO, getLocalDateString } from "@/lib/date-utils";
 import type { PostType, PostRow, PostRowWithAuthor } from "@/types/database";
 
 type FormState = {
@@ -25,12 +26,9 @@ function hasSectionText(s: string | null | undefined): boolean {
 
 function formatPostDate(createdAt: string | null | undefined): string {
   if (!createdAt) return "";
-  const d = new Date(createdAt);
+  const d = parseLocalISO(createdAt);
   if (Number.isNaN(d.getTime())) return "";
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return getLocalDateString(d);
 }
 
 const TYPE_LABEL: Record<PostType, string> = {

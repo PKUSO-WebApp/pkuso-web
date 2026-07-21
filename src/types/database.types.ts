@@ -175,6 +175,77 @@ export type Database = {
         };
         Relationships: [];
       };
+      schedule_groups: {
+        Row: {
+          author_id: string | null;
+          created_at: string | null;
+          id: string;
+          monthly_day: number | null;
+          monthly_end_month: number | null;
+          monthly_end_year: number | null;
+          monthly_start_month: number | null;
+          monthly_start_year: number | null;
+          repeat_mode: string;
+          title: string;
+          updated_at: string | null;
+          weekly_day: number | null;
+          weekly_end_month: number | null;
+          weekly_end_week: number | null;
+          weekly_end_year: number | null;
+          weekly_start_month: number | null;
+          weekly_start_week: number | null;
+          weekly_start_year: number | null;
+        };
+        Insert: {
+          author_id?: string | null;
+          created_at?: string | null;
+          id?: string;
+          monthly_day?: number | null;
+          monthly_end_month?: number | null;
+          monthly_end_year?: number | null;
+          monthly_start_month?: number | null;
+          monthly_start_year?: number | null;
+          repeat_mode: string;
+          title: string;
+          updated_at?: string | null;
+          weekly_day?: number | null;
+          weekly_end_month?: number | null;
+          weekly_end_week?: number | null;
+          weekly_end_year?: number | null;
+          weekly_start_month?: number | null;
+          weekly_start_week?: number | null;
+          weekly_start_year?: number | null;
+        };
+        Update: {
+          author_id?: string | null;
+          created_at?: string | null;
+          id?: string;
+          monthly_day?: number | null;
+          monthly_end_month?: number | null;
+          monthly_end_year?: number | null;
+          monthly_start_month?: number | null;
+          monthly_start_year?: number | null;
+          repeat_mode?: string;
+          title?: string;
+          updated_at?: string | null;
+          weekly_day?: number | null;
+          weekly_end_month?: number | null;
+          weekly_end_week?: number | null;
+          weekly_end_year?: number | null;
+          weekly_start_month?: number | null;
+          weekly_start_week?: number | null;
+          weekly_start_year?: number | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "schedule_groups_author_id_fkey";
+            columns: ["author_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       schedules: {
         Row: {
           author_id: string | null;
@@ -212,6 +283,13 @@ export type Database = {
             columns: ["author_id"];
             isOneToOne: false;
             referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "schedules_group_id_fkey";
+            columns: ["group_id"];
+            isOneToOne: false;
+            referencedRelation: "schedule_groups";
             referencedColumns: ["id"];
           },
           {

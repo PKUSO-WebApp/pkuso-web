@@ -72,7 +72,7 @@ const getDateOfWeekInMonth = (
   month: number,
   weekNumber: number,
   dayOfWeek: number,
-): Date | null => {
+): { date: Date | null; maxWeek: number; lastDayOfMaxWeek: Date } => {
   const firstDay = new Date(year, month - 1, 1).getDay();
   const firstTargetOffset = (dayOfWeek - firstDay + 7) % 7;
   const firstTargetDate = new Date(year, month - 1, 1 + firstTargetOffset);
@@ -81,23 +81,36 @@ const getDateOfWeekInMonth = (
     firstTargetDate.setDate(firstTargetDate.getDate() + 7);
   }
 
+  // 计算该月最大有效周数
+  let maxWeek = 1;
+  const testDate = new Date(firstTargetDate);
+  while (testDate.getMonth() === month - 1) {
+    maxWeek++;
+    testDate.setDate(testDate.getDate() + 7);
+  }
+  maxWeek--;
+
+  // 计算最后一周最后一天的日期（周六）
+  const lastDayOfMaxWeek = new Date(firstTargetDate);
+  lastDayOfMaxWeek.setDate(
+    firstTargetDate.getDate() + (maxWeek - 1) * 7 + ((6 - dayOfWeek + 7) % 7),
+  );
+
+  // 计算第N周的目标日期
   const targetDate = new Date(firstTargetDate);
   targetDate.setDate(firstTargetDate.getDate() + (weekNumber - 1) * 7);
 
   if (targetDate.getMonth() !== month - 1) {
-    return null;
+    return { date: null, maxWeek, lastDayOfMaxWeek };
   }
 
-  return targetDate;
+  return { date: targetDate, maxWeek, lastDayOfMaxWeek };
 };
 
 // 计算某月份实际有几周（与 getDateOfWeekInMonth 使用一致的逻辑）
 const getWeeksInMonth = (year: number, month: number): number => {
-  let weekNumber = 1;
-  while (getDateOfWeekInMonth(year, month, weekNumber, 1)) {
-    weekNumber++;
-  }
-  return weekNumber - 1;
+  const result = getDateOfWeekInMonth(year, month, 1, 1);
+  return result.maxWeek;
 };
 
 // 根据年份和月份动态生成周数选项
@@ -188,13 +201,15 @@ export function CreateScheduleModal({
                   ))}
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              {/* 开始行：年份 | 月份 | 周 */}
+              <div className="text-xs font-medium text-text-muted mb-1">开始</div>
+              <div className="grid grid-cols-3 gap-2">
                 <div className="space-y-1">
-                  <label className="block text-label font-medium text-text-muted">开始年份</label>
+                  <label className="block text-label text-text-muted">年份</label>
                   <select
                     value={form.weeklyStartYear}
                     onChange={(e) => handleChange("weeklyStartYear", Number(e.target.value))}
-                    className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                    className="w-full rounded-xl border border-border bg-muted px-2 py-1.5 text-xs text-text outline-none focus:border-text-muted"
                     required
                   >
                     {YEAR_OPTIONS.map((y) => (
@@ -205,11 +220,11 @@ export function CreateScheduleModal({
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="block text-label font-medium text-text-muted">开始月份</label>
+                  <label className="block text-label text-text-muted">月份</label>
                   <select
                     value={form.weeklyStartMonth}
                     onChange={(e) => handleChange("weeklyStartMonth", Number(e.target.value))}
-                    className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                    className="w-full rounded-xl border border-border bg-muted px-2 py-1.5 text-xs text-text outline-none focus:border-text-muted"
                     required
                   >
                     {MONTHS.filter((m) => {
@@ -223,14 +238,12 @@ export function CreateScheduleModal({
                     ))}
                   </select>
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <label className="block text-label font-medium text-text-muted">开始周</label>
+                  <label className="block text-label text-text-muted">周</label>
                   <select
                     value={form.weeklyStartWeek}
                     onChange={(e) => handleChange("weeklyStartWeek", Number(e.target.value))}
-                    className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                    className="w-full rounded-xl border border-border bg-muted px-2 py-1.5 text-xs text-text outline-none focus:border-text-muted"
                     required
                   >
                     {generateWeekOptions(form.weeklyStartYear, form.weeklyStartMonth).map((w) => (
@@ -240,12 +253,16 @@ export function CreateScheduleModal({
                     ))}
                   </select>
                 </div>
+              </div>
+              {/* 结束行：年份 | 月份 | 周 */}
+              <div className="text-xs font-medium text-text-muted mb-1">结束</div>
+              <div className="grid grid-cols-3 gap-2">
                 <div className="space-y-1">
-                  <label className="block text-label font-medium text-text-muted">结束年份</label>
+                  <label className="block text-label text-text-muted">年份</label>
                   <select
                     value={form.weeklyEndYear}
                     onChange={(e) => handleChange("weeklyEndYear", Number(e.target.value))}
-                    className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                    className="w-full rounded-xl border border-border bg-muted px-2 py-1.5 text-xs text-text outline-none focus:border-text-muted"
                     required
                   >
                     {YEAR_OPTIONS.filter((y) => y.value >= form.weeklyStartYear).map((y) => (
@@ -255,14 +272,12 @@ export function CreateScheduleModal({
                     ))}
                   </select>
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <label className="block text-label font-medium text-text-muted">结束月份</label>
+                  <label className="block text-label text-text-muted">月份</label>
                   <select
                     value={form.weeklyEndMonth}
                     onChange={(e) => handleChange("weeklyEndMonth", Number(e.target.value))}
-                    className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                    className="w-full rounded-xl border border-border bg-muted px-2 py-1.5 text-xs text-text outline-none focus:border-text-muted"
                     required
                   >
                     {MONTHS.filter((m) => {
@@ -277,11 +292,11 @@ export function CreateScheduleModal({
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="block text-label font-medium text-text-muted">结束周</label>
+                  <label className="block text-label text-text-muted">周</label>
                   <select
                     value={form.weeklyEndWeek}
                     onChange={(e) => handleChange("weeklyEndWeek", Number(e.target.value))}
-                    className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                    className="w-full rounded-xl border border-border bg-muted px-2 py-1.5 text-xs text-text outline-none focus:border-text-muted"
                     required
                   >
                     {generateWeekOptions(form.weeklyEndYear, form.weeklyEndMonth).map((w) => (

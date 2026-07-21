@@ -5,13 +5,12 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Modal } from "@/components/ui/Modal";
 import { parseLocalISO } from "@/lib/date-utils";
-import type { ProfileRow, ScheduleRow } from "@/types/database";
+import type { ProfileRow, ScheduleRow, ScheduleGroupRow } from "@/types/database";
 
 type Props = {
   schedules: ScheduleRow[];
   user: { id: string } | null | undefined;
   remove: (id: number, date?: string) => Promise<boolean>;
-  removeGroup: (groupId: string, date?: string) => Promise<boolean>;
   selectedDate: string;
 };
 
@@ -42,7 +41,7 @@ function formatTime(timeStr: string | null): string {
   return date.toTimeString().slice(0, 5);
 }
 
-export function AdminScheduleGantt({ schedules, remove, removeGroup, selectedDate }: Props) {
+export function AdminScheduleGantt({ schedules, remove, selectedDate }: Props) {
   const router = useRouter();
   const [selectedSchedule, setSelectedSchedule] = React.useState<ScheduleRow | null>(null);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
@@ -51,8 +50,29 @@ export function AdminScheduleGantt({ schedules, remove, removeGroup, selectedDat
   const [deleting, setDeleting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [deleteMode, setDeleteMode] = React.useState<"single" | "group" | null>(null);
+  const [groupInfo, setGroupInfo] = React.useState<ScheduleGroupRow | null>(null);
+  const [loadingGroupInfo, setLoadingGroupInfo] = React.useState(false);
 
   const queryingScheduleId = React.useRef<number | null>(null);
+
+  // 组件卸载时清理异步查询引用，防止竞态条件
+  React.useEffect(() => {
+    return () => {
+      queryingScheduleId.current = null;
+    };
+  }, []);
+
+  const WEEK_DAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+  const formatGroupInfo = (group: ScheduleGroupRow): string => {
+    if (group.repeat_mode === "weekly") {
+      const dayLabel = WEEK_DAYS[group.weekly_day ?? 1];
+      return `${group.title}：${group.weekly_start_year}年${group.weekly_start_month}月第${group.weekly_start_week}周至${group.weekly_end_year}年${group.weekly_end_month}月第${group.weekly_end_week}周，每周${dayLabel}`;
+    } else if (group.repeat_mode === "monthly") {
+      return `${group.title}：${group.monthly_start_year}年${group.monthly_start_month}月至${group.monthly_end_year}年${group.monthly_end_month}月，每月${group.monthly_day}日`;
+    }
+    return `${group.title}：重复预约组`;
+  };
 
   const isRehearsalSchedule =
     selectedSchedule?.author_id === null || selectedSchedule?.rehearsal_id !== null;
@@ -65,7 +85,19 @@ export function AdminScheduleGantt({ schedules, remove, removeGroup, selectedDat
     let success = false;
 
     if (deleteMode === "group" && selectedSchedule.group_id) {
-      success = await removeGroup(selectedSchedule.group_id, selectedDate);
+      // 删除组时只需要删除 schedule_groups，ON DELETE CASCADE 会自动删除关联的 schedules
+      const { error: deleteGroupError } = await supabase
+        .from("schedule_groups")
+        .delete()
+        .eq("id", selectedSchedule.group_id);
+      if (deleteGroupError) {
+        setError("删除预约组失败，请稍后重试");
+        setDeleting(false);
+        setDeleteMode(null);
+        return;
+      }
+      // ON DELETE CASCADE 会自动删除关联的 schedules
+      success = true;
     } else {
       success = await remove(selectedSchedule.id, selectedDate);
     }
@@ -86,24 +118,60 @@ export function AdminScheduleGantt({ schedules, remove, removeGroup, selectedDat
     setAuthorName(null);
     setError(null);
     setDeleteMode(null);
+    setGroupInfo(null);
+    setLoadingGroupInfo(false);
 
     queryingScheduleId.current = schedule.id;
 
+    // 查询预约人信息
     if (schedule.author_id) {
-      const { data: profile, error } = await supabase
-        .from("profiles")
-        .select("full_name")
-        .eq("id", schedule.author_id)
-        .single();
+      try {
+        const { data: profile, error } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", schedule.author_id)
+          .single();
 
-      if (!error && (profile as ProfileRow | null) && queryingScheduleId.current === schedule.id) {
-        setAuthorName((profile as ProfileRow).full_name || null);
-        setLoadingAuthor(false);
+        if (
+          !error &&
+          (profile as ProfileRow | null) &&
+          queryingScheduleId.current === schedule.id
+        ) {
+          setAuthorName((profile as ProfileRow).full_name || null);
+        }
+      } catch {
+        // 忽略错误，保持 authorName 为 null
+      } finally {
+        if (queryingScheduleId.current === schedule.id) {
+          setLoadingAuthor(false);
+        }
       }
     } else {
       if (queryingScheduleId.current === schedule.id) {
         setAuthorName("admin");
         setLoadingAuthor(false);
+      }
+    }
+
+    // 查询组信息
+    if (schedule.group_id) {
+      setLoadingGroupInfo(true);
+      try {
+        const { data: group, error } = await supabase
+          .from("schedule_groups")
+          .select("*")
+          .eq("id", schedule.group_id)
+          .single();
+
+        if (!error && group && queryingScheduleId.current === schedule.id) {
+          setGroupInfo(group as ScheduleGroupRow);
+        }
+      } catch {
+        // 忽略错误，保持 groupInfo 为 null
+      } finally {
+        if (queryingScheduleId.current === schedule.id) {
+          setLoadingGroupInfo(false);
+        }
       }
     }
   };
@@ -114,6 +182,8 @@ export function AdminScheduleGantt({ schedules, remove, removeGroup, selectedDat
     setAuthorName(null);
     setError(null);
     setDeleteMode(null);
+    setGroupInfo(null);
+    setLoadingGroupInfo(false);
   };
 
   const scheduleItems = schedules.map((schedule) => {
@@ -227,7 +297,13 @@ export function AdminScheduleGantt({ schedules, remove, removeGroup, selectedDat
             {selectedSchedule.group_id && (
               <div>
                 <div className="text-text-muted mb-1">预约组</div>
-                <div className="text-text text-warning">属于重复预约组</div>
+                <div className="text-text text-warning">
+                  {loadingGroupInfo
+                    ? "加载中..."
+                    : groupInfo
+                      ? formatGroupInfo(groupInfo)
+                      : "属于重复预约组"}
+                </div>
               </div>
             )}
             <div className="pt-2 border-t border-border">
@@ -266,7 +342,9 @@ export function AdminScheduleGantt({ schedules, remove, removeGroup, selectedDat
                 <div className="space-y-2">
                   <div className="text-text-muted text-center">
                     {deleteMode === "group"
-                      ? "确定要删除所有重复预约吗？"
+                      ? loadingGroupInfo || !groupInfo
+                        ? "确定要删除所有重复预约吗？"
+                        : `确定要删除以下重复预约组吗？\n${formatGroupInfo(groupInfo)}`
                       : `确定要删除预约「${selectedSchedule.title || "未命名预约"}」吗？`}
                   </div>
                   <div className="flex gap-2">

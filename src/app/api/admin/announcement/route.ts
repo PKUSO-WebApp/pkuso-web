@@ -68,6 +68,49 @@ export async function GET(request: Request) {
   }
 }
 
+// 更新公告
+export async function PUT(request: Request) {
+  try {
+    // 验证管理员权限
+    const authError = await verifyAdmin(request);
+    if (authError) {
+      return NextResponse.json(
+        { error: authError },
+        { status: authError === "未授权" ? 401 : 403 },
+      );
+    }
+
+    const supabase = createServerSupabase();
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "请求体格式错误" }, { status: 400 });
+    }
+
+    const { id, content } = body;
+    if (!id) {
+      return NextResponse.json({ error: "缺少公告 ID" }, { status: 400 });
+    }
+    if (content === undefined || content === null || content.trim() === "") {
+      return NextResponse.json({ error: "缺少公告内容" }, { status: 400 });
+    }
+
+    const { error } = await supabase.from("announcements").update({ content }).eq("id", id);
+
+    if (error) {
+      console.error("[Admin Announcement] 更新公告失败:", error.message);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    console.error("[Admin Announcement] 服务器错误:", err);
+    return NextResponse.json({ error: "服务器内部错误" }, { status: 500 });
+  }
+}
+
 // 删除公告
 export async function DELETE(request: Request) {
   try {

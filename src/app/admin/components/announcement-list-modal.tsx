@@ -10,7 +10,9 @@ type AnnouncementListModalProps = {
   announcements: AnnouncementRow[];
   loading: boolean;
   deletingId: string | null;
+  updatingId: string | null;
   onDelete: (id: string) => Promise<boolean>;
+  onUpdate: (id: string, content: string) => Promise<boolean>;
 };
 
 function formatTime(s: string | null) {
@@ -38,10 +40,14 @@ export function AnnouncementListModal({
   announcements,
   loading,
   deletingId,
+  updatingId,
   onDelete,
+  onUpdate,
 }: AnnouncementListModalProps) {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
+  const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [editContent, setEditContent] = React.useState("");
 
   const selectedAnnouncement = announcements.find((a) => a.id === selectedId);
 
@@ -56,6 +62,26 @@ export function AnnouncementListModal({
     }
   };
 
+  const handleStartEdit = () => {
+    if (selectedAnnouncement) {
+      setEditContent(selectedAnnouncement.content || "");
+      setEditingId(selectedAnnouncement.id);
+    }
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingId) return;
+    const ok = await onUpdate(editingId, editContent);
+    if (ok) {
+      setEditingId(null);
+      setEditContent("");
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+  };
+
   return (
     <Modal
       open={open}
@@ -63,6 +89,8 @@ export function AnnouncementListModal({
         onClose();
         setSelectedId(null);
         setConfirmDeleteId(null);
+        setEditingId(null);
+        setEditContent("");
       }}
       title="管理发布的公告"
       position="bottom"
@@ -94,31 +122,75 @@ export function AnnouncementListModal({
       {selectedAnnouncement ? (
         // 详情视图
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <button
-              type="button"
-              onClick={() => setSelectedId(null)}
-              className="rounded-full bg-muted px-3 py-1 text-label text-text-muted hover:bg-border"
-            >
-              返回列表
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirmDeleteId(selectedAnnouncement.id)}
-              disabled={deletingId === selectedAnnouncement.id}
-              className="rounded-full bg-danger/10 px-3 py-1 text-label text-danger hover:bg-danger/20 disabled:opacity-60"
-            >
-              删除公告
-            </button>
-          </div>
-          <p className="text-xs text-text-muted">
-            发布时间：{formatTime(selectedAnnouncement.created_at)}
-          </p>
-          <div className="max-h-[40vh] overflow-y-auto rounded-xl border border-border bg-surface p-4">
-            <p className="text-sm text-text leading-relaxed whitespace-pre-wrap">
-              {selectedAnnouncement.content || "无内容"}
-            </p>
-          </div>
+          {editingId === selectedAnnouncement.id ? (
+            // 编辑模式
+            <>
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  className="rounded-full bg-muted px-3 py-1 text-label text-text-muted hover:bg-border"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEdit}
+                  disabled={updatingId === selectedAnnouncement.id}
+                  className="rounded-full bg-primary px-3 py-1 text-label text-primary-foreground hover:opacity-90 disabled:opacity-60"
+                >
+                  {updatingId === selectedAnnouncement.id ? "保存中…" : "保存"}
+                </button>
+              </div>
+              <div className="rounded-xl border border-border bg-surface p-4">
+                <textarea
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  rows={8}
+                  className="w-full resize-none rounded-lg bg-transparent text-sm text-text leading-relaxed outline-none"
+                  placeholder="输入公告内容…"
+                />
+              </div>
+            </>
+          ) : (
+            // 查看模式
+            <>
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(null)}
+                  className="rounded-full bg-muted px-3 py-1 text-label text-text-muted hover:bg-border"
+                >
+                  返回列表
+                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleStartEdit}
+                    className="rounded-full bg-primary/10 px-3 py-1 text-label text-primary hover:bg-primary/20"
+                  >
+                    修改公告
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteId(selectedAnnouncement.id)}
+                    disabled={deletingId === selectedAnnouncement.id}
+                    className="rounded-full bg-danger/10 px-3 py-1 text-label text-danger hover:bg-danger/20 disabled:opacity-60"
+                  >
+                    删除公告
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-text-muted">
+                发布时间：{formatTime(selectedAnnouncement.created_at)}
+              </p>
+              <div className="max-h-[40vh] overflow-y-auto rounded-xl border border-border bg-surface p-4">
+                <p className="text-sm text-text leading-relaxed whitespace-pre-wrap">
+                  {selectedAnnouncement.content || "无内容"}
+                </p>
+              </div>
+            </>
+          )}
         </div>
       ) : (
         // 列表视图

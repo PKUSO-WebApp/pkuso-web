@@ -12,7 +12,9 @@ export function useAnnouncements(client: typeof defaultClient = defaultClient) {
   const [error, setError] = React.useState<string | null>(null);
   const [publishing, setPublishing] = React.useState(false);
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
+  const [updatingId, setUpdatingId] = React.useState<string | null>(null);
   const deletingIdRef = React.useRef<string | null>(null);
+  const updatingIdRef = React.useRef<string | null>(null);
 
   // 获取最新一条公告（供成员端展示）
   const fetch = React.useCallback(async () => {
@@ -120,6 +122,43 @@ export function useAnnouncements(client: typeof defaultClient = defaultClient) {
     [client],
   );
 
+  // 更新公告
+  const update = React.useCallback(
+    async (id: string, content: string) => {
+      if (updatingIdRef.current === id) return false;
+      updatingIdRef.current = id;
+      setUpdatingId(id);
+      try {
+        const {
+          data: { session },
+        } = await client.auth.getSession();
+        const response = await window.fetch("/api/admin/announcement", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
+          body: JSON.stringify({ id, content }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          setError(result.error || "更新失败");
+          return false;
+        }
+        setAllData((prev) => prev.map((item) => (item.id === id ? { ...item, content } : item)));
+        return true;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      } catch (_err: unknown) {
+        setError("网络错误");
+        return false;
+      } finally {
+        updatingIdRef.current = null;
+        setUpdatingId(null);
+      }
+    },
+    [client],
+  );
+
   return {
     data,
     allData,
@@ -128,9 +167,11 @@ export function useAnnouncements(client: typeof defaultClient = defaultClient) {
     error,
     publishing,
     deletingId,
+    updatingId,
     fetch,
     fetchAll,
     publish,
     remove,
+    update,
   };
 }

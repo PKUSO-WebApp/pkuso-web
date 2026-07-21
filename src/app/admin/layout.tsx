@@ -33,7 +33,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <>
-      <div className="flex-1 overflow-y-auto px-4 pt-4 pb-20">{children}</div>
+      <div className="flex-1 px-4 pt-4 pb-20 overflow-hidden">{children}</div>
       <nav className="fixed inset-x-0 bottom-0 z-20 flex justify-center bg-transparent pb-safe">
         <div className="w-full max-w-md border-t border-border bg-surface/95 backdrop-blur">
           <div className="flex items-center justify-around px-4 py-2">

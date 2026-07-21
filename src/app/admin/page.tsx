@@ -38,8 +38,17 @@ export default function AdminPage() {
 
   // 公告
   const [body, setBody] = React.useState("");
-  const { publish, publishing, allData, loadingAll, fetchAll, deletingId, remove } =
-    useAnnouncements();
+  const {
+    publish,
+    publishing,
+    allData,
+    loadingAll,
+    fetchAll,
+    deletingId,
+    updatingId,
+    remove,
+    update,
+  } = useAnnouncements();
 
   const handlePublish = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,7 +71,7 @@ export default function AdminPage() {
   };
 
   return (
-    <div className="space-y-4 max-h-[calc(100vh-4rem)] overflow-y-auto pb-safe">
+    <div className="space-y-4">
       <h1 className="text-lg font-semibold text-text">管理员控制台</h1>
 
       {/* 入团审批 */}
@@ -86,7 +95,7 @@ export default function AdminPage() {
         ) : pendingRows.length === 0 ? (
           <p className="py-4 text-center text-xs text-text-muted">暂无待审批用户</p>
         ) : (
-          <div className="max-h-[300px] space-y-2 overflow-y-auto">
+          <div className="h-[300px] space-y-2 overflow-y-auto">
             {pendingRows.map((r) => (
               <div
                 key={r.id}
@@ -152,7 +161,9 @@ export default function AdminPage() {
         announcements={allData}
         loading={loadingAll}
         deletingId={deletingId}
+        updatingId={updatingId}
         onDelete={remove}
+        onUpdate={update}
       />
     </div>
   );

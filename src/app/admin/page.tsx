@@ -3,6 +3,7 @@
 import React from "react";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
+import { AnnouncementListModal } from "./components/announcement-list-modal";
 
 function formatTime(s: string | null) {
   if (!s) return "—";
@@ -27,7 +28,7 @@ export default function AdminPage() {
   const [approvingId, setApprovingId] = React.useState<string | null>(null);
 
   const handleApprove = async (id: string) => {
-    if (approvingId) return;
+    if (approvingId === id) return;
     setApprovingId(id);
     const ok = await approve(id);
     setApprovingId(null);
@@ -37,7 +38,8 @@ export default function AdminPage() {
 
   // 公告
   const [body, setBody] = React.useState("");
-  const { publish, publishing } = useAnnouncements();
+  const { publish, publishing, allData, loadingAll, fetchAll, deletingId, remove } =
+    useAnnouncements();
 
   const handlePublish = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,8 +53,16 @@ export default function AdminPage() {
     }
   };
 
+  // 公告管理 Modal
+  const [showAnnouncementModal, setShowAnnouncementModal] = React.useState(false);
+
+  const handleOpenAnnouncementModal = () => {
+    setShowAnnouncementModal(true);
+    void fetchAll();
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 max-h-[calc(100vh-4rem)] overflow-y-auto pb-safe">
       <h1 className="text-lg font-semibold text-text">管理员控制台</h1>
 
       {/* 入团审批 */}
@@ -106,14 +116,24 @@ export default function AdminPage() {
 
       {/* 发布公告 */}
       <section className="rounded-2xl border border-border bg-card p-4">
-        <h2 className="mb-3 text-sm font-semibold text-text">发布全团公告</h2>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-text">发布全团公告</h2>
+          <button
+            type="button"
+            onClick={handleOpenAnnouncementModal}
+            className="rounded-full px-3 py-1 text-label text-text-muted hover:bg-border"
+          >
+            管理公告
+          </button>
+        </div>
         <form onSubmit={handlePublish} className="space-y-3">
           <textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            rows={4}
-            className="input resize-none"
+            rows={6}
+            className="input resize-none max-h-[200px] overflow-y-auto leading-[1.5] p-3"
             placeholder="输入公告内容…"
+            style={{ minHeight: "120px" }}
           />
           <button
             type="submit"
@@ -124,6 +144,16 @@ export default function AdminPage() {
           </button>
         </form>
       </section>
+
+      {/* 公告管理 Modal */}
+      <AnnouncementListModal
+        open={showAnnouncementModal}
+        onClose={() => setShowAnnouncementModal(false)}
+        announcements={allData}
+        loading={loadingAll}
+        deletingId={deletingId}
+        onDelete={remove}
+      />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { useProfiles } from "../useProfiles";
 
@@ -20,10 +20,21 @@ function mockClient<T>(responses: T[]) {
       update: () => ({ eq: () => chain(responses[i++]) }),
       insert: () => chain(responses[i++]),
     }),
+    auth: {
+      getSession: () => Promise.resolve({ data: { session: { access_token: "test-token" } } }),
+    },
   };
 }
 
 describe("useProfiles", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("status 过滤 profiles", async () => {
     const c = mockClient([
       { data: [{ id: "1", full_name: "张三", status: "approved" }], error: null },
@@ -42,9 +53,16 @@ describe("useProfiles", () => {
 
   it("approve 批准并移除", async () => {
     const c = mockClient([
-      { data: [{ id: "1", full_name: "李四", status: "pending" }], error: null }, // fetch
-      { error: null }, // update approve
+      { data: [{ id: "1", full_name: "李四", status: "pending" }], error: null },
     ]);
+
+    // Mock fetch API
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true }),
+    });
+    global.fetch = mockFetch;
+
     const { result } = renderHook(() => useProfiles({ status: "pending" }, c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.data).toHaveLength(1);
@@ -52,6 +70,17 @@ describe("useProfiles", () => {
     await act(async () => {
       await result.current.approve("1");
     });
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/admin/approve",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "Content-Type": "application/json",
+          Authorization: expect.stringMatching(/^Bearer /),
+        }),
+        body: JSON.stringify({ id: "1" }),
+      }),
+    );
     expect(result.current.data).toHaveLength(0);
   });
 

@@ -185,7 +185,7 @@ export function AnnouncementListModal({
                 发布时间：{formatTime(selectedAnnouncement.created_at)}
               </p>
               <div className="max-h-[40vh] overflow-y-auto rounded-xl border border-border bg-surface p-4">
-                <p className="text-sm text-text leading-relaxed whitespace-pre-wrap">
+                <p className="text-sm text-text leading-relaxed whitespace-pre-wrap break-words">
                   {selectedAnnouncement.content || "无内容"}
                 </p>
               </div>

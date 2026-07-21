@@ -23,9 +23,11 @@ export default function AdminPage() {
     data: pendingRows,
     loading: pendingLoading,
     approve,
+    reject,
     fetch: refetchPending,
   } = useProfiles({ status: "pending" });
   const [approvingId, setApprovingId] = React.useState<string | null>(null);
+  const [rejectingId, setRejectingId] = React.useState<string | null>(null);
 
   const handleApprove = async (id: string) => {
     if (approvingId === id) return;
@@ -34,6 +36,19 @@ export default function AdminPage() {
     setApprovingId(null);
     if (!ok) alert("审批失败");
     else alert("已批准");
+  };
+
+  const handleReject = async (id: string) => {
+    if (rejectingId === id || approvingId === id) return;
+    setRejectingId(id);
+    if (!confirm("确认拒绝该用户的入团申请？")) {
+      setRejectingId(null);
+      return;
+    }
+    const ok = await reject(id);
+    setRejectingId(null);
+    if (!ok) alert("拒绝失败");
+    else alert("已拒绝");
   };
 
   // 公告
@@ -95,7 +110,7 @@ export default function AdminPage() {
         ) : pendingRows.length === 0 ? (
           <p className="py-4 text-center text-xs text-text-muted">暂无待审批用户</p>
         ) : (
-          <div className="h-[300px] space-y-2 overflow-y-auto">
+          <div className="h-[200px] space-y-2 overflow-y-auto">
             {pendingRows.map((r) => (
               <div
                 key={r.id}
@@ -109,14 +124,24 @@ export default function AdminPage() {
                     注册：{formatTime(r.created_at)}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleApprove(r.id)}
-                  disabled={approvingId === r.id}
-                  className="shrink-0 rounded-full bg-success px-3 py-1.5 text-label font-medium text-success-foreground hover:bg-success/90 disabled:opacity-60"
-                >
-                  {approvingId === r.id ? "处理中…" : "✅ 批准"}
-                </button>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleApprove(r.id)}
+                    disabled={approvingId === r.id || rejectingId === r.id}
+                    className="shrink-0 rounded-full bg-success px-3 py-1.5 text-label font-medium text-success-foreground hover:bg-success/90 disabled:opacity-60"
+                  >
+                    {approvingId === r.id ? "处理中…" : "✅ 批准"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleReject(r.id)}
+                    disabled={rejectingId === r.id || approvingId === r.id}
+                    className="shrink-0 rounded-full bg-danger px-3 py-1.5 text-label font-medium text-danger-foreground hover:bg-danger/90 disabled:opacity-60"
+                  >
+                    {rejectingId === r.id ? "处理中…" : "❌ 拒绝"}
+                  </button>
+                </div>
               </div>
             ))}
           </div>

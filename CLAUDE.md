@@ -126,6 +126,8 @@ src/app/
   - 仓库内文件统一保存为 **UTF-8 无 BOM**。不要让编辑器自动加 BOM,否则 prettier / ESLint 可能误报。
   - git 已配置 `core.autocrlf` 时,本地 checkout 可能是 CRLF,提交回库时会自动转回 LF。不要手动改行尾。
   - PowerShell here-string(`@"..."@`)在多行中文场景下更可靠,优于多个 `-m` 拼接 commit message。
+  - **PowerShell `Select-Object` 在管道输出中文时会出现乱码**,改用 `ForEach-Object` 或直接输出。如需格式化对象输出,使用 `ConvertTo-Json -Depth 10` 或手动拼接字符串。
+- **`supabase/` 文件夹必须保持 git 追踪**：`.gitignore` 中只忽略 `supabase/.temp/`，不忽略 `supabase/migrations/` 等目录。所有 migration 文件、Edge Functions、配置文件都应进入版本控制，确保 schema 变更可追溯、可回滚。
 - 历代功能 spec(颜色系统、admin/member 拆分、hooks-modal 重构、排练房预订等)已迁移至项目 wiki。
 - 经验沉淀机制:项目级约定写进本文件;可复用操作流程写成 `.claude/skills/<名字>/SKILL.md`;会话中的偏好与决策背景由 Claude 记入其持久 memory。会话结束前可用 `.claude/skills/save-lesson` 的流程做沉淀。
 
@@ -188,10 +190,40 @@ ON DELETE CASCADE;
 
 ### Supabase CLI 交互问题
 
-`supabase db push` 在某些情况下会进入交互模式（要求输入 Y/n），导致自动化任务卡死。解决方案：
+Supabase CLI 多个子命令在非 TTY（自动化/子智能体）环境下会进入交互模式等待 Y/n 或密码输入，导致任务卡死。**不是只有 `db push` 会卡**，以下命令都会阻塞：
 
-- 使用 `supabase db push --force` 跳过确认
-- 或在 CI 中设置 `SUPABASE_FORCE_PUSH=true` 环境变量
+- `supabase db push` — 等待 Y/n 确认推送到远端
+- `supabase db pull` — 等待确认拉取并生成 migration
+- `supabase db reset` — 等待确认重置本地数据库
+- `supabase link` — 等待输入数据库密码
+- `supabase migration up --linked` — 等待确认应用到远端
+
+**解决方案（按优先级）：**
+
+1. **首选：全局 `--yes` flag**（所有子命令通用，自动对所有提示回答 yes）
+
+   ```bash
+   supabase db push --yes
+   supabase db pull --yes
+   supabase db reset --yes
+   supabase migration up --linked --yes
+   ```
+
+2. **`db push` 也可用 `--force`**（等价于 `--yes`，旧版本兼容）
+
+   ```bash
+   supabase db push --force
+   ```
+
+3. **`link` 必须通过参数传密码**，不要让它进交互式输入：
+
+   ```bash
+   supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+   ```
+
+4. **CI 环境**：设置 `SUPABASE_ACCESS_TOKEN` 环境变量可跳过 `login` 交互；`SUPABASE_FORCE_PUSH=true` 可让 `db push` 跳过确认。
+
+**子智能体（pkuso-dba 等）执行任何 supabase 命令时，必须显式带 `--yes` 或对应非交互参数，禁止裸跑 `supabase db push` / `db pull` / `db reset` / `link`。** 调用 pkuso-dba 时主智能体应在指令中强调这一点。
 
 ## 前端开发防坑指南
 

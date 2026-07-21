@@ -228,7 +228,7 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      is_admin: { Args: never; Returns: boolean };
     };
     Enums: {
       attendanceStatus: "present" | "late" | "absent" | "excused";

@@ -2,39 +2,54 @@
 
 import React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
-export default function LoginPage() {
-  const router = useRouter();
+export default function ResetPasswordPage() {
   const [email, setEmail] = React.useState("");
-  const [password, setPassword] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [errorMsg, setErrorMsg] = React.useState("");
+  const [successMsg, setSuccessMsg] = React.useState("");
+
+  const validateEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
     setErrorMsg("");
+    setSuccessMsg("");
 
-    if (!email.trim() || !password) {
-      setErrorMsg("请输入邮箱和密码。");
+    const trimmedEmail = email.trim();
+
+    if (!trimmedEmail) {
+      setErrorMsg("请输入邮箱地址。");
+      return;
+    }
+
+    if (!validateEmail(trimmedEmail)) {
+      setErrorMsg("请输入有效的邮箱地址。");
       return;
     }
 
     setSubmitting(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
+    const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
+      redirectTo: `${window.location.origin}/login`,
     });
     setSubmitting(false);
 
     if (error) {
-      setErrorMsg(error.message || "登录失败，请稍后重试。");
+      if (error.message.includes("User not found")) {
+        setErrorMsg("该邮箱未注册，请检查输入是否正确。");
+      } else {
+        setErrorMsg(error.message || "发送重置邮件失败，请稍后重试。");
+      }
       return;
     }
 
-    router.replace("/");
+    setSuccessMsg("重置邮件已发送，请检查您的邮箱。");
+    setEmail("");
   };
 
   return (
@@ -42,8 +57,8 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="rounded-3xl border border-border bg-surface p-5 shadow-sm">
           <div className="mb-4 text-center">
-            <h1 className="text-xl font-semibold text-text">登录</h1>
-            <p className="mt-1 text-xs text-text-muted">登录后进入乐团系统</p>
+            <h1 className="text-xl font-semibold text-text">重置密码</h1>
+            <p className="mt-1 text-xs text-text-muted">输入您的邮箱，我们将发送重置链接</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-3">
@@ -55,31 +70,12 @@ export default function LoginPage() {
                 onChange={(e) => {
                   setEmail(e.target.value);
                   setErrorMsg("");
+                  setSuccessMsg("");
                 }}
                 className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-sm text-text outline-none focus:border-text-subtle"
                 placeholder="name@example.com"
                 autoComplete="email"
               />
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-label font-medium text-text-muted">Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  setErrorMsg("");
-                }}
-                className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-sm text-text outline-none focus:border-text-subtle"
-                placeholder="请输入密码"
-                autoComplete="current-password"
-              />
-              <div className="text-right">
-                <Link href="/reset-password" className="text-xs text-text-muted hover:text-text">
-                  忘记密码？
-                </Link>
-              </div>
             </div>
 
             {errorMsg ? (
@@ -88,19 +84,25 @@ export default function LoginPage() {
               </div>
             ) : null}
 
+            {successMsg ? (
+              <div className="rounded-xl bg-green-50 px-3 py-2 text-center text-sm text-green-600">
+                {successMsg}
+              </div>
+            ) : null}
+
             <button
               type="submit"
               disabled={submitting}
               className="mt-1 flex w-full items-center justify-center rounded-2xl bg-primary px-4 py-3 text-sm font-medium text-white shadow-md hover:opacity-90 disabled:opacity-60"
             >
-              {submitting ? "登录中…" : "登录"}
+              {submitting ? "发送中…" : "发送重置链接"}
             </button>
           </form>
 
           <div className="mt-4 text-center text-xs text-text-muted">
-            还没有账号？{" "}
-            <Link href="/signup" className="font-medium text-text">
-              去注册
+            想起密码了？{" "}
+            <Link href="/login" className="font-medium text-text">
+              返回登录
             </Link>
           </div>
         </div>

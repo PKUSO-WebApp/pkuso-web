@@ -24,33 +24,32 @@ export default function SignupPage() {
   const [errorMsg, setErrorMsg] = React.useState("");
   const [successMsg, setSuccessMsg] = React.useState("");
 
-  const validateInvitationCode = async (code: string): Promise<string | null> => {
-    // 使用 UPDATE 操作进行原子验证，验证阶段直接标记邀请码为已使用
-    // 这样可以避免验证与更新分离导致的竞态条件，同时解决 anon 用户无 SELECT 权限的问题
-    const { data, error } = await supabase
-      .from("invitation_codes")
-      .update({ used: true })
-      .eq("code", code)
-      .eq("used", false)
-      .select("expires_at")
-      .maybeSingle();
+  const validateInvitationCode = async (
+    code: string,
+    userId?: string | null,
+  ): Promise<string | null> => {
+    // 使用原子函数验证邀请码，将验证和记录使用者合并为一个操作，防止竞态条件
+    const { data, error } = await supabase.rpc("verify_and_use_invitation_code", {
+      p_code: code,
+      p_user_id: userId,
+    });
 
     if (error) {
-      // 可能是权限问题或数据库错误，不暴露具体原因
       return "邀请码验证失败，请稍后重试。";
     }
 
-    // 邀请码不存在或已被使用
-    if (!data) {
+    // 函数返回的是一个表，取第一个结果
+    const result = data?.[0];
+    if (!result) {
+      return "邀请码验证失败，请稍后重试。";
+    }
+
+    // 验证失败 - 返回统一错误消息，防止枚举攻击
+    if (!result.success) {
       return "邀请码无效或已被使用，请联系乐团管理员获取新的邀请码。";
     }
 
-    // 邀请码已过期（虽然已经更新，但仍需检查过期时间）
-    if (data.expires_at && new Date(data.expires_at) < new Date()) {
-      return "邀请码已过期，请联系乐团管理员获取新的邀请码。";
-    }
-
-    // 邀请码有效且已被原子标记为已使用
+    // 验证通过
     return null;
   };
 
@@ -62,13 +61,14 @@ export default function SignupPage() {
 
     const normalizedCode = invitationCode.trim().toUpperCase();
 
-    const codeError = await validateInvitationCode(normalizedCode);
-    if (codeError) {
-      setErrorMsg(codeError);
+    // 邀请码长度验证
+    if (normalizedCode.length > 20) {
+      setErrorMsg("邀请码长度不能超过 20 个字符。");
       return;
     }
 
     if (
+      !normalizedCode ||
       !email.trim() ||
       !password.trim() ||
       !confirmPassword.trim() ||
@@ -93,43 +93,54 @@ export default function SignupPage() {
     }
 
     setSubmitting(true);
-    const { error: signUpError, data: signUpData } = await supabase.auth.signUp({
-      email: email.trim(),
-      password: password,
-      options: {
-        data: {
-          full_name: fullName.trim(),
-          instrument,
-          college: college.trim(),
-          join_date: `${joinYear}${joinSemester}`,
+
+    try {
+      // 步骤1：先注册用户，获得 user_id
+      const { error: signUpError, data: signUpData } = await supabase.auth.signUp({
+        email: email.trim(),
+        password: password,
+        options: {
+          data: {
+            full_name: fullName.trim(),
+            instrument,
+            college: college.trim(),
+            join_date: `${joinYear}${joinSemester}`,
+          },
         },
-      },
-    });
+      });
 
-    if (!signUpError && signUpData?.user?.id) {
-      // 注册成功后记录邀请码使用者 ID（邀请码已在验证阶段标记为已使用）
-      const userId = signUpData.user.id;
-      const { error: updateCodeError } = await supabase
-        .from("invitation_codes")
-        .update({ used_by: userId })
-        .eq("code", normalizedCode);
-
-      if (updateCodeError) {
-        // 更新邀请码使用者失败，不影响注册流程，但记录警告
-        console.warn("[Signup] 更新邀请码使用者失败:", updateCodeError.message);
+      if (signUpError) {
+        setErrorMsg(signUpError.message || "注册失败，请稍后重试。");
+        return;
       }
+
+      if (!signUpData?.user?.id) {
+        setErrorMsg("注册失败，请稍后重试。");
+        return;
+      }
+
+      const userId = signUpData.user.id;
+
+      // 步骤2：调用 RPC 函数验证邀请码并记录使用者（原子操作）
+      const codeError = await validateInvitationCode(normalizedCode, userId);
+      if (codeError) {
+        // 邀请码验证失败，尝试删除已注册的用户
+        console.warn("[Signup] 邀请码验证失败，尝试清理已注册用户:", userId);
+        await supabase.auth.admin.deleteUser(userId);
+        setErrorMsg(codeError);
+        return;
+      }
+
+      // 注册成功
+      setSuccessMsg("注册成功，请等待管理员审核。");
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      router.replace("/login");
+    } catch (error) {
+      console.error("[Signup] 注册过程发生错误:", error);
+      setErrorMsg("注册失败，请稍后重试。");
+    } finally {
+      setSubmitting(false);
     }
-
-    setSubmitting(false);
-
-    if (signUpError) {
-      setErrorMsg(signUpError.message || "注册失败，请稍后重试。");
-      return;
-    }
-
-    setSuccessMsg("注册成功，请等待管理员审核");
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    router.replace("/login");
   };
 
   return (
@@ -155,6 +166,7 @@ export default function SignupPage() {
                 className="w-full rounded-lg border border-border bg-muted px-3 py-1.5 text-sm text-text outline-none focus:border-text-muted"
                 placeholder="请输入乐团邀请码"
                 autoComplete="off"
+                maxLength={20}
               />
             </div>
 

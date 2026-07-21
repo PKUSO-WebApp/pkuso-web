@@ -95,7 +95,12 @@ export function useSchedule(client: typeof defaultClient = defaultClient) {
 
   // 检查时间冲突（不支持跨天预约）
   const checkConflict = React.useCallback(
-    async (date: string, startTime: string, endTime: string): Promise<string | null> => {
+    async (
+      date: string,
+      startTime: string,
+      endTime: string,
+      excludeRehearsalId?: number,
+    ): Promise<string | null> => {
       const [year, month, day] = date.split("-").map(Number);
       const startOfDay = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T00:00:00`;
       const endOfDay = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T23:59:59`;
@@ -114,12 +119,13 @@ export function useSchedule(client: typeof defaultClient = defaultClient) {
         return "查询预约失败";
       }
 
-      // 查询当天的排练
+      // 查询当天的排练（排除正在编辑的排练）
       const { data: rehearsals, error: rehearsalError } = await client
         .from("rehearsals")
         .select("*")
         .gte("start_time", startOfDay)
-        .lte("start_time", endOfDay);
+        .lte("start_time", endOfDay)
+        .neq("id", excludeRehearsalId ?? -1);
 
       if (rehearsalError) {
         return "查询排练安排失败";

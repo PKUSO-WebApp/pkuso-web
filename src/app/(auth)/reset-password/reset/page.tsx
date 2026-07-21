@@ -20,31 +20,67 @@ export default function ResetPasswordResetPage() {
   const [isTokenValid, setIsTokenValid] = React.useState(false);
   const [tokenChecked, setTokenChecked] = React.useState(false);
 
-  // 检查用户是否已通过重置链接登录（token 有效时 Supabase 会自动登录用户）
+  // 用于追踪组件是否挂载，防止竞态条件
+  const mountedRef = React.useRef(true);
+  // 用于存储跳转定时器，组件卸载时清理
+  const navigateTimerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // 使用 verifyOtp 验证重置链接的 token 是否有效
   React.useEffect(() => {
-    const checkAuth = async () => {
+    mountedRef.current = true;
+
+    const verifyToken = async () => {
       if (!token || !type) {
+        if (!mountedRef.current) return;
         setErrorMsg("重置链接无效，请重新请求密码重置。");
         setTokenChecked(true);
         return;
       }
 
-      // 获取当前会话，检查用户是否已登录
-      const { data, error } = await supabase.auth.getSession();
+      // 验证 type 参数是否为合法值
+      if (type !== "recovery") {
+        if (!mountedRef.current) return;
+        setErrorMsg("无效的重置链接类型。");
+        setTokenChecked(true);
+        return;
+      }
 
-      if (error || !data.session?.user) {
+      // 使用 verifyOtp 验证重置 token，验证成功后用户会自动登录
+      // 使用 token_hash 参数，因为密码重置链接中的 token 是 hash 格式
+      const { error } = await supabase.auth.verifyOtp({
+        token_hash: token,
+        type: type as "recovery",
+      });
+
+      if (!mountedRef.current) return;
+
+      if (error) {
         setErrorMsg("重置链接无效或已过期，请重新请求密码重置。");
         setIsTokenValid(false);
       } else {
-        // 用户已通过重置链接登录，token 有效
+        // token 验证成功，用户已自动登录
         setIsTokenValid(true);
       }
 
       setTokenChecked(true);
     };
 
-    checkAuth();
+    verifyToken();
+
+    return () => {
+      mountedRef.current = false;
+    };
   }, [token, type]);
+
+  // 组件卸载时清理定时器和 mounted 状态
+  React.useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      if (navigateTimerRef.current) {
+        clearTimeout(navigateTimerRef.current);
+      }
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,7 +103,22 @@ export default function ResetPasswordResetPage() {
       return;
     }
 
+    // 暴力破解防护：限制密码设置频率（60 秒冷却）
+    const lastSubmitTime = localStorage.getItem("reset_password_last_submit");
+    const currentTime = Date.now();
+    const lastSubmitTimestamp = lastSubmitTime ? parseInt(lastSubmitTime, 10) : null;
+
+    if (
+      lastSubmitTimestamp !== null &&
+      !isNaN(lastSubmitTimestamp) &&
+      currentTime - lastSubmitTimestamp < 60000
+    ) {
+      setErrorMsg("操作过于频繁，请等待 60 秒后再试。");
+      return;
+    }
+
     setSubmitting(true);
+    localStorage.setItem("reset_password_last_submit", currentTime.toString());
 
     // 更新密码
     const { error } = await supabase.auth.updateUser({
@@ -81,13 +132,13 @@ export default function ResetPasswordResetPage() {
       return;
     }
 
-    // 密码更新成功后，主动登出用户
-    await supabase.auth.signOut();
-
     setSuccessMsg("密码重置成功，请使用新密码登录。");
-    // 延迟跳转
-    setTimeout(() => {
-      router.replace("/login");
+    // 延迟跳转，检查组件是否仍挂载，并在跳转前登出用户
+    navigateTimerRef.current = setTimeout(() => {
+      if (mountedRef.current) {
+        supabase.auth.signOut();
+        router.replace("/login");
+      }
     }, 2000);
   };
 

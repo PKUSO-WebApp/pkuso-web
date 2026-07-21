@@ -10,13 +10,10 @@ export type CreateScheduleFormState = {
   startTime: string;
   endTime: string;
   repeatMode: "single" | "weekly" | "monthly";
-  weeklyDay: number;
-  weeklyStartYear: number;
-  weeklyStartMonth: number;
-  weeklyStartWeek: number;
-  weeklyEndYear: number;
-  weeklyEndMonth: number;
-  weeklyEndWeek: number;
+  // 周重复（新模式：使用开始/结束日期）
+  weeklyStartDate: string;
+  weeklyEndDate: string;
+  // 月重复（保持不变）
   monthlyDay: number;
   monthlyStartYear: number;
   monthlyStartMonth: number;
@@ -51,76 +48,10 @@ const generateTimeOptions = () => {
 
 const TIME_OPTIONS = generateTimeOptions();
 
-const WEEK_DAYS = [
-  { value: 1, label: "周一" },
-  { value: 2, label: "周二" },
-  { value: 3, label: "周三" },
-  { value: 4, label: "周四" },
-  { value: 5, label: "周五" },
-  { value: 6, label: "周六" },
-  { value: 0, label: "周日" },
-];
-
 const MONTHS = Array.from({ length: 12 }, (_, i) => ({
   value: i + 1,
   label: `${i + 1}月`,
 }));
-
-// 根据年份、月份、周数和星期几获取目标日期（与 page.tsx 保持一致）
-const getDateOfWeekInMonth = (
-  year: number,
-  month: number,
-  weekNumber: number,
-  dayOfWeek: number,
-): { date: Date | null; maxWeek: number; lastDayOfMaxWeek: Date } => {
-  const firstDay = new Date(year, month - 1, 1).getDay();
-  const firstTargetOffset = (dayOfWeek - firstDay + 7) % 7;
-  const firstTargetDate = new Date(year, month - 1, 1 + firstTargetOffset);
-
-  if (firstTargetDate.getMonth() !== month - 1) {
-    firstTargetDate.setDate(firstTargetDate.getDate() + 7);
-  }
-
-  // 计算该月最大有效周数
-  let maxWeek = 1;
-  const testDate = new Date(firstTargetDate);
-  while (testDate.getMonth() === month - 1) {
-    maxWeek++;
-    testDate.setDate(testDate.getDate() + 7);
-  }
-  maxWeek--;
-
-  // 计算最后一周最后一天的日期（周六）
-  const lastDayOfMaxWeek = new Date(firstTargetDate);
-  lastDayOfMaxWeek.setDate(
-    firstTargetDate.getDate() + (maxWeek - 1) * 7 + ((6 - dayOfWeek + 7) % 7),
-  );
-
-  // 计算第N周的目标日期
-  const targetDate = new Date(firstTargetDate);
-  targetDate.setDate(firstTargetDate.getDate() + (weekNumber - 1) * 7);
-
-  if (targetDate.getMonth() !== month - 1) {
-    return { date: null, maxWeek, lastDayOfMaxWeek };
-  }
-
-  return { date: targetDate, maxWeek, lastDayOfMaxWeek };
-};
-
-// 计算某月份实际有几周（与 getDateOfWeekInMonth 使用一致的逻辑）
-const getWeeksInMonth = (year: number, month: number): number => {
-  const result = getDateOfWeekInMonth(year, month, 1, 1);
-  return result.maxWeek;
-};
-
-// 根据年份和月份动态生成周数选项
-const generateWeekOptions = (year: number, month: number) => {
-  const weeks = getWeeksInMonth(year, month);
-  return Array.from({ length: weeks }, (_, i) => ({
-    value: i + 1,
-    label: `第${i + 1}周`,
-  }));
-};
 
 // 生成日期选项（用于月重复设置，显示1-31日）
 // 提交时由 generateMonthlyDates 验证每个月是否有该日期
@@ -158,14 +89,6 @@ export function CreateScheduleModal({
   ) => {
     onChange(field, value);
 
-    // 周重复设置联动
-    if (field === "weeklyStartYear" || field === "weeklyStartMonth") {
-      onChange("weeklyStartWeek", 1);
-    }
-    if (field === "weeklyEndYear" || field === "weeklyEndMonth") {
-      onChange("weeklyEndWeek", 1);
-    }
-
     // 月重复设置联动
     if (field === "monthlyStartYear" || field === "monthlyStartMonth") {
       onChange("monthlyDay", 1);
@@ -183,130 +106,37 @@ export function CreateScheduleModal({
       case "weekly":
         return (
           <div className="space-y-3">
-            <div className="text-xs text-text-muted mb-2">周重复设置</div>
+            <div className="text-xs text-text-muted mb-2">周重复设置（每隔7天）</div>
             <div className="space-y-2">
               <div className="space-y-1">
-                <label className="block text-label font-medium text-text-muted">星期几</label>
-                <select
-                  value={form.weeklyDay}
-                  onChange={(e) => handleChange("weeklyDay", Number(e.target.value))}
+                <label className="block text-label font-medium text-text-muted">开始日期</label>
+                <input
+                  type="date"
+                  value={form.weeklyStartDate}
+                  onChange={(e) => handleChange("weeklyStartDate", e.target.value)}
                   className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                  min={dateRange.min}
+                  max={dateRange.max}
                   required
-                >
-                  <option value="">请选择</option>
-                  {WEEK_DAYS.map((day) => (
-                    <option key={day.value} value={day.value}>
-                      {day.label}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
-              {/* 开始行：年份 | 月份 | 周 */}
-              <div className="text-xs font-medium text-text-muted mb-1">开始</div>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="space-y-1">
-                  <label className="block text-label text-text-muted">年份</label>
-                  <select
-                    value={form.weeklyStartYear}
-                    onChange={(e) => handleChange("weeklyStartYear", Number(e.target.value))}
-                    className="w-full rounded-xl border border-border bg-muted px-2 py-1.5 text-xs text-text outline-none focus:border-text-muted"
-                    required
-                  >
-                    {YEAR_OPTIONS.map((y) => (
-                      <option key={y.value} value={y.value}>
-                        {y.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="block text-label text-text-muted">月份</label>
-                  <select
-                    value={form.weeklyStartMonth}
-                    onChange={(e) => handleChange("weeklyStartMonth", Number(e.target.value))}
-                    className="w-full rounded-xl border border-border bg-muted px-2 py-1.5 text-xs text-text outline-none focus:border-text-muted"
-                    required
-                  >
-                    {MONTHS.filter((m) => {
-                      const currentYear = today.getFullYear();
-                      if (form.weeklyStartYear > currentYear) return true;
-                      return m.value >= today.getMonth() + 1;
-                    }).map((m) => (
-                      <option key={m.value} value={m.value}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="block text-label text-text-muted">周</label>
-                  <select
-                    value={form.weeklyStartWeek}
-                    onChange={(e) => handleChange("weeklyStartWeek", Number(e.target.value))}
-                    className="w-full rounded-xl border border-border bg-muted px-2 py-1.5 text-xs text-text outline-none focus:border-text-muted"
-                    required
-                  >
-                    {generateWeekOptions(form.weeklyStartYear, form.weeklyStartMonth).map((w) => (
-                      <option key={w.value} value={w.value}>
-                        {w.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              <div className="space-y-1">
+                <label className="block text-label font-medium text-text-muted">结束日期</label>
+                <input
+                  type="date"
+                  value={form.weeklyEndDate}
+                  onChange={(e) => handleChange("weeklyEndDate", e.target.value)}
+                  className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                  min={form.weeklyStartDate || dateRange.min}
+                  max={dateRange.max}
+                  required
+                />
               </div>
-              {/* 结束行：年份 | 月份 | 周 */}
-              <div className="text-xs font-medium text-text-muted mb-1">结束</div>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="space-y-1">
-                  <label className="block text-label text-text-muted">年份</label>
-                  <select
-                    value={form.weeklyEndYear}
-                    onChange={(e) => handleChange("weeklyEndYear", Number(e.target.value))}
-                    className="w-full rounded-xl border border-border bg-muted px-2 py-1.5 text-xs text-text outline-none focus:border-text-muted"
-                    required
-                  >
-                    {YEAR_OPTIONS.filter((y) => y.value >= form.weeklyStartYear).map((y) => (
-                      <option key={y.value} value={y.value}>
-                        {y.label}
-                      </option>
-                    ))}
-                  </select>
+              {form.weeklyStartDate && (
+                <div className="text-xs text-text-muted">
+                  系统将从开始日期开始，每隔7天生成一个预约，直到结束日期
                 </div>
-                <div className="space-y-1">
-                  <label className="block text-label text-text-muted">月份</label>
-                  <select
-                    value={form.weeklyEndMonth}
-                    onChange={(e) => handleChange("weeklyEndMonth", Number(e.target.value))}
-                    className="w-full rounded-xl border border-border bg-muted px-2 py-1.5 text-xs text-text outline-none focus:border-text-muted"
-                    required
-                  >
-                    {MONTHS.filter((m) => {
-                      if (form.weeklyEndYear > form.weeklyStartYear) return true;
-                      if (form.weeklyEndYear < form.weeklyStartYear) return false;
-                      return m.value >= form.weeklyStartMonth;
-                    }).map((m) => (
-                      <option key={m.value} value={m.value}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="block text-label text-text-muted">周</label>
-                  <select
-                    value={form.weeklyEndWeek}
-                    onChange={(e) => handleChange("weeklyEndWeek", Number(e.target.value))}
-                    className="w-full rounded-xl border border-border bg-muted px-2 py-1.5 text-xs text-text outline-none focus:border-text-muted"
-                    required
-                  >
-                    {generateWeekOptions(form.weeklyEndYear, form.weeklyEndMonth).map((w) => (
-                      <option key={w.value} value={w.value}>
-                        {w.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+              )}
             </div>
           </div>
         );

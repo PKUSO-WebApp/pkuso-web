@@ -65,9 +65,21 @@ export function AdminScheduleGantt({ schedules, remove, selectedDate }: Props) {
   const WEEK_DAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 
   const formatGroupInfo = (group: ScheduleGroupRow): string => {
-    if (group.repeat_mode === "weekly") {
-      const dayLabel = WEEK_DAYS[group.weekly_day ?? 1];
-      return `${group.title}：${group.weekly_start_year}年${group.weekly_start_month}月第${group.weekly_start_week}周至${group.weekly_end_year}年${group.weekly_end_month}月第${group.weekly_end_week}周，每周${dayLabel}`;
+    if (group.repeat_mode === "weekly" && group.weekly_start_date && group.weekly_end_date) {
+      // 使用 parseLocalISO 解析日期字符串，避免时区偏移问题
+      const startDate = parseLocalISO(group.weekly_start_date + "T00:00:00");
+      const endDate = parseLocalISO(group.weekly_end_date + "T00:00:00");
+
+      // 格式化日期显示
+      const formatDate = (date: Date): string => {
+        return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+      };
+
+      // 从 weekly_start_date 计算星期几（getDay(): 0=周日，1=周一...）
+      const dayIndex = startDate.getDay();
+      const dayLabel = WEEK_DAYS[dayIndex];
+
+      return `${group.title}：${formatDate(startDate)}至${formatDate(endDate)}，每周${dayLabel}`;
     } else if (group.repeat_mode === "monthly") {
       return `${group.title}：${group.monthly_start_year}年${group.monthly_start_month}月至${group.monthly_end_year}年${group.monthly_end_month}月，每月${group.monthly_day}日`;
     }

@@ -189,9 +189,11 @@ export type Database = {
           title: string;
           updated_at: string | null;
           weekly_day: number | null;
+          weekly_end_date: string | null;
           weekly_end_month: number | null;
           weekly_end_week: number | null;
           weekly_end_year: number | null;
+          weekly_start_date: string | null;
           weekly_start_month: number | null;
           weekly_start_week: number | null;
           weekly_start_year: number | null;
@@ -209,9 +211,11 @@ export type Database = {
           title: string;
           updated_at?: string | null;
           weekly_day?: number | null;
+          weekly_end_date?: string | null;
           weekly_end_month?: number | null;
           weekly_end_week?: number | null;
           weekly_end_year?: number | null;
+          weekly_start_date?: string | null;
           weekly_start_month?: number | null;
           weekly_start_week?: number | null;
           weekly_start_year?: number | null;
@@ -229,9 +233,11 @@ export type Database = {
           title?: string;
           updated_at?: string | null;
           weekly_day?: number | null;
+          weekly_end_date?: string | null;
           weekly_end_month?: number | null;
           weekly_end_week?: number | null;
           weekly_end_year?: number | null;
+          weekly_start_date?: string | null;
           weekly_start_month?: number | null;
           weekly_start_week?: number | null;
           weekly_start_year?: number | null;

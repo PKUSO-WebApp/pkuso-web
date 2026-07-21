@@ -24,6 +24,7 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  const savingRef = React.useRef<Map<string, boolean>>(new Map());
 
   const fetch = React.useCallback(async () => {
     setLoading(true);
@@ -59,18 +60,37 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
 
   const approve = React.useCallback(
     async (id: string) => {
+      if (savingRef.current.has(id)) return false;
+      savingRef.current.set(id, true);
       setSaving(true);
-      const { error: dbError } = await client
-        .from("profiles")
-        .update({ status: "approved" } as never)
-        .eq("id", id);
-      setSaving(false);
-      if (dbError) {
-        setError(dbError.message);
+      try {
+        const {
+          data: { session },
+        } = await client.auth.getSession();
+        const response = await window.fetch("/api/admin/approve", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
+          body: JSON.stringify({ id }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          setError(result.error || "批准失败");
+          return false;
+        }
+        setData((prev) => prev.filter((r) => r.id !== id));
+        return true;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      } catch (_err: unknown) {
+        setError("网络错误");
         return false;
+      } finally {
+        savingRef.current.delete(id);
+        // 只有当没有任何用户正在保存时才设置 saving 为 false
+        setSaving(savingRef.current.size > 0);
       }
-      setData((prev) => prev.filter((r) => r.id !== id));
-      return true;
     },
     [client],
   );

@@ -85,10 +85,6 @@ src/app/
 - 提交遵循 Conventional Commits(commitlint 强制)。PR 用 Squash & merge。
 - CI 自动验证 typecheck + lint + test + build + gen-types 一致性 + 分支命名规范。
 
-## 重构路线
-
-渐进式多分支重构,目录结构文档待重构定型后补充。
-
 ## 前端设计原则
 
 - **Token 优先**: `src/styles/tokens.css` 为设计令牌单一可信源。所有颜色通过 Tailwind 语义类使用(`bg-primary`/`text-text`/`border-border` 等),**禁止硬编码 `zinc-*`**。16 对语义色覆盖亮/暗双模式。

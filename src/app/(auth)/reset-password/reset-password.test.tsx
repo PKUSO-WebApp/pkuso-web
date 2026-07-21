@@ -131,9 +131,7 @@ describe("ResetPasswordPage", () => {
 
     await waitFor(() => {
       // 无论邮箱是否注册，都显示统一的提示消息
-      expect(
-        screen.getByText("如果该邮箱已注册，我们已发送重置链接到您的邮箱。"),
-      ).toBeInTheDocument();
+      expect(screen.getByText("我们已发送重置链接到您的邮箱。")).toBeInTheDocument();
       expect(screen.getByPlaceholderText("name@example.com")).toHaveValue("");
     });
   });
@@ -152,9 +150,7 @@ describe("ResetPasswordPage", () => {
 
     await waitFor(() => {
       // 即使失败也显示统一的提示消息，不暴露邮箱是否注册
-      expect(
-        screen.getByText("如果该邮箱已注册，我们已发送重置链接到您的邮箱。"),
-      ).toBeInTheDocument();
+      expect(screen.getByText("我们已发送重置链接到您的邮箱。")).toBeInTheDocument();
     });
   });
 

@@ -65,7 +65,7 @@ export default function ResetPasswordPage() {
       }
 
       // 无论成功与否，都显示统一的提示信息，不区分邮箱是否注册
-      setSuccessMsg("如果该邮箱已注册，我们已发送重置链接到您的邮箱。");
+      setSuccessMsg("我们已发送重置链接到您的邮箱。");
       setEmail("");
     } finally {
       setSubmitting(false);

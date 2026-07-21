@@ -11,6 +11,7 @@ import {
 } from "@/app/(member)/schedule/components/create-rehearsal-modal";
 import { AttendanceModal } from "@/app/(member)/schedule/components/attendance-modal";
 import type { RehearsalRow, AttendanceRowWithUser } from "@/types/database";
+import { formatLocalISO, parseLocalISO } from "@/lib/date-utils";
 
 type RehearsalType = "合排" | "分排";
 
@@ -72,8 +73,8 @@ export default function AdminRehearsalsPage() {
     setForm({
       type: (item.type ?? "full") as "full" | "section",
       targetSection: item.target_section ?? "",
-      startTime: item.start_time ? new Date(item.start_time) : null,
-      endTime: item.end_time ? new Date(item.end_time) : null,
+      startTime: item.start_time ? parseLocalISO(item.start_time) : null,
+      endTime: item.end_time ? parseLocalISO(item.end_time) : null,
       location: item.location ?? "",
       repertoire: item.repertoire ?? "",
       signInCode: item.sign_in_code ?? "",
@@ -101,8 +102,8 @@ export default function AdminRehearsalsPage() {
     const payload: Record<string, unknown> = {
       type: form.type,
       target_section: form.type === "section" ? form.targetSection || null : null,
-      start_time: form.startTime.toISOString(),
-      end_time: form.endTime?.toISOString() ?? null,
+      start_time: formatLocalISO(form.startTime),
+      end_time: form.endTime ? formatLocalISO(form.endTime) : null,
       location: form.location,
       repertoire: form.repertoire,
       sign_in_code: form.type === "full" ? form.signInCode : null,
@@ -116,7 +117,7 @@ export default function AdminRehearsalsPage() {
     }
 
     if (notifyByEmail) {
-      const dateStr = `${form.startTime.toLocaleDateString("zh-CN")}`;
+      const dateStr = `${form.startTime.getFullYear()}-${String(form.startTime.getMonth() + 1).padStart(2, "0")}-${String(form.startTime.getDate()).padStart(2, "0")}`;
       try {
         const { supabase } = await import("@/lib/supabase");
         const {

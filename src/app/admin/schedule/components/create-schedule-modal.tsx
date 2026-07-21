@@ -2,6 +2,7 @@
 
 import React from "react";
 import { Modal } from "@/components/ui/Modal";
+import { getLocalDateString } from "@/lib/date-utils";
 
 export type CreateScheduleFormState = {
   title: string;
@@ -158,17 +159,10 @@ export function CreateScheduleModal({
     }
   };
 
-  const formatDate = (d: Date) => {
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  };
-
   const today = new Date();
   const dateRange = {
-    min: formatDate(today),
-    max: formatDate(new Date(today.getTime() + 90 * 24 * 60 * 60 * 1000)),
+    min: getLocalDateString(today),
+    max: getLocalDateString(new Date(today.getTime() + 90 * 24 * 60 * 60 * 1000)),
   };
 
   const renderRepeatSettings = () => {

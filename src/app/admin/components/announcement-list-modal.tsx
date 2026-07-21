@@ -2,6 +2,7 @@
 
 import React from "react";
 import { Modal } from "@/components/ui/Modal";
+import { formatDateTime } from "@/lib/date-utils";
 import type { AnnouncementRow } from "@/types/database";
 
 type AnnouncementListModalProps = {
@@ -14,19 +15,6 @@ type AnnouncementListModalProps = {
   onDelete: (id: string) => Promise<boolean>;
   onUpdate: (id: string, content: string) => Promise<boolean>;
 };
-
-function formatTime(s: string | null) {
-  if (!s) return "—";
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return s;
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(d);
-}
 
 function truncateContent(content: string | null, maxLength: number = 50) {
   if (!content) return "无内容";
@@ -182,7 +170,7 @@ export function AnnouncementListModal({
                 </div>
               </div>
               <p className="text-xs text-text-muted">
-                发布时间：{formatTime(selectedAnnouncement.created_at)}
+                发布时间：{formatDateTime(selectedAnnouncement.created_at)}
               </p>
               <div className="max-h-[40vh] overflow-y-auto rounded-xl border border-border bg-surface p-4">
                 <p className="text-sm text-text leading-relaxed whitespace-pre-wrap break-words">
@@ -208,7 +196,9 @@ export function AnnouncementListModal({
                   onClick={() => setSelectedId(item.id)}
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs text-text-muted mb-1">{formatTime(item.created_at)}</p>
+                    <p className="text-xs text-text-muted mb-1">
+                      {formatDateTime(item.created_at)}
+                    </p>
                     <p className="text-sm text-text line-clamp-3">
                       {truncateContent(item.content, 100)}
                     </p>

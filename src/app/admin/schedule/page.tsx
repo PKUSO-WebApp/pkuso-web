@@ -10,14 +10,7 @@ import {
   CreateScheduleModal,
   type CreateScheduleFormState,
 } from "./components/create-schedule-modal";
-
-function getLocalDateString(): string {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, "0");
-  const day = String(today.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
+import { getLocalDateString, parseLocalISO, formatDisplayDate } from "@/lib/date-utils";
 
 // 根据年份、月份、周数和星期几获取目标日期
 const getDateOfWeekInMonth = (
@@ -48,17 +41,6 @@ const getDateOfWeekInMonth = (
   }
 
   return targetDate;
-};
-
-// 计算某月份实际有几周（与 getDateOfWeekInMonth 使用一致的逻辑）
-// 通过尝试获取第N周周一的日期来判断是否存在有效周
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const getWeeksInMonth = (year: number, month: number): number => {
-  let weekNumber = 1;
-  while (getDateOfWeekInMonth(year, month, weekNumber, 1)) {
-    weekNumber++;
-  }
-  return weekNumber - 1;
 };
 
 function generateWeeklyDates(
@@ -170,7 +152,7 @@ export default function AdminSchedulePage() {
   }, [selectedDate, fetch]);
 
   const filteredSchedules = schedules.filter((schedule) => {
-    const date = new Date(schedule.start_time);
+    const date = parseLocalISO(schedule.start_time);
     const scheduleDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
     return scheduleDate === selectedDate;
   });
@@ -217,7 +199,7 @@ export default function AdminSchedulePage() {
 
       switch (form.repeatMode) {
         case "single":
-          dates = [new Date(form.date)];
+          dates = [parseLocalISO(form.date + "T00:00:00")];
           break;
         case "weekly": {
           const result = generateWeeklyDates(
@@ -340,15 +322,6 @@ export default function AdminSchedulePage() {
       monthlyEndMonth: new Date().getMonth() + 1,
     });
     setFormError(null);
-  };
-
-  const formatDisplayDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    const month = date.getMonth() + 1;
-    const day = date.getDate();
-    const weekDays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-    const dayOfWeek = weekDays[date.getDay()];
-    return `${month}月${day}日 ${dayOfWeek}`;
   };
 
   return (

@@ -9,15 +9,7 @@ import {
   CreateScheduleModal,
   type CreateScheduleFormState,
 } from "./components/create-schedule-modal";
-
-// 获取本地日期字符串，避免 toISOString() 的时区转换
-function getLocalDateString(): string {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, "0");
-  const day = String(today.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
+import { getLocalDateString, parseLocalISO, formatDisplayDate } from "@/lib/date-utils";
 
 export default function MemberSchedulePage() {
   const { data: schedules, loading, fetch, create, checkConflict, remove } = useSchedule();
@@ -41,7 +33,7 @@ export default function MemberSchedulePage() {
 
   // 过滤当前日期的预约（后端已筛选，这里做二次过滤确保准确性）
   const filteredSchedules = schedules.filter((schedule) => {
-    const date = new Date(schedule.start_time);
+    const date = parseLocalISO(schedule.start_time);
     // 使用本地日期比较，避免时区问题
     const scheduleDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
     return scheduleDate === selectedDate;
@@ -119,16 +111,6 @@ export default function MemberSchedulePage() {
       endTime: "",
     });
     setFormError(null);
-  };
-
-  // 格式化显示日期
-  const formatDisplayDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    const month = date.getMonth() + 1;
-    const day = date.getDate();
-    const weekDays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-    const dayOfWeek = weekDays[date.getDay()];
-    return `${month}月${day}日 ${dayOfWeek}`;
   };
 
   return (

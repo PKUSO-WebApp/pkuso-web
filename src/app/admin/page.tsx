@@ -4,19 +4,7 @@ import React from "react";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
 import { AnnouncementListModal } from "./components/announcement-list-modal";
-
-function formatTime(s: string | null) {
-  if (!s) return "—";
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return s;
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(d);
-}
+import { formatDateTime } from "@/lib/date-utils";
 
 export default function AdminPage() {
   const {
@@ -121,7 +109,7 @@ export default function AdminPage() {
                   <p className="mt-0.5 text-xs text-text-muted">{r.instrument || "未选声部"}</p>
                   <p className="mt-0.5 text-xs text-text-muted">{r.email || "—"}</p>
                   <p className="mt-0.5 text-caption text-text-subtle">
-                    注册：{formatTime(r.created_at)}
+                    注册：{formatDateTime(r.created_at)}
                   </p>
                 </div>
                 <div className="flex gap-1">

@@ -2,6 +2,7 @@
 
 import React from "react";
 import { Modal } from "@/components/ui/Modal";
+import { getLocalDateString } from "@/lib/date-utils";
 
 export type CreateScheduleFormState = {
   title: string;
@@ -47,15 +48,8 @@ export function CreateScheduleModal({
   // 日期范围（使用 useMemo 缓存，避免每次渲染重新计算）
   const dateRange = React.useMemo(() => {
     const today = new Date();
-    // 使用本地日期方法，避免 toISOString() 的时区转换
-    const formatDate = (d: Date) => {
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      return `${year}-${month}-${day}`;
-    };
-    const minDate = formatDate(today);
-    const maxDate = formatDate(new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000));
+    const minDate = getLocalDateString(today);
+    const maxDate = getLocalDateString(new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000));
     return { min: minDate, max: maxDate };
   }, []);
 

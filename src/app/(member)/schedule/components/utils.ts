@@ -1,7 +1,9 @@
+import { parseLocalISO } from "@/lib/date-utils";
+
 export function formatRehearsalRange(startValue: string, endValue: string | null) {
-  const start = new Date(startValue);
+  const start = parseLocalISO(startValue);
   if (Number.isNaN(start.getTime())) return startValue;
-  const end = endValue ? new Date(endValue) : null;
+  const end = endValue ? parseLocalISO(endValue) : null;
 
   const weekdayFormatter = new Intl.DateTimeFormat("zh-CN", { weekday: "short" });
   const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -22,7 +24,7 @@ export function formatRehearsalRange(startValue: string, endValue: string | null
 }
 
 export function isRehearsalExpired(startTime: string, endTime: string | null) {
-  const base = endTime ? new Date(endTime) : new Date(startTime);
+  const base = endTime ? parseLocalISO(endTime) : parseLocalISO(startTime);
   if (Number.isNaN(base.getTime())) return false;
   return Date.now() > base.getTime() + 12 * 60 * 60 * 1000;
 }

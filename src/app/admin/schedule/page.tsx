@@ -19,36 +19,77 @@ function getLocalDateString(): string {
   return `${year}-${month}-${day}`;
 }
 
-function generateWeeklyDates(
+// 根据年份、月份、周数和星期几获取目标日期
+const getDateOfWeekInMonth = (
   year: number,
+  month: number,
+  weekNumber: number,
+  dayOfWeek: number,
+): Date | null => {
+  const firstDay = new Date(year, month - 1, 1).getDay();
+  // 计算该月第一个目标星期几的日期
+  // firstDay: 月份第一天的星期（0=周日）
+  // dayOfWeek: 目标星期（0=周日，1=周一，...，6=周六）
+  const firstTargetOffset = (dayOfWeek - firstDay + 7) % 7;
+  const firstTargetDate = new Date(year, month - 1, 1 + firstTargetOffset);
+
+  // 如果第一个目标日期超出本月，则需要从下周开始
+  if (firstTargetDate.getMonth() !== month - 1) {
+    firstTargetDate.setDate(firstTargetDate.getDate() + 7);
+  }
+
+  // 计算第N周的目标日期
+  const targetDate = new Date(firstTargetDate);
+  targetDate.setDate(firstTargetDate.getDate() + (weekNumber - 1) * 7);
+
+  // 验证结果是否在本月内
+  if (targetDate.getMonth() !== month - 1) {
+    return null;
+  }
+
+  return targetDate;
+};
+
+// 计算某月份实际有几周（与 getDateOfWeekInMonth 使用一致的逻辑）
+// 通过尝试获取第N周周一的日期来判断是否存在有效周
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const getWeeksInMonth = (year: number, month: number): number => {
+  let weekNumber = 1;
+  while (getDateOfWeekInMonth(year, month, weekNumber, 1)) {
+    weekNumber++;
+  }
+  return weekNumber - 1;
+};
+
+function generateWeeklyDates(
+  startYear: number,
   startMonth: number,
   startWeek: number,
+  endYear: number,
   endMonth: number,
   endWeek: number,
   dayOfWeek: number,
 ): { dates: Date[]; error: string | null } {
   const dates: Date[] = [];
 
-  const startDate = new Date(year, startMonth - 1, 1);
-  const firstDayOfWeek = startDate.getDay();
-  const offset = (dayOfWeek - firstDayOfWeek + 7) % 7;
-  const currentDate = new Date(startDate);
-  currentDate.setDate(1 + offset + (startWeek - 1) * 7);
-
-  const endDate = new Date(year, endMonth, 0);
-  const lastDayOfWeek = endDate.getDay();
-  const lastOffset = (dayOfWeek - lastDayOfWeek + 7) % 7;
-  const lastTargetDate = new Date(endDate);
-  if (lastOffset > 0) lastTargetDate.setDate(endDate.getDate() - lastOffset);
-  if (endWeek < 5) {
-    lastTargetDate.setDate(lastTargetDate.getDate() - (5 - endWeek) * 7);
+  // 计算开始日期
+  const startTargetDate = getDateOfWeekInMonth(startYear, startMonth, startWeek, dayOfWeek);
+  if (!startTargetDate) {
+    return { dates: [], error: `开始月份第${startWeek}周无效` };
   }
 
-  if (currentDate > lastTargetDate) {
+  // 计算结束日期
+  const endTargetDate = getDateOfWeekInMonth(endYear, endMonth, endWeek, dayOfWeek);
+  if (!endTargetDate) {
+    return { dates: [], error: `结束月份第${endWeek}周无效` };
+  }
+
+  if (startTargetDate > endTargetDate) {
     return { dates: [], error: "日期范围无效，请调整开始和结束周" };
   }
 
-  while (currentDate <= lastTargetDate) {
+  const currentDate = new Date(startTargetDate);
+  while (currentDate <= endTargetDate) {
     dates.push(new Date(currentDate));
     currentDate.setDate(currentDate.getDate() + 7);
   }
@@ -57,32 +98,39 @@ function generateWeeklyDates(
 }
 
 function generateMonthlyDates(
-  year: number,
+  startYear: number,
   startMonth: number,
+  endYear: number,
   endMonth: number,
   dayOfMonth: number,
 ): { dates: Date[]; error: string | null } {
   const dates: Date[] = [];
-  const skippedMonths: number[] = [];
+  const skippedMonths: string[] = [];
 
-  for (let month = startMonth; month <= endMonth; month++) {
-    const date = new Date(year, month - 1, dayOfMonth);
-    if (date.getMonth() === month - 1) {
-      dates.push(date);
-    } else {
-      skippedMonths.push(month);
+  // 支持跨年生成日期
+  for (let year = startYear; year <= endYear; year++) {
+    const monthStart = year === startYear ? startMonth : 1;
+    const monthEnd = year === endYear ? endMonth : 12;
+
+    for (let month = monthStart; month <= monthEnd; month++) {
+      const date = new Date(year, month - 1, dayOfMonth);
+      if (date.getMonth() === month - 1) {
+        dates.push(date);
+      } else {
+        skippedMonths.push(`${year}年${month}月`);
+      }
     }
   }
 
   if (skippedMonths.length > 0 && dates.length === 0) {
     return {
       dates: [],
-      error: `${skippedMonths.join("月、")}月没有${dayOfMonth}日，请选择其他日期`,
+      error: `${skippedMonths.join("、")}没有${dayOfMonth}日，请选择其他日期`,
     };
   }
 
   if (skippedMonths.length > 0) {
-    return { dates, error: `${skippedMonths.join("月、")}月没有${dayOfMonth}日，已跳过这些月份` };
+    return { dates, error: `${skippedMonths.join("、")}没有${dayOfMonth}日，已跳过这些月份` };
   }
 
   return { dates, error: null };
@@ -96,6 +144,7 @@ export default function AdminSchedulePage() {
   const [formError, setFormError] = React.useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
 
+  const currentYear = new Date().getFullYear();
   const [form, setForm] = React.useState<CreateScheduleFormState>({
     title: "",
     date: getLocalDateString(),
@@ -103,12 +152,16 @@ export default function AdminSchedulePage() {
     endTime: "",
     repeatMode: "single",
     weeklyDay: 1,
+    weeklyStartYear: currentYear,
     weeklyStartMonth: new Date().getMonth() + 1,
     weeklyStartWeek: 1,
+    weeklyEndYear: currentYear,
     weeklyEndMonth: new Date().getMonth() + 1,
     weeklyEndWeek: 1,
     monthlyDay: 1,
+    monthlyStartYear: currentYear,
     monthlyStartMonth: new Date().getMonth() + 1,
+    monthlyEndYear: currentYear,
     monthlyEndMonth: new Date().getMonth() + 1,
   });
 
@@ -159,7 +212,6 @@ export default function AdminSchedulePage() {
       }
 
       const groupId = form.repeatMode !== "single" ? crypto.randomUUID() : null;
-      const year = new Date().getFullYear();
       let dates: Date[] = [];
       let dateError: string | null = null;
 
@@ -169,9 +221,10 @@ export default function AdminSchedulePage() {
           break;
         case "weekly": {
           const result = generateWeeklyDates(
-            year,
+            form.weeklyStartYear,
             form.weeklyStartMonth,
             form.weeklyStartWeek,
+            form.weeklyEndYear,
             form.weeklyEndMonth,
             form.weeklyEndWeek,
             form.weeklyDay,
@@ -182,8 +235,9 @@ export default function AdminSchedulePage() {
         }
         case "monthly": {
           const result = generateMonthlyDates(
-            year,
+            form.monthlyStartYear,
             form.monthlyStartMonth,
+            form.monthlyEndYear,
             form.monthlyEndMonth,
             form.monthlyDay,
           );
@@ -245,12 +299,16 @@ export default function AdminSchedulePage() {
           endTime: "",
           repeatMode: "single",
           weeklyDay: 1,
+          weeklyStartYear: currentYear,
           weeklyStartMonth: new Date().getMonth() + 1,
           weeklyStartWeek: 1,
+          weeklyEndYear: currentYear,
           weeklyEndMonth: new Date().getMonth() + 1,
           weeklyEndWeek: 1,
           monthlyDay: 1,
+          monthlyStartYear: currentYear,
           monthlyStartMonth: new Date().getMonth() + 1,
+          monthlyEndYear: currentYear,
           monthlyEndMonth: new Date().getMonth() + 1,
         });
         setFormError(null);
@@ -269,12 +327,16 @@ export default function AdminSchedulePage() {
       endTime: "",
       repeatMode: "single",
       weeklyDay: 1,
+      weeklyStartYear: currentYear,
       weeklyStartMonth: new Date().getMonth() + 1,
       weeklyStartWeek: 1,
+      weeklyEndYear: currentYear,
       weeklyEndMonth: new Date().getMonth() + 1,
       weeklyEndWeek: 1,
       monthlyDay: 1,
+      monthlyStartYear: currentYear,
       monthlyStartMonth: new Date().getMonth() + 1,
+      monthlyEndYear: currentYear,
       monthlyEndMonth: new Date().getMonth() + 1,
     });
     setFormError(null);

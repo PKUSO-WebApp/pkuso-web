@@ -10,12 +10,16 @@ export type CreateScheduleFormState = {
   endTime: string;
   repeatMode: "single" | "weekly" | "monthly";
   weeklyDay: number;
+  weeklyStartYear: number;
   weeklyStartMonth: number;
   weeklyStartWeek: number;
+  weeklyEndYear: number;
   weeklyEndMonth: number;
   weeklyEndWeek: number;
   monthlyDay: number;
+  monthlyStartYear: number;
   monthlyStartMonth: number;
+  monthlyEndYear: number;
   monthlyEndMonth: number;
 };
 
@@ -61,15 +65,68 @@ const MONTHS = Array.from({ length: 12 }, (_, i) => ({
   label: `${i + 1}月`,
 }));
 
-const WEEKS = Array.from({ length: 5 }, (_, i) => ({
-  value: i + 1,
-  label: `第${i + 1}周`,
-}));
+// 根据年份、月份、周数和星期几获取目标日期（与 page.tsx 保持一致）
+const getDateOfWeekInMonth = (
+  year: number,
+  month: number,
+  weekNumber: number,
+  dayOfWeek: number,
+): Date | null => {
+  const firstDay = new Date(year, month - 1, 1).getDay();
+  const firstTargetOffset = (dayOfWeek - firstDay + 7) % 7;
+  const firstTargetDate = new Date(year, month - 1, 1 + firstTargetOffset);
 
-const DAYS_IN_MONTH = Array.from({ length: 31 }, (_, i) => ({
-  value: i + 1,
-  label: `${i + 1}日`,
-}));
+  if (firstTargetDate.getMonth() !== month - 1) {
+    firstTargetDate.setDate(firstTargetDate.getDate() + 7);
+  }
+
+  const targetDate = new Date(firstTargetDate);
+  targetDate.setDate(firstTargetDate.getDate() + (weekNumber - 1) * 7);
+
+  if (targetDate.getMonth() !== month - 1) {
+    return null;
+  }
+
+  return targetDate;
+};
+
+// 计算某月份实际有几周（与 getDateOfWeekInMonth 使用一致的逻辑）
+const getWeeksInMonth = (year: number, month: number): number => {
+  let weekNumber = 1;
+  while (getDateOfWeekInMonth(year, month, weekNumber, 1)) {
+    weekNumber++;
+  }
+  return weekNumber - 1;
+};
+
+// 根据年份和月份动态生成周数选项
+const generateWeekOptions = (year: number, month: number) => {
+  const weeks = getWeeksInMonth(year, month);
+  return Array.from({ length: weeks }, (_, i) => ({
+    value: i + 1,
+    label: `第${i + 1}周`,
+  }));
+};
+
+// 生成日期选项（用于月重复设置，显示1-31日）
+// 提交时由 generateMonthlyDates 验证每个月是否有该日期
+const generateMaxDayOptions = () => {
+  return Array.from({ length: 31 }, (_, i) => ({
+    value: i + 1,
+    label: `${i + 1}日`,
+  }));
+};
+
+// 生成年份选项（当前年份到当前年份+5）
+const generateYearOptions = () => {
+  const currentYear = new Date().getFullYear();
+  return Array.from({ length: 6 }, (_, i) => ({
+    value: currentYear + i,
+    label: `${currentYear + i}年`,
+  }));
+};
+
+const YEAR_OPTIONS = generateYearOptions();
 
 export function CreateScheduleModal({
   open,
@@ -80,6 +137,27 @@ export function CreateScheduleModal({
   onClose,
   onSubmit,
 }: Props) {
+  // 处理表单字段联动，当年份或月份变化时自动重置相关字段
+  const handleChange = <K extends keyof CreateScheduleFormState>(
+    field: K,
+    value: CreateScheduleFormState[K],
+  ) => {
+    onChange(field, value);
+
+    // 周重复设置联动
+    if (field === "weeklyStartYear" || field === "weeklyStartMonth") {
+      onChange("weeklyStartWeek", 1);
+    }
+    if (field === "weeklyEndYear" || field === "weeklyEndMonth") {
+      onChange("weeklyEndWeek", 1);
+    }
+
+    // 月重复设置联动
+    if (field === "monthlyStartYear" || field === "monthlyStartMonth") {
+      onChange("monthlyDay", 1);
+    }
+  };
+
   const formatDate = (d: Date) => {
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, "0");
@@ -104,7 +182,7 @@ export function CreateScheduleModal({
                 <label className="block text-label font-medium text-text-muted">星期几</label>
                 <select
                   value={form.weeklyDay}
-                  onChange={(e) => onChange("weeklyDay", Number(e.target.value))}
+                  onChange={(e) => handleChange("weeklyDay", Number(e.target.value))}
                   className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
                   required
                 >
@@ -118,31 +196,67 @@ export function CreateScheduleModal({
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <label className="block text-label font-medium text-text-muted">开始月份</label>
+                  <label className="block text-label font-medium text-text-muted">开始年份</label>
                   <select
-                    value={form.weeklyStartMonth}
-                    onChange={(e) => onChange("weeklyStartMonth", Number(e.target.value))}
+                    value={form.weeklyStartYear}
+                    onChange={(e) => handleChange("weeklyStartYear", Number(e.target.value))}
                     className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
                     required
                   >
-                    {MONTHS.filter((m) => m.value >= today.getMonth() + 1).map((m) => (
+                    {YEAR_OPTIONS.map((y) => (
+                      <option key={y.value} value={y.value}>
+                        {y.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-label font-medium text-text-muted">开始月份</label>
+                  <select
+                    value={form.weeklyStartMonth}
+                    onChange={(e) => handleChange("weeklyStartMonth", Number(e.target.value))}
+                    className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                    required
+                  >
+                    {MONTHS.filter((m) => {
+                      const currentYear = today.getFullYear();
+                      if (form.weeklyStartYear > currentYear) return true;
+                      return m.value >= today.getMonth() + 1;
+                    }).map((m) => (
                       <option key={m.value} value={m.value}>
                         {m.label}
                       </option>
                     ))}
                   </select>
                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <label className="block text-label font-medium text-text-muted">开始周</label>
                   <select
                     value={form.weeklyStartWeek}
-                    onChange={(e) => onChange("weeklyStartWeek", Number(e.target.value))}
+                    onChange={(e) => handleChange("weeklyStartWeek", Number(e.target.value))}
                     className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
                     required
                   >
-                    {WEEKS.map((w) => (
+                    {generateWeekOptions(form.weeklyStartYear, form.weeklyStartMonth).map((w) => (
                       <option key={w.value} value={w.value}>
                         {w.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-label font-medium text-text-muted">结束年份</label>
+                  <select
+                    value={form.weeklyEndYear}
+                    onChange={(e) => handleChange("weeklyEndYear", Number(e.target.value))}
+                    className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                    required
+                  >
+                    {YEAR_OPTIONS.filter((y) => y.value >= form.weeklyStartYear).map((y) => (
+                      <option key={y.value} value={y.value}>
+                        {y.label}
                       </option>
                     ))}
                   </select>
@@ -153,11 +267,15 @@ export function CreateScheduleModal({
                   <label className="block text-label font-medium text-text-muted">结束月份</label>
                   <select
                     value={form.weeklyEndMonth}
-                    onChange={(e) => onChange("weeklyEndMonth", Number(e.target.value))}
+                    onChange={(e) => handleChange("weeklyEndMonth", Number(e.target.value))}
                     className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
                     required
                   >
-                    {MONTHS.filter((m) => m.value >= form.weeklyStartMonth).map((m) => (
+                    {MONTHS.filter((m) => {
+                      if (form.weeklyEndYear > form.weeklyStartYear) return true;
+                      if (form.weeklyEndYear < form.weeklyStartYear) return false;
+                      return m.value >= form.weeklyStartMonth;
+                    }).map((m) => (
                       <option key={m.value} value={m.value}>
                         {m.label}
                       </option>
@@ -168,11 +286,11 @@ export function CreateScheduleModal({
                   <label className="block text-label font-medium text-text-muted">结束周</label>
                   <select
                     value={form.weeklyEndWeek}
-                    onChange={(e) => onChange("weeklyEndWeek", Number(e.target.value))}
+                    onChange={(e) => handleChange("weeklyEndWeek", Number(e.target.value))}
                     className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
                     required
                   >
-                    {WEEKS.map((w) => (
+                    {generateWeekOptions(form.weeklyEndYear, form.weeklyEndMonth).map((w) => (
                       <option key={w.value} value={w.value}>
                         {w.label}
                       </option>
@@ -192,12 +310,12 @@ export function CreateScheduleModal({
                 <label className="block text-label font-medium text-text-muted">每月几号</label>
                 <select
                   value={form.monthlyDay}
-                  onChange={(e) => onChange("monthlyDay", Number(e.target.value))}
+                  onChange={(e) => handleChange("monthlyDay", Number(e.target.value))}
                   className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
                   required
                 >
                   <option value="">请选择</option>
-                  {DAYS_IN_MONTH.map((d) => (
+                  {generateMaxDayOptions().map((d) => (
                     <option key={d.value} value={d.value}>
                       {d.label}
                     </option>
@@ -206,16 +324,56 @@ export function CreateScheduleModal({
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <label className="block text-label font-medium text-text-muted">开始月份</label>
+                  <label className="block text-label font-medium text-text-muted">开始年份</label>
                   <select
-                    value={form.monthlyStartMonth}
-                    onChange={(e) => onChange("monthlyStartMonth", Number(e.target.value))}
+                    value={form.monthlyStartYear}
+                    onChange={(e) => handleChange("monthlyStartYear", Number(e.target.value))}
                     className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
                     required
                   >
-                    {MONTHS.filter((m) => m.value >= today.getMonth() + 1).map((m) => (
+                    {YEAR_OPTIONS.map((y) => (
+                      <option key={y.value} value={y.value}>
+                        {y.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-label font-medium text-text-muted">开始月份</label>
+                  <select
+                    value={form.monthlyStartMonth}
+                    onChange={(e) => handleChange("monthlyStartMonth", Number(e.target.value))}
+                    className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                    required
+                  >
+                    {MONTHS.filter((m) => {
+                      const currentYear = today.getFullYear();
+                      if (form.monthlyStartYear > currentYear) return true;
+                      return m.value >= today.getMonth() + 1;
+                    }).map((m) => (
                       <option key={m.value} value={m.value}>
                         {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="block text-label font-medium text-text-muted">结束年份</label>
+                  <select
+                    value={form.monthlyEndYear}
+                    onChange={(e) => handleChange("monthlyEndYear", Number(e.target.value))}
+                    className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                    required
+                  >
+                    {YEAR_OPTIONS.filter((y) => {
+                      if (y.value > form.monthlyStartYear) return true;
+                      if (y.value < form.monthlyStartYear) return false;
+                      return y.value >= form.monthlyStartYear;
+                    }).map((y) => (
+                      <option key={y.value} value={y.value}>
+                        {y.label}
                       </option>
                     ))}
                   </select>
@@ -224,11 +382,15 @@ export function CreateScheduleModal({
                   <label className="block text-label font-medium text-text-muted">结束月份</label>
                   <select
                     value={form.monthlyEndMonth}
-                    onChange={(e) => onChange("monthlyEndMonth", Number(e.target.value))}
+                    onChange={(e) => handleChange("monthlyEndMonth", Number(e.target.value))}
                     className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
                     required
                   >
-                    {MONTHS.filter((m) => m.value >= form.monthlyStartMonth).map((m) => (
+                    {MONTHS.filter((m) => {
+                      if (form.monthlyEndYear > form.monthlyStartYear) return true;
+                      if (form.monthlyEndYear < form.monthlyStartYear) return false;
+                      return m.value >= form.monthlyStartMonth;
+                    }).map((m) => (
                       <option key={m.value} value={m.value}>
                         {m.label}
                       </option>
@@ -253,26 +415,27 @@ export function CreateScheduleModal({
             <input
               type="text"
               value={form.title}
-              onChange={(e) => onChange("title", e.target.value)}
+              onChange={(e) => handleChange("title", e.target.value)}
               className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
               placeholder="如：排练房A预约"
               required
             />
           </div>
 
-          <div className="space-y-1">
-            <label className="block text-label font-medium text-text-muted">预约日期</label>
-            <input
-              type="date"
-              value={form.date}
-              onChange={(e) => onChange("date", e.target.value)}
-              className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
-              min={dateRange.min}
-              max={dateRange.max}
-              required
-              disabled={form.repeatMode !== "single"}
-            />
-          </div>
+          {form.repeatMode === "single" && (
+            <div className="space-y-1">
+              <label className="block text-label font-medium text-text-muted">预约日期</label>
+              <input
+                type="date"
+                value={form.date}
+                onChange={(e) => handleChange("date", e.target.value)}
+                className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                min={dateRange.min}
+                max={dateRange.max}
+                required
+              />
+            </div>
+          )}
 
           <div className="space-y-1">
             <label className="block text-label font-medium text-text-muted">重复模式</label>
@@ -287,7 +450,7 @@ export function CreateScheduleModal({
                 <button
                   key={mode.value}
                   type="button"
-                  onClick={() => onChange("repeatMode", mode.value)}
+                  onClick={() => handleChange("repeatMode", mode.value)}
                   className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${
                     form.repeatMode === mode.value
                       ? "bg-primary text-primary-foreground"
@@ -307,7 +470,7 @@ export function CreateScheduleModal({
               <label className="block text-label font-medium text-text-muted">开始时间</label>
               <select
                 value={form.startTime}
-                onChange={(e) => onChange("startTime", e.target.value)}
+                onChange={(e) => handleChange("startTime", e.target.value)}
                 className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
                 required
               >
@@ -324,7 +487,7 @@ export function CreateScheduleModal({
               <label className="block text-label font-medium text-text-muted">结束时间</label>
               <select
                 value={form.endTime}
-                onChange={(e) => onChange("endTime", e.target.value)}
+                onChange={(e) => handleChange("endTime", e.target.value)}
                 className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
                 required
               >

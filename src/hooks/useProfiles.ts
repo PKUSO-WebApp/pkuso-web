@@ -81,6 +81,45 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
           return false;
         }
         setData((prev) => prev.filter((r) => r.id !== id));
+        setError(null);
+        return true;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      } catch (_err: unknown) {
+        setError("网络错误");
+        return false;
+      } finally {
+        savingRef.current.delete(id);
+        // 只有当没有任何用户正在保存时才设置 saving 为 false
+        setSaving(savingRef.current.size > 0);
+      }
+    },
+    [client],
+  );
+
+  const reject = React.useCallback(
+    async (id: string) => {
+      if (savingRef.current.has(id)) return false;
+      savingRef.current.set(id, true);
+      setSaving(true);
+      try {
+        const {
+          data: { session },
+        } = await client.auth.getSession();
+        const response = await window.fetch("/api/admin/reject", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
+          body: JSON.stringify({ id }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          setError(result.error || "拒绝失败");
+          return false;
+        }
+        setData((prev) => prev.filter((r) => r.id !== id));
+        setError(null);
         return true;
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
       } catch (_err: unknown) {
@@ -109,5 +148,5 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
     [client],
   );
 
-  return { data, loading, error, saving, fetch, approve, insert };
+  return { data, loading, error, saving, fetch, approve, reject, insert };
 }

@@ -422,21 +422,6 @@ export function CreateScheduleModal({
             />
           </div>
 
-          {form.repeatMode === "single" && (
-            <div className="space-y-1">
-              <label className="block text-label font-medium text-text-muted">预约日期</label>
-              <input
-                type="date"
-                value={form.date}
-                onChange={(e) => handleChange("date", e.target.value)}
-                className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
-                min={dateRange.min}
-                max={dateRange.max}
-                required
-              />
-            </div>
-          )}
-
           <div className="space-y-1">
             <label className="block text-label font-medium text-text-muted">重复模式</label>
             <div className="flex gap-2">
@@ -462,6 +447,21 @@ export function CreateScheduleModal({
               ))}
             </div>
           </div>
+
+          {form.repeatMode === "single" && (
+            <div className="space-y-1">
+              <label className="block text-label font-medium text-text-muted">预约日期</label>
+              <input
+                type="date"
+                value={form.date}
+                onChange={(e) => handleChange("date", e.target.value)}
+                className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                min={dateRange.min}
+                max={dateRange.max}
+                required
+              />
+            </div>
+          )}
 
           {renderRepeatSettings()}
 

@@ -7,7 +7,7 @@ import type { ProfileRow } from "@/types/database";
 export type AuthState = {
   sessionUserId: string | null;
   sessionLoading: boolean;
-  emailConfirmed: boolean;
+  emailConfirmed: boolean | null;
   profileStatus: string | null;
   profileRole: string | null;
   profileName: string | null;
@@ -41,7 +41,7 @@ export function useAuth(
 ) {
   const [sessionUserId, setSessionUserId] = React.useState<string | null>(null);
   const [sessionLoading, setSessionLoading] = React.useState(true);
-  const [emailConfirmed, setEmailConfirmed] = React.useState(false);
+  const [emailConfirmed, setEmailConfirmed] = React.useState<boolean | null>(null);
   const [profileStatus, setProfileStatus] = React.useState<string | null>(null);
   const [profileRole, setProfileRole] = React.useState<string | null>(null);
   const [profileName, setProfileName] = React.useState<string | null>(null);
@@ -60,7 +60,8 @@ export function useAuth(
       if (!mounted) return;
       if (error) console.warn("[useAuth] getSession 失败:", error.message);
       setSessionUserId(data.session?.user?.id ?? null);
-      setEmailConfirmed(!!data.session?.user?.email_confirmed_at);
+      // 仅在有 session 时设置 emailConfirmed，未登录时保持 null
+      setEmailConfirmed(data.session?.user ? !!data.session.user.email_confirmed_at : null);
       setSessionLoading(false);
     };
     void init();
@@ -68,7 +69,8 @@ export function useAuth(
     const { data: sub } = client.auth.onAuthStateChange((_event, next) => {
       if (!mounted) return;
       setSessionUserId(next?.user?.id ?? null);
-      setEmailConfirmed(!!next?.user?.email_confirmed_at);
+      // 仅在有 session 时设置 emailConfirmed，未登录时保持 null
+      setEmailConfirmed(next?.user ? !!next.user.email_confirmed_at : null);
     });
 
     return () => {

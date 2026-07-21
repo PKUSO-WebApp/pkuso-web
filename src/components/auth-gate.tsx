@@ -11,7 +11,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
 
-  const isAuthPage = pathname === "/login" || pathname === "/signup";
+  const isAuthPage =
+    pathname === "/login" || pathname === "/signup" || pathname === "/reset-password";
 
   const onProfileLoaded = React.useCallback(
     (profile: {
@@ -58,11 +59,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   // 管理员用户自动路由到 admin 端
   React.useEffect(() => {
     const isAdminPage = pathname === "/admin" || pathname.startsWith("/admin/");
+    // 邮箱未验证时不进行路由跳转，等待邮箱验证状态确认
+    if (emailConfirmed === false) return;
     if (
       !sessionLoading &&
       !profileLoading &&
       sessionUserId &&
-      emailConfirmed &&
+      emailConfirmed === true &&
       profileRole === "admin" &&
       profileStatus === "approved" &&
       !isAuthPage &&
@@ -85,11 +88,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   // 非 admin 用户访问 admin 路由时自动跳转到成员端
   React.useEffect(() => {
     const isAdminPage = pathname === "/admin" || pathname.startsWith("/admin/");
+    // 邮箱未验证时不进行路由跳转，等待邮箱验证状态确认
+    if (emailConfirmed === false) return;
     if (
       !sessionLoading &&
       !profileLoading &&
       sessionUserId &&
-      emailConfirmed &&
+      emailConfirmed === true &&
       profileRole !== "admin" &&
       profileStatus === "approved" &&
       !isAuthPage &&
@@ -111,7 +116,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   const isPending = !!sessionUserId && profileStatus === "pending";
   const isRejected = !!sessionUserId && profileStatus === "rejected";
-  const isEmailUnconfirmed = !!sessionUserId && !emailConfirmed;
+  const isEmailUnconfirmed = !!sessionUserId && emailConfirmed === false;
+  // emailConfirmed 为 null 表示正在验证邮箱状态
+  const isEmailConfirmLoading = !!sessionUserId && emailConfirmed === null;
 
   const handleLogout = () => {
     void handleSignOut();
@@ -174,6 +181,21 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               <h1 className="mt-4 text-lg font-semibold text-text">账号已被拒绝</h1>
               <p className="mt-2 max-w-xs text-sm text-text-muted">
                 您的申请未通过审核，无法访问乐团系统
+              </p>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="mt-6 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
+              >
+                退出登录
+              </button>
+            </div>
+          ) : isEmailConfirmLoading && !isAuthPage ? (
+            <div className="flex min-h-[70vh] flex-col items-center justify-center text-center">
+              <div className="text-5xl">🔄</div>
+              <h1 className="mt-4 text-lg font-semibold text-text">验证邮箱状态中…</h1>
+              <p className="mt-2 max-w-xs text-sm text-text-muted">
+                请稍候，正在确认您的邮箱验证状态
               </p>
               <button
                 type="button"

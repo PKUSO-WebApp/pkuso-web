@@ -39,7 +39,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-[80vh] items-center justify-center">
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-md">
         <div className="rounded-3xl border border-border bg-surface p-5 shadow-sm">
           <div className="mb-4 text-center">
             <h1 className="text-xl font-semibold text-text">登录</h1>
@@ -83,7 +83,7 @@ export default function LoginPage() {
             </div>
 
             {errorMsg ? (
-              <div className="rounded-xl bg-red-50 px-3 py-2 text-center text-sm text-red-600">
+              <div className="rounded-xl bg-danger-bg px-3 py-2 text-center text-sm text-danger">
                 {errorMsg}
               </div>
             ) : null}
@@ -91,7 +91,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="mt-1 flex w-full items-center justify-center rounded-2xl bg-primary px-4 py-3 text-sm font-medium text-white shadow-md hover:opacity-90 disabled:opacity-60"
+              className="mt-1 flex w-full items-center justify-center rounded-2xl bg-primary px-4 py-3 text-sm font-medium text-primary-foreground shadow-md hover:opacity-90 disabled:opacity-60"
             >
               {submitting ? "登录中…" : "登录"}
             </button>

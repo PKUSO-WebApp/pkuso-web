@@ -1,5 +1,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import * as matchers from "@testing-library/jest-dom/matchers";
+import { expect } from "vitest";
+
+// 扩展 vitest 的 expect 以支持 jest-dom matchers
+expect.extend(matchers);
 
 // vitest 默认不加载 .env.local，此 setup 手动解析并注入 process.env
 try {

@@ -62,8 +62,10 @@ export type Database = {
           created_by: string | null;
           expires_at: string | null;
           id: string;
+          max_uses: number | null;
           used: boolean | null;
           used_by: string | null;
+          used_count: number | null;
         };
         Insert: {
           code: string;
@@ -71,8 +73,10 @@ export type Database = {
           created_by?: string | null;
           expires_at?: string | null;
           id?: string;
+          max_uses?: number | null;
           used?: boolean | null;
           used_by?: string | null;
+          used_count?: number | null;
         };
         Update: {
           code?: string;
@@ -80,8 +84,10 @@ export type Database = {
           created_by?: string | null;
           expires_at?: string | null;
           id?: string;
+          max_uses?: number | null;
           used?: boolean | null;
           used_by?: string | null;
+          used_count?: number | null;
         };
         Relationships: [];
       };
@@ -343,6 +349,14 @@ export type Database = {
     };
     Functions: {
       is_admin: { Args: never; Returns: boolean };
+      verify_and_use_invitation_code: {
+        Args: { p_code: string; p_user_id: string };
+        Returns: {
+          expires_at: string;
+          message: string;
+          success: boolean;
+        }[];
+      };
     };
     Enums: {
       attendanceStatus: "present" | "late" | "absent" | "excused";

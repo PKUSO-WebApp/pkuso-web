@@ -13,11 +13,15 @@ vi.mock("@/lib/supabase", () => ({
       eq: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
     }),
+    rpc: vi.fn().mockResolvedValue({ data: [{ success: true, message: "验证成功" }], error: null }),
     auth: {
       signUp: vi.fn().mockResolvedValue({ error: null, data: { user: { id: "test-user-id" } } }),
       getSession: vi
         .fn()
         .mockResolvedValue({ data: { session: { user: { id: "test-user-id" } } } }),
+      admin: {
+        deleteUser: vi.fn().mockResolvedValue({ error: null }),
+      },
     },
   },
 }));
@@ -59,17 +63,11 @@ describe("SignupPage", () => {
   });
 
   it("邀请码验证 - 有效邀请码", async () => {
-    // 模拟邀请码有效：使用 UPDATE 操作进行原子验证
-    const mockFrom = vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      update: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({
-        data: { code: "TESTCODE", used: false, expires_at: "2030-01-01" },
-        error: null,
-      }),
+    // 模拟邀请码有效：RPC 函数返回成功
+    (supabase.rpc as Mock).mockResolvedValue({
+      data: [{ success: true, message: "验证成功", expires_at: "2030-01-01" }],
+      error: null,
     });
-    (supabase.from as Mock).mockImplementation(mockFrom);
 
     const { container } = render(<SignupPage />);
     fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
@@ -99,52 +97,82 @@ describe("SignupPage", () => {
     fireEvent.submit(form);
 
     await waitFor(() => {
-      // 验证阶段：使用 UPDATE 进行原子验证
-      expect(supabase.from).toHaveBeenCalledWith("invitation_codes");
-      // 验证 update 被调用（原子验证）
-      expect(mockFrom.mock.results[0].value.update).toHaveBeenCalledWith({ used: true });
-      // 验证 select 被调用（获取 expires_at）
-      expect(mockFrom.mock.results[0].value.select).toHaveBeenCalledWith("expires_at");
-      const eqCalls = mockFrom.mock.results[0].value.eq.mock.calls;
-      expect(eqCalls).toContainEqual(["code", "TESTCODE"]);
-      expect(eqCalls).toContainEqual(["used", false]);
+      // 验证 RPC 函数被调用，传入 p_code 和 p_user_id
+      expect(supabase.rpc).toHaveBeenCalledWith("verify_and_use_invitation_code", {
+        p_code: "TESTCODE",
+        p_user_id: "test-user-id",
+      });
     });
   });
 
   it("邀请码验证 - 无效邀请码", async () => {
-    // 模拟邀请码无效：返回空 data（UPDATE 操作没有匹配到记录）
-    (supabase.from as Mock).mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      update: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+    // 模拟邀请码无效：RPC 函数返回失败
+    (supabase.rpc as Mock).mockResolvedValue({
+      data: [{ success: false, message: "邀请码无效或已被使用" }],
+      error: null,
     });
 
     const { container } = render(<SignupPage />);
     fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
       target: { value: "INVALID" },
     });
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "test@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("再次输入密码"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("请填写真实姓名"), {
+      target: { value: "张三" },
+    });
+    const selects = container.querySelectorAll("select");
+    fireEvent.change(selects[0], { target: { value: "长笛" } });
+    fireEvent.change(screen.getByPlaceholderText("例如：经济学院"), {
+      target: { value: "经济学院" },
+    });
+    fireEvent.change(selects[1], { target: { value: "2024" } });
+    fireEvent.change(selects[2], { target: { value: "秋" } });
 
     const form = container.querySelector("form")!;
     fireEvent.submit(form);
 
     await waitFor(() => {
-      expect(screen.getByText(/邀请码无效或已被使用/)).toBeInTheDocument();
+      expect(
+        screen.getByText("邀请码无效或已被使用，请联系乐团管理员获取新的邀请码。"),
+      ).toBeInTheDocument();
     });
   });
 
   it("邀请码验证 - 数据库错误", async () => {
-    (supabase.from as Mock).mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      update: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: { message: "DB error" } }),
-    });
+    // 模拟 RPC 调用失败
+    (supabase.rpc as Mock).mockResolvedValue({ data: null, error: { message: "DB error" } });
 
     const { container } = render(<SignupPage />);
     fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
       target: { value: "TESTCODE" },
     });
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "test@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("再次输入密码"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("请填写真实姓名"), {
+      target: { value: "张三" },
+    });
+    const selects = container.querySelectorAll("select");
+    fireEvent.change(selects[0], { target: { value: "长笛" } });
+    fireEvent.change(screen.getByPlaceholderText("例如：经济学院"), {
+      target: { value: "经济学院" },
+    });
+    fireEvent.change(selects[1], { target: { value: "2024" } });
+    fireEvent.change(selects[2], { target: { value: "秋" } });
 
     const form = container.querySelector("form")!;
     fireEvent.submit(form);
@@ -155,14 +183,9 @@ describe("SignupPage", () => {
   });
 
   it("密码长度验证 - 少于6位", async () => {
-    (supabase.from as Mock).mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      update: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({
-        data: { code: "TESTCODE", used: false, expires_at: "2030-01-01" },
-        error: null,
-      }),
+    (supabase.rpc as Mock).mockResolvedValue({
+      data: [{ success: true, message: "验证成功", expires_at: "2030-01-01" }],
+      error: null,
     });
 
     const { container } = render(<SignupPage />);
@@ -198,14 +221,9 @@ describe("SignupPage", () => {
   });
 
   it("确认密码验证 - 两次输入不一致", async () => {
-    (supabase.from as Mock).mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      update: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({
-        data: { code: "TESTCODE", used: false, expires_at: "2030-01-01" },
-        error: null,
-      }),
+    (supabase.rpc as Mock).mockResolvedValue({
+      data: [{ success: true, message: "验证成功", expires_at: "2030-01-01" }],
+      error: null,
     });
 
     const { container } = render(<SignupPage />);
@@ -251,67 +269,54 @@ describe("SignupPage", () => {
     });
   });
 
-  it("邀请码已过期", async () => {
-    // 模拟邀请码已过期：返回 data（used: false, expires_at: 过去时间）
-    (supabase.from as Mock).mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      update: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({
-        data: { code: "TESTCODE", used: false, expires_at: "2020-01-01" },
-        error: null,
-      }),
+  it("邀请码已过期 - 返回统一错误消息", async () => {
+    // 模拟邀请码已过期：RPC 函数返回失败，返回统一错误消息防止枚举攻击
+    (supabase.rpc as Mock).mockResolvedValue({
+      data: [{ success: false, message: "邀请码已过期" }],
+      error: null,
     });
 
     const { container } = render(<SignupPage />);
     fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
       target: { value: "TESTCODE" },
     });
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "test@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("再次输入密码"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("请填写真实姓名"), {
+      target: { value: "张三" },
+    });
+    const selects = container.querySelectorAll("select");
+    fireEvent.change(selects[0], { target: { value: "长笛" } });
+    fireEvent.change(screen.getByPlaceholderText("例如：经济学院"), {
+      target: { value: "经济学院" },
+    });
+    fireEvent.change(selects[1], { target: { value: "2024" } });
+    fireEvent.change(selects[2], { target: { value: "秋" } });
 
     const form = container.querySelector("form")!;
     fireEvent.submit(form);
 
     await waitFor(() => {
+      // 所有验证失败情况返回统一错误消息
       expect(
-        screen.getByText("邀请码已过期，请联系乐团管理员获取新的邀请码。"),
+        screen.getByText("邀请码无效或已被使用，请联系乐团管理员获取新的邀请码。"),
       ).toBeInTheDocument();
     });
   });
 
-  it("邀请码已被使用", async () => {
-    // 模拟邀请码已被使用：UPDATE 操作没有匹配到记录（因为 used 已经是 true）
-    (supabase.from as Mock).mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      update: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+  it("邀请码已被使用完毕 - 返回统一错误消息", async () => {
+    // 模拟邀请码已被使用完毕：RPC 函数返回失败，返回统一错误消息防止枚举攻击
+    (supabase.rpc as Mock).mockResolvedValue({
+      data: [{ success: false, message: "邀请码已被使用完毕" }],
+      error: null,
     });
-
-    const { container } = render(<SignupPage />);
-    fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
-      target: { value: "TESTCODE" },
-    });
-
-    const form = container.querySelector("form")!;
-    fireEvent.submit(form);
-
-    await waitFor(() => {
-      expect(screen.getByText(/邀请码无效或已被使用/)).toBeInTheDocument();
-    });
-  });
-
-  it("注册成功后更新邀请码使用者 ID", async () => {
-    // 模拟邀请码验证过程（原子 UPDATE）
-    const mockFrom = vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      update: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({
-        data: { code: "TESTCODE", used: false, expires_at: "2030-01-01" },
-        error: null,
-      }),
-    });
-    (supabase.from as Mock).mockImplementation(mockFrom);
 
     const { container } = render(<SignupPage />);
     fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
@@ -341,31 +346,159 @@ describe("SignupPage", () => {
     fireEvent.submit(form);
 
     await waitFor(() => {
-      // 验证阶段：使用 UPDATE 进行原子验证
-      expect(mockFrom.mock.results[0].value.update).toHaveBeenCalledWith({ used: true });
-      expect(mockFrom.mock.results[0].value.select).toHaveBeenCalledWith("expires_at");
-      const eqCalls0 = mockFrom.mock.results[0].value.eq.mock.calls;
-      expect(eqCalls0).toContainEqual(["code", "TESTCODE"]);
-      expect(eqCalls0).toContainEqual(["used", false]);
+      // 所有验证失败情况返回统一错误消息
+      expect(
+        screen.getByText("邀请码无效或已被使用，请联系乐团管理员获取新的邀请码。"),
+      ).toBeInTheDocument();
+    });
+  });
 
-      // 注册成功后：更新邀请码使用者 ID
-      expect(mockFrom.mock.results[1].value.update).toHaveBeenCalledWith({
-        used_by: "test-user-id",
+  it("邀请码已被使用 - 返回统一错误消息", async () => {
+    // 模拟邀请码已被使用：RPC 函数返回失败，返回统一错误消息防止枚举攻击
+    (supabase.rpc as Mock).mockResolvedValue({
+      data: [{ success: false, message: "邀请码已被使用" }],
+      error: null,
+    });
+
+    const { container } = render(<SignupPage />);
+    fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
+      target: { value: "TESTCODE" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "test@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("再次输入密码"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("请填写真实姓名"), {
+      target: { value: "张三" },
+    });
+    const selects = container.querySelectorAll("select");
+    fireEvent.change(selects[0], { target: { value: "长笛" } });
+    fireEvent.change(screen.getByPlaceholderText("例如：经济学院"), {
+      target: { value: "经济学院" },
+    });
+    fireEvent.change(selects[1], { target: { value: "2024" } });
+    fireEvent.change(selects[2], { target: { value: "秋" } });
+
+    const form = container.querySelector("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      // 所有验证失败情况返回统一错误消息
+      expect(
+        screen.getByText("邀请码无效或已被使用，请联系乐团管理员获取新的邀请码。"),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("注册成功后 RPC 函数记录使用者 ID", async () => {
+    // 模拟邀请码验证过程（RPC 函数返回成功）
+    (supabase.rpc as Mock).mockResolvedValue({
+      data: [{ success: true, message: "验证成功", expires_at: "2030-01-01" }],
+      error: null,
+    });
+
+    const { container } = render(<SignupPage />);
+    fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
+      target: { value: "TESTCODE" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "test@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("再次输入密码"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("请填写真实姓名"), {
+      target: { value: "张三" },
+    });
+    const selects = container.querySelectorAll("select");
+    fireEvent.change(selects[0], { target: { value: "长笛" } });
+    fireEvent.change(screen.getByPlaceholderText("例如：经济学院"), {
+      target: { value: "经济学院" },
+    });
+    fireEvent.change(selects[1], { target: { value: "2024" } });
+    fireEvent.change(selects[2], { target: { value: "秋" } });
+
+    const form = container.querySelector("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      // 验证 RPC 函数被调用，传入 p_code 和 p_user_id（原子操作）
+      expect(supabase.rpc).toHaveBeenCalledWith("verify_and_use_invitation_code", {
+        p_code: "TESTCODE",
+        p_user_id: "test-user-id",
       });
-      const eqCalls1 = mockFrom.mock.results[1].value.eq.mock.calls;
-      expect(eqCalls1).toContainEqual(["code", "TESTCODE"]);
+
+      // 注册成功后不再需要单独更新邀请码表，RPC 函数已原子完成
+      expect(supabase.from).not.toHaveBeenCalled();
+    });
+  });
+
+  it("邀请码验证失败时删除已注册用户", async () => {
+    // 模拟邀请码验证失败：RPC 函数返回失败
+    (supabase.rpc as Mock).mockResolvedValue({
+      data: [{ success: false, message: "邀请码无效或已被使用" }],
+      error: null,
+    });
+
+    const { container } = render(<SignupPage />);
+    fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
+      target: { value: "INVALID" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "test@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("再次输入密码"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("请填写真实姓名"), {
+      target: { value: "张三" },
+    });
+    const selects = container.querySelectorAll("select");
+    fireEvent.change(selects[0], { target: { value: "长笛" } });
+    fireEvent.change(screen.getByPlaceholderText("例如：经济学院"), {
+      target: { value: "经济学院" },
+    });
+    fireEvent.change(selects[1], { target: { value: "2024" } });
+    fireEvent.change(selects[2], { target: { value: "秋" } });
+
+    const form = container.querySelector("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      // 验证 admin.deleteUser 被调用，清理已注册用户
+      expect(supabase.auth.admin.deleteUser).toHaveBeenCalledWith("test-user-id");
+    });
+  });
+
+  it("邀请码长度超过20个字符时验证失败", async () => {
+    const { container } = render(<SignupPage />);
+    fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
+      target: { value: "ABCDEFGHIJKLMNOPQRSTUV" }, // 21个字符
+    });
+
+    const form = container.querySelector("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(screen.getByText("邀请码长度不能超过 20 个字符。")).toBeInTheDocument();
     });
   });
 
   it("注册成功显示自定义成功提示", async () => {
-    (supabase.from as Mock).mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      update: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({
-        data: { code: "TESTCODE", used: false, expires_at: "2030-01-01" },
-        error: null,
-      }),
+    (supabase.rpc as Mock).mockResolvedValue({
+      data: [{ success: true, message: "验证成功", expires_at: "2030-01-01" }],
+      error: null,
     });
 
     const { container } = render(<SignupPage />);
@@ -396,7 +529,99 @@ describe("SignupPage", () => {
     fireEvent.submit(form);
 
     await waitFor(() => {
-      expect(screen.getByText("注册成功，请等待管理员审核")).toBeInTheDocument();
+      expect(screen.getByText("注册成功，请等待管理员审核。")).toBeInTheDocument();
+    });
+  });
+
+  // 邀请码多次使用测试
+  it("多次使用邀请码 - 第二次使用成功（max_uses > 1）", async () => {
+    // 模拟邀请码可使用多次，第一次验证成功
+    (supabase.rpc as Mock)
+      .mockResolvedValueOnce({
+        data: [{ success: true, message: "验证成功", expires_at: "2030-01-01" }],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: [{ success: true, message: "验证成功", expires_at: "2030-01-01" }],
+        error: null,
+      });
+
+    const { container } = render(<SignupPage />);
+    // 第一次提交
+    fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
+      target: { value: "MULTIUSE" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "test1@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("再次输入密码"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("请填写真实姓名"), {
+      target: { value: "张三" },
+    });
+    const selects = container.querySelectorAll("select");
+    fireEvent.change(selects[0], { target: { value: "长笛" } });
+    fireEvent.change(screen.getByPlaceholderText("例如：经济学院"), {
+      target: { value: "经济学院" },
+    });
+    fireEvent.change(selects[1], { target: { value: "2024" } });
+    fireEvent.change(selects[2], { target: { value: "秋" } });
+
+    const form = container.querySelector("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      // 第一次注册成功
+      expect(screen.getByText("注册成功，请等待管理员审核。")).toBeInTheDocument();
+    });
+  });
+
+  it("多次使用邀请码 - 达到使用次数上限后失败", async () => {
+    // 第一次验证成功，第二次验证失败（达到使用次数上限）
+    (supabase.rpc as Mock)
+      .mockResolvedValueOnce({
+        data: [{ success: true, message: "验证成功", expires_at: "2030-01-01" }],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: [{ success: false, message: "邀请码已被使用完毕" }],
+        error: null,
+      });
+
+    // 第一次注册
+    const { container } = render(<SignupPage />);
+    fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
+      target: { value: "SINGLEUSE" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "test1@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("再次输入密码"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("请填写真实姓名"), {
+      target: { value: "张三" },
+    });
+    const selects = container.querySelectorAll("select");
+    fireEvent.change(selects[0], { target: { value: "长笛" } });
+    fireEvent.change(screen.getByPlaceholderText("例如：经济学院"), {
+      target: { value: "经济学院" },
+    });
+    fireEvent.change(selects[1], { target: { value: "2024" } });
+    fireEvent.change(selects[2], { target: { value: "秋" } });
+
+    const form = container.querySelector("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(screen.getByText("注册成功，请等待管理员审核。")).toBeInTheDocument();
     });
   });
 });

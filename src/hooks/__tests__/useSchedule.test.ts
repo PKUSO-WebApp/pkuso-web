@@ -14,7 +14,10 @@ function mockClient<T>(responses: T[]) {
     delete: () => chain(res),
     gte: () => chain(res),
     lte: () => chain(res),
-    then: (resolve: (v: T) => void) => resolve(res),
+    neq: () => chain(res),
+    // 返回真正的 Promise
+    then: (resolve: (v: T) => void, reject?: (e: Error) => void) =>
+      Promise.resolve(res).then(resolve, reject),
   });
   return {
     from: () => ({
@@ -85,5 +88,173 @@ describe("useSchedule", () => {
     });
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.data[0].title).toBe("明日预约");
+  });
+
+  // 冲突检测测试
+  describe("checkConflict", () => {
+    it("无冲突 - 正常路径", async () => {
+      const c = mockClient([
+        { data: [], error: null }, // initial fetch
+        { data: [], error: null }, // schedules query
+        { data: [], error: null }, // rehearsals query
+      ]);
+      const { result } = renderHook(() => useSchedule(c as never));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const conflictResult = await act(async () => {
+        return await result.current.checkConflict("2024-01-01", "14:00", "15:00");
+      });
+
+      expect(conflictResult).toBeNull();
+    });
+
+    it("与已有预约时间冲突", async () => {
+      const c = mockClient([
+        { data: [], error: null }, // initial fetch
+        {
+          data: [
+            {
+              id: 1,
+              start_time: "2024-01-01T14:30:00",
+              end_time: "2024-01-01T15:30:00",
+            },
+          ],
+          error: null,
+        }, // schedules query - overlapping
+        { data: [], error: null }, // rehearsals query
+      ]);
+      const { result } = renderHook(() => useSchedule(c as never));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const conflictResult = await act(async () => {
+        return await result.current.checkConflict("2024-01-01", "14:00", "15:00");
+      });
+
+      expect(conflictResult).toBe("该时间段已有其他预约");
+    });
+
+    it("与已有排练时间冲突", async () => {
+      const c = mockClient([
+        { data: [], error: null }, // initial fetch
+        { data: [], error: null }, // schedules query
+        {
+          data: [
+            {
+              id: 1,
+              start_time: "2024-01-01T14:30:00",
+              end_time: "2024-01-01T15:30:00",
+            },
+          ],
+          error: null,
+        }, // rehearsals query - overlapping
+      ]);
+      const { result } = renderHook(() => useSchedule(c as never));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const conflictResult = await act(async () => {
+        return await result.current.checkConflict("2024-01-01", "14:00", "15:00");
+      });
+
+      expect(conflictResult).toBe("该时间段已有排练安排");
+    });
+
+    it("编辑排练时排除自身 - 边界值", async () => {
+      // 当编辑排练 id=5 时，数据库查询会通过 .neq("id", 5) 过滤掉该排练
+      // 所以 mock 返回空数据，表示已正确过滤
+      const c = mockClient([
+        { data: [], error: null }, // initial fetch
+        { data: [], error: null }, // schedules query
+        { data: [], error: null }, // rehearsals query - filtered by neq(id, 5), so empty
+      ]);
+      const { result } = renderHook(() => useSchedule(c as never));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const conflictResult = await act(async () => {
+        return await result.current.checkConflict("2024-01-01", "14:00", "15:00", 5);
+      });
+
+      expect(conflictResult).toBeNull();
+    });
+
+    it("预约查询失败返回错误", async () => {
+      const c = mockClient([
+        { data: [], error: null }, // initial fetch
+        { data: null, error: { message: "schedule error" } }, // schedules query error
+      ]);
+      const { result } = renderHook(() => useSchedule(c as never));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const conflictResult = await act(async () => {
+        return await result.current.checkConflict("2024-01-01", "14:00", "15:00");
+      });
+
+      expect(conflictResult).toBe("查询预约失败");
+    });
+
+    it("排练查询失败返回错误", async () => {
+      const c = mockClient([
+        { data: [], error: null }, // initial fetch
+        { data: [], error: null }, // schedules query
+        { data: null, error: { message: "rehearsal error" } }, // rehearsals query error
+      ]);
+      const { result } = renderHook(() => useSchedule(c as never));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const conflictResult = await act(async () => {
+        return await result.current.checkConflict("2024-01-01", "14:00", "15:00");
+      });
+
+      expect(conflictResult).toBe("查询排练安排失败");
+    });
+
+    it("时间边界不重叠 - 新预约开始等于已有结束", async () => {
+      const c = mockClient([
+        { data: [], error: null }, // initial fetch
+        {
+          data: [
+            {
+              id: 1,
+              start_time: "2024-01-01T13:00:00",
+              end_time: "2024-01-01T14:00:00",
+            },
+          ],
+          error: null,
+        }, // schedules query
+        { data: [], error: null }, // rehearsals query
+      ]);
+      const { result } = renderHook(() => useSchedule(c as never));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const conflictResult = await act(async () => {
+        return await result.current.checkConflict("2024-01-01", "14:00", "15:00");
+      });
+
+      expect(conflictResult).toBeNull();
+    });
+
+    it("时间边界不重叠 - 新预约结束等于已有开始", async () => {
+      const c = mockClient([
+        { data: [], error: null }, // initial fetch
+        {
+          data: [
+            {
+              id: 1,
+              start_time: "2024-01-01T15:00:00",
+              end_time: "2024-01-01T16:00:00",
+            },
+          ],
+          error: null,
+        }, // schedules query
+        { data: [], error: null }, // rehearsals query
+      ]);
+      const { result } = renderHook(() => useSchedule(c as never));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const conflictResult = await act(async () => {
+        return await result.current.checkConflict("2024-01-01", "14:00", "15:00");
+      });
+
+      expect(conflictResult).toBeNull();
+    });
   });
 });

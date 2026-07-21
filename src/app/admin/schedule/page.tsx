@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { Expand, Minimize2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useSchedule } from "@/hooks/useSchedule";
 import { useUser } from "@/context/user-context";
@@ -13,118 +14,34 @@ import {
 import { Modal } from "@/components/ui/Modal";
 import { getLocalDateString, parseLocalISO, formatDisplayDate } from "@/lib/date-utils";
 
-// 根据年份、月份、周数和星期几获取目标日期
-// 返回 { date: Date | null, maxWeek: number, lastDayOfMaxWeek: Date }
-// maxWeek 表示该月最大有效周数，lastDayOfMaxWeek 表示最后一周的最后一天
-const getDateOfWeekInMonth = (
-  year: number,
-  month: number,
-  weekNumber: number,
-  dayOfWeek: number,
-): { date: Date | null; maxWeek: number; lastDayOfMaxWeek: Date } => {
-  const firstDay = new Date(year, month - 1, 1).getDay();
-  // 计算该月第一个目标星期几的日期
-  // firstDay: 月份第一天的星期（0=周日）
-  // dayOfWeek: 目标星期（0=周日，1=周一，...，6=周六）
-  const firstTargetOffset = (dayOfWeek - firstDay + 7) % 7;
-  const firstTargetDate = new Date(year, month - 1, 1 + firstTargetOffset);
-
-  // 如果第一个目标日期超出本月，则需要从下周开始
-  if (firstTargetDate.getMonth() !== month - 1) {
-    firstTargetDate.setDate(firstTargetDate.getDate() + 7);
-  }
-
-  // 计算该月最大有效周数
-  let maxWeek = 1;
-  const testDate = new Date(firstTargetDate);
-  while (testDate.getMonth() === month - 1) {
-    maxWeek++;
-    testDate.setDate(testDate.getDate() + 7);
-  }
-  maxWeek--;
-
-  // 计算最后一周最后一天的日期（周六）
-  const lastDayOfMaxWeek = new Date(firstTargetDate);
-  lastDayOfMaxWeek.setDate(
-    firstTargetDate.getDate() + (maxWeek - 1) * 7 + ((6 - dayOfWeek + 7) % 7),
-  );
-
-  // 计算第N周的目标日期
-  const targetDate = new Date(firstTargetDate);
-  targetDate.setDate(firstTargetDate.getDate() + (weekNumber - 1) * 7);
-
-  // 验证结果是否在本月内
-  if (targetDate.getMonth() !== month - 1) {
-    return { date: null, maxWeek, lastDayOfMaxWeek };
-  }
-
-  return { date: targetDate, maxWeek, lastDayOfMaxWeek };
-};
-
 function generateWeeklyDates(
-  startYear: number,
-  startMonth: number,
-  startWeek: number,
-  endYear: number,
-  endMonth: number,
-  endWeek: number,
-  dayOfWeek: number,
+  startDate: string,
+  endDate: string,
 ): { dates: Date[]; error: string | null } {
+  // 验证输入
+  if (!startDate || !endDate) {
+    return { dates: [], error: "请选择开始日期和结束日期" };
+  }
+
   const dates: Date[] = [];
+  const start = parseLocalISO(startDate + "T00:00:00");
+  const end = parseLocalISO(endDate + "T00:00:00");
 
-  const WEEK_DAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-  const dayLabel = WEEK_DAYS[dayOfWeek];
-
-  // 计算开始日期
-  const startResult = getDateOfWeekInMonth(startYear, startMonth, startWeek, dayOfWeek);
-  if (!startResult.date) {
-    const { maxWeek, lastDayOfMaxWeek } = startResult;
-    // 计算下个月第一个有效周的目标日期
-    const nextMonth = startMonth === 12 ? 1 : startMonth + 1;
-    const nextYear = startMonth === 12 ? startYear + 1 : startYear;
-    const nextMonthFirstWeekResult = getDateOfWeekInMonth(nextYear, nextMonth, 1, dayOfWeek);
-    const nextMonthTargetDate = nextMonthFirstWeekResult.date;
-
-    let errorMsg = `${startYear}年${startMonth}月第${startWeek}周不存在`;
-    if (maxWeek > 0) {
-      const lastDayName = WEEK_DAYS[lastDayOfMaxWeek.getDay()];
-      errorMsg += `，该月第${maxWeek}周只到${lastDayName}`;
-    }
-    if (nextMonthTargetDate) {
-      errorMsg += `，你可能想选${nextYear}年${nextMonth}月第1周${dayLabel}？`;
-    }
-    return { dates: [], error: errorMsg };
+  // 验证日期有效性
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return { dates: [], error: "日期格式无效" };
   }
 
-  // 计算结束日期
-  const endResult = getDateOfWeekInMonth(endYear, endMonth, endWeek, dayOfWeek);
-  if (!endResult.date) {
-    const { maxWeek, lastDayOfMaxWeek } = endResult;
-    // 计算下个月第一个有效周的目标日期
-    const nextMonth = endMonth === 12 ? 1 : endMonth + 1;
-    const nextYear = endMonth === 12 ? endYear + 1 : endYear;
-    const nextMonthFirstWeekResult = getDateOfWeekInMonth(nextYear, nextMonth, 1, dayOfWeek);
-    const nextMonthTargetDate = nextMonthFirstWeekResult.date;
-
-    let errorMsg = `${endYear}年${endMonth}月第${endWeek}周不存在`;
-    if (maxWeek > 0) {
-      const lastDayName = WEEK_DAYS[lastDayOfMaxWeek.getDay()];
-      errorMsg += `，该月第${maxWeek}周只到${lastDayName}`;
-    }
-    if (nextMonthTargetDate) {
-      errorMsg += `，你可能想选${nextYear}年${nextMonth}月第1周${dayLabel}？`;
-    }
-    return { dates: [], error: errorMsg };
+  // 验证日期范围
+  if (start > end) {
+    return { dates: [], error: "开始日期必须早于或等于结束日期" };
   }
 
-  if (startResult.date > endResult.date) {
-    return { dates: [], error: "日期范围无效，请调整开始和结束周" };
-  }
-
-  const currentDate = new Date(startResult.date);
-  while (currentDate <= endResult.date) {
-    dates.push(new Date(currentDate));
-    currentDate.setDate(currentDate.getDate() + 7);
+  // 每隔7天生成一个日期
+  const current = new Date(start);
+  while (current <= end) {
+    dates.push(new Date(current));
+    current.setDate(current.getDate() + 7);
   }
 
   return { dates, error: null };
@@ -192,6 +109,8 @@ export default function AdminSchedulePage() {
   const [confirmMessage, setConfirmMessage] = React.useState("");
   // 保存待提交的数据，用于确认后提交，避免重复生成
   const [pendingData, setPendingData] = React.useState<PendingSubmitData | null>(null);
+  // 甘特图放大状态
+  const [isGanttExpanded, setIsGanttExpanded] = React.useState(false);
 
   const currentYear = new Date().getFullYear();
   const [form, setForm] = React.useState<CreateScheduleFormState>({
@@ -200,13 +119,8 @@ export default function AdminSchedulePage() {
     startTime: "",
     endTime: "",
     repeatMode: "single",
-    weeklyDay: 1,
-    weeklyStartYear: currentYear,
-    weeklyStartMonth: new Date().getMonth() + 1,
-    weeklyStartWeek: 1,
-    weeklyEndYear: currentYear,
-    weeklyEndMonth: new Date().getMonth() + 1,
-    weeklyEndWeek: 1,
+    weeklyStartDate: "",
+    weeklyEndDate: "",
     monthlyDay: 1,
     monthlyStartYear: currentYear,
     monthlyStartMonth: new Date().getMonth() + 1,
@@ -264,15 +178,7 @@ export default function AdminSchedulePage() {
           dates = [parseLocalISO(form.date + "T00:00:00")];
           break;
         case "weekly": {
-          const result = generateWeeklyDates(
-            form.weeklyStartYear,
-            form.weeklyStartMonth,
-            form.weeklyStartWeek,
-            form.weeklyEndYear,
-            form.weeklyEndMonth,
-            form.weeklyEndWeek,
-            form.weeklyDay,
-          );
+          const result = generateWeeklyDates(form.weeklyStartDate, form.weeklyEndDate);
           dates = result.dates;
           dateError = result.error;
           break;
@@ -352,14 +258,12 @@ export default function AdminSchedulePage() {
       };
 
       if (form.repeatMode === "weekly") {
+        // 计算星期几（getDay(): 0=周日，1=周一...）
+        const startDate = parseLocalISO(form.weeklyStartDate + "T00:00:00");
         Object.assign(groupData, {
-          weekly_start_year: form.weeklyStartYear,
-          weekly_start_month: form.weeklyStartMonth,
-          weekly_start_week: form.weeklyStartWeek,
-          weekly_end_year: form.weeklyEndYear,
-          weekly_end_month: form.weeklyEndMonth,
-          weekly_end_week: form.weeklyEndWeek,
-          weekly_day: form.weeklyDay,
+          weekly_start_date: form.weeklyStartDate,
+          weekly_end_date: form.weeklyEndDate,
+          weekly_day: startDate.getDay(),
         });
       } else if (form.repeatMode === "monthly") {
         Object.assign(groupData, {
@@ -411,13 +315,8 @@ export default function AdminSchedulePage() {
         startTime: "",
         endTime: "",
         repeatMode: "single",
-        weeklyDay: 1,
-        weeklyStartYear: currentYear,
-        weeklyStartMonth: new Date().getMonth() + 1,
-        weeklyStartWeek: 1,
-        weeklyEndYear: currentYear,
-        weeklyEndMonth: new Date().getMonth() + 1,
-        weeklyEndWeek: 1,
+        weeklyStartDate: "",
+        weeklyEndDate: "",
         monthlyDay: 1,
         monthlyStartYear: currentYear,
         monthlyStartMonth: new Date().getMonth() + 1,
@@ -449,13 +348,8 @@ export default function AdminSchedulePage() {
       startTime: "",
       endTime: "",
       repeatMode: "single",
-      weeklyDay: 1,
-      weeklyStartYear: currentYear,
-      weeklyStartMonth: new Date().getMonth() + 1,
-      weeklyStartWeek: 1,
-      weeklyEndYear: currentYear,
-      weeklyEndMonth: new Date().getMonth() + 1,
-      weeklyEndWeek: 1,
+      weeklyStartDate: "",
+      weeklyEndDate: "",
       monthlyDay: 1,
       monthlyStartYear: currentYear,
       monthlyStartMonth: new Date().getMonth() + 1,
@@ -467,23 +361,44 @@ export default function AdminSchedulePage() {
 
   return (
     <div className="flex flex-col h-full max-w-md mx-auto w-full pb-safe overflow-hidden">
-      <div className="mt-4 mb-4">
-        <h1 className="text-lg font-semibold text-text">日程管理</h1>
-        <p className="text-sm text-text-muted">管理排练房预约（管理员）</p>
-      </div>
+      {/* 正常模式：显示标题、日期选择器、添加预约按钮 */}
+      {!isGanttExpanded && (
+        <>
+          <div className="mt-4 mb-4">
+            <h1 className="text-lg font-semibold text-text">日程管理</h1>
+            <p className="text-sm text-text-muted">管理排练房预约（管理员）</p>
+          </div>
 
-      <div className="mb-4">
-        <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
-      </div>
+          <div className="mb-4">
+            <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
+          </div>
+        </>
+      )}
 
+      {/* 甘特图标题栏：放大/缩小按钮 */}
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-base font-medium text-text">{formatDisplayDate(selectedDate)}</h2>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
-        >
-          添加预约
-        </button>
+        <h2 className="text-base font-medium text-text">
+          {isGanttExpanded
+            ? formatDisplayDate(selectedDate) + " 预约"
+            : formatDisplayDate(selectedDate)}
+        </h2>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setIsGanttExpanded(!isGanttExpanded)}
+            className="rounded-full bg-muted px-3 py-2 text-sm font-medium text-text-muted hover:bg-border transition-colors"
+            title={isGanttExpanded ? "缩小" : "放大"}
+          >
+            {isGanttExpanded ? <Minimize2 className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
+          </button>
+          {!isGanttExpanded && (
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
+            >
+              添加预约
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 min-h-0 mb-4 overflow-y-auto rounded-xl border border-border bg-card">

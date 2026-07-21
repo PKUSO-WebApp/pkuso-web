@@ -13,8 +13,9 @@ export default function ResetPasswordPage() {
   // 暴力破解防护：记录上次请求时间，60 秒内只能请求一次
   // 使用 localStorage 持久化，页面刷新后仍然有效
   const [lastRequestTime, setLastRequestTime] = React.useState(() => {
-    const saved = localStorage.getItem("resetPasswordLastRequest");
-    return saved ? parseInt(saved, 10) : 0;
+    const saved = localStorage.getItem("reset_password_last_request");
+    const parsed = saved ? parseInt(saved, 10) : null;
+    return parsed !== null && !isNaN(parsed) ? parsed : 0;
   });
 
   const validateEmail = (email: string): boolean => {
@@ -51,7 +52,7 @@ export default function ResetPasswordPage() {
 
     setSubmitting(true);
     setLastRequestTime(now);
-    localStorage.setItem("resetPasswordLastRequest", String(now));
+    localStorage.setItem("reset_password_last_request", String(now));
 
     try {
       // 直接调用 Supabase 重置密码接口，不提前验证邮箱是否注册

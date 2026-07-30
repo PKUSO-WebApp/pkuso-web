@@ -24,32 +24,23 @@ export default function SignupPage() {
   const [errorMsg, setErrorMsg] = React.useState("");
   const [successMsg, setSuccessMsg] = React.useState("");
 
-  const validateInvitationCode = async (
-    code: string,
-    userId?: string | null,
-  ): Promise<string | null> => {
-    // 使用原子函数验证邀请码，将验证和记录使用者合并为一个操作，防止竞态条件
-    const { data, error } = await supabase.rpc("verify_and_use_invitation_code", {
-      p_code: code,
-      p_user_id: userId,
-    });
+  /**
+   * 第一阶段：只读验证邀请码（不消耗，匿名用户可调用）
+   * 用于注册前校验邀请码是否有效，避免表单验证失败时浪费邀请码
+   */
+  const checkInvitationCode = async (code: string): Promise<string | null> => {
+    const { data, error } = await supabase.rpc("check_invitation_code", { p_code: code });
 
     if (error) {
       return "邀请码验证失败，请稍后重试。";
     }
 
-    // 函数返回的是一个表，取第一个结果
-    const result = data?.[0];
-    if (!result) {
-      return "邀请码验证失败，请稍后重试。";
-    }
-
-    // 验证失败 - 返回统一错误消息，防止枚举攻击
-    if (!result.success) {
+    // 邀请码不存在、已被使用或已过期（RPC 返回空数组）
+    if (!data || data.length === 0) {
       return "邀请码无效或已被使用，请联系乐团管理员获取新的邀请码。";
     }
 
-    // 验证通过
+    // 邀请码有效（只读验证，未消耗）
     return null;
   };
 
@@ -67,6 +58,7 @@ export default function SignupPage() {
       return;
     }
 
+    // 第一步：本地表单验证
     if (
       !normalizedCode ||
       !email.trim() ||
@@ -92,10 +84,17 @@ export default function SignupPage() {
       return;
     }
 
+    // 第二步：只读验证邀请码（不消耗，表单验证失败也不会浪费邀请码）
     setSubmitting(true);
 
     try {
-      // 步骤1：先注册用户，获得 user_id
+      const codeError = await checkInvitationCode(normalizedCode);
+      if (codeError) {
+        setErrorMsg(codeError);
+        return;
+      }
+
+      // 第三步：注册用户
       const { error: signUpError, data: signUpData } = await supabase.auth.signUp({
         email: email.trim(),
         password: password,
@@ -119,22 +118,36 @@ export default function SignupPage() {
         return;
       }
 
-      const userId = signUpData.user.id;
-
-      // 步骤2：调用 RPC 函数验证邀请码并记录使用者（原子操作）
-      const codeError = await validateInvitationCode(normalizedCode, userId);
-      if (codeError) {
-        // 邀请码验证失败，尝试删除已注册的用户
-        console.warn("[Signup] 邀请码验证失败，尝试清理已注册用户:", userId);
-        await supabase.auth.admin.deleteUser(userId);
-        setErrorMsg(codeError);
-        return;
+      // 第四步：注册成功后，原子消耗邀请码并绑定使用者
+      // （需要 authenticated 用户身份，失败时提示用户联系管理员）
+      let invitationConsumeFailed = false;
+      try {
+        const { data: consumeData, error: consumeError } = await supabase.rpc(
+          "verify_and_use_invitation_code",
+          {
+            p_code: normalizedCode,
+          },
+        );
+        if (consumeError) {
+          console.warn("[Signup] 邀请码消耗失败:", consumeError.message);
+          invitationConsumeFailed = true;
+        } else if (!consumeData || consumeData.length === 0) {
+          console.warn("[Signup] 邀请码未被消耗（可能已被使用或过期）");
+          invitationConsumeFailed = true;
+        }
+      } catch (err) {
+        console.warn("[Signup] 邀请码消耗请求异常:", err);
+        invitationConsumeFailed = true;
       }
 
-      // 注册成功
-      setSuccessMsg("注册成功，请等待管理员审核。");
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      router.replace("/login");
+      if (invitationConsumeFailed) {
+        setErrorMsg("注册成功但邀请码绑定异常，请联系管理员");
+      } else {
+        // 注册成功
+        setSuccessMsg("注册成功，请等待管理员审核。");
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        router.replace("/login");
+      }
     } catch (error) {
       console.error("[Signup] 注册过程发生错误:", error);
       setErrorMsg("注册失败，请稍后重试。");

@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { Modal } from "@/components/ui/Modal";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
 import { AnnouncementListModal } from "./components/announcement-list-modal";
@@ -10,12 +11,23 @@ export default function AdminPage() {
   const {
     data: pendingRows,
     loading: pendingLoading,
+    saving: pendingSaving,
+    error: pendingError,
     approve,
     reject,
+    approveAll,
+    rejectAll,
     fetch: refetchPending,
   } = useProfiles({ status: "pending" });
   const [approvingId, setApprovingId] = React.useState<string | null>(null);
   const [rejectingId, setRejectingId] = React.useState<string | null>(null);
+
+  // 单个拒绝确认弹窗
+  const [rejectingSingleId, setRejectingSingleId] = React.useState<string | null>(null);
+
+  // 批量操作确认弹窗
+  const [batchAction, setBatchAction] = React.useState<"approve" | "reject" | null>(null);
+  const [isBatchSubmitting, setIsBatchSubmitting] = React.useState(false);
 
   const handleApprove = async (id: string) => {
     if (approvingId === id) return;
@@ -26,17 +38,49 @@ export default function AdminPage() {
     else alert("已批准");
   };
 
-  const handleReject = async (id: string) => {
+  const handleReject = (id: string) => {
     if (rejectingId === id || approvingId === id) return;
+    setRejectingSingleId(id);
+  };
+
+  const handleConfirmReject = async () => {
+    if (!rejectingSingleId) return;
+    const id = rejectingSingleId;
     setRejectingId(id);
-    if (!confirm("确认拒绝该用户的入团申请？")) {
-      setRejectingId(null);
-      return;
-    }
     const ok = await reject(id);
     setRejectingId(null);
+    setRejectingSingleId(null);
     if (!ok) alert("拒绝失败");
     else alert("已拒绝");
+  };
+
+  const handleBatchApprove = () => {
+    if (pendingRows.length === 0) return;
+    setBatchAction("approve");
+  };
+
+  const handleBatchReject = () => {
+    if (pendingRows.length === 0) return;
+    setBatchAction("reject");
+  };
+
+  const handleConfirmBatchAction = async () => {
+    if (isBatchSubmitting || !batchAction) return;
+    setIsBatchSubmitting(true);
+
+    try {
+      let ok = false;
+      if (batchAction === "approve") {
+        ok = await approveAll();
+      } else {
+        ok = await rejectAll();
+      }
+      if (ok) {
+        setBatchAction(null);
+      }
+    } finally {
+      setIsBatchSubmitting(false);
+    }
   };
 
   // 公告
@@ -73,24 +117,51 @@ export default function AdminPage() {
     void fetchAll();
   };
 
+  const anySinglePending = approvingId !== null || rejectingId !== null;
+  const batchDisabled =
+    pendingLoading || pendingSaving || anySinglePending || pendingRows.length === 0;
+
   return (
     <div className="space-y-4">
       <h1 className="text-lg font-semibold text-text">管理员控制台</h1>
 
       {/* 入团审批 */}
       <section className="rounded-2xl border border-border bg-card p-4">
+        {pendingError && (
+          <div className="mb-3 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
+            {pendingError}
+          </div>
+        )}
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-text">
             入团审批 · 待处理（{pendingRows.length}）
           </h2>
-          <button
-            type="button"
-            onClick={() => refetchPending()}
-            disabled={pendingLoading}
-            className="rounded-full px-2 py-1 text-label text-text-muted hover:bg-border disabled:opacity-60"
-          >
-            刷新
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleBatchApprove}
+              disabled={batchDisabled || isBatchSubmitting}
+              className="rounded-full bg-success-bg px-2 py-1 text-label font-medium text-success hover:opacity-90 disabled:opacity-60"
+            >
+              全部批准
+            </button>
+            <button
+              type="button"
+              onClick={handleBatchReject}
+              disabled={batchDisabled || isBatchSubmitting}
+              className="rounded-full bg-danger-bg px-2 py-1 text-label font-medium text-danger hover:opacity-90 disabled:opacity-60"
+            >
+              全部拒绝
+            </button>
+            <button
+              type="button"
+              onClick={() => refetchPending()}
+              disabled={pendingLoading}
+              className="rounded-full px-2 py-1 text-label text-text-muted hover:bg-border disabled:opacity-60"
+            >
+              刷新
+            </button>
+          </div>
         </div>
 
         {pendingLoading ? (
@@ -116,16 +187,26 @@ export default function AdminPage() {
                   <button
                     type="button"
                     onClick={() => handleApprove(r.id)}
-                    disabled={approvingId === r.id || rejectingId === r.id}
-                    className="shrink-0 rounded-full bg-success px-3 py-1.5 text-label font-medium text-success-foreground hover:bg-success/90 disabled:opacity-60"
+                    disabled={
+                      approvingId === r.id ||
+                      rejectingId === r.id ||
+                      isBatchSubmitting ||
+                      batchAction !== null
+                    }
+                    className="shrink-0 rounded-full bg-success px-3 py-1.5 text-label font-medium text-success-foreground hover:opacity-90 disabled:opacity-60"
                   >
                     {approvingId === r.id ? "处理中…" : "✅ 批准"}
                   </button>
                   <button
                     type="button"
                     onClick={() => handleReject(r.id)}
-                    disabled={rejectingId === r.id || approvingId === r.id}
-                    className="shrink-0 rounded-full bg-danger px-3 py-1.5 text-label font-medium text-danger-foreground hover:bg-danger/90 disabled:opacity-60"
+                    disabled={
+                      rejectingId === r.id ||
+                      approvingId === r.id ||
+                      isBatchSubmitting ||
+                      batchAction !== null
+                    }
+                    className="shrink-0 rounded-full bg-danger px-3 py-1.5 text-label font-medium text-danger-foreground hover:opacity-90 disabled:opacity-60"
                   >
                     {rejectingId === r.id ? "处理中…" : "❌ 拒绝"}
                   </button>
@@ -178,6 +259,80 @@ export default function AdminPage() {
         onDelete={remove}
         onUpdate={update}
       />
+
+      {/* 单个拒绝确认弹窗 */}
+      <Modal
+        open={!!rejectingSingleId}
+        onClose={() => {
+          if (rejectingId === null) setRejectingSingleId(null);
+        }}
+        position="center"
+        closeOnOverlay={rejectingId === null}
+      >
+        <h3 className="text-base font-semibold text-text">确认拒绝</h3>
+        <p className="mt-2 text-sm text-text-muted">
+          确定要拒绝该用户的入团申请吗？此操作不可撤销。
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            disabled={rejectingId !== null}
+            onClick={() => setRejectingSingleId(null)}
+            className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted disabled:opacity-60"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={rejectingId !== null}
+            onClick={handleConfirmReject}
+            className="rounded-full bg-danger px-4 py-2 text-xs font-medium text-danger-foreground hover:opacity-90 disabled:opacity-60"
+          >
+            {rejectingId !== null ? "处理中…" : "确认拒绝"}
+          </button>
+        </div>
+      </Modal>
+
+      {/* 批量操作确认弹窗 */}
+      <Modal
+        open={!!batchAction}
+        onClose={() => {
+          if (!isBatchSubmitting) setBatchAction(null);
+        }}
+        position="center"
+        closeOnOverlay={!isBatchSubmitting}
+      >
+        <h3 className="text-base font-semibold text-text">
+          {batchAction === "approve" ? "确认全部批准" : "确认全部拒绝"}
+        </h3>
+        <p className="mt-2 text-sm text-text-muted">
+          {batchAction === "approve"
+            ? `确定要批准全部 ${pendingRows.length} 位待审批用户吗？`
+            : `确定要拒绝全部 ${pendingRows.length} 位待审批用户吗？此操作不可撤销。`}
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            disabled={isBatchSubmitting}
+            onClick={() => setBatchAction(null)}
+            className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted disabled:opacity-60"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={isBatchSubmitting}
+            onClick={handleConfirmBatchAction}
+            className={`rounded-full px-4 py-2 text-xs font-medium hover:opacity-90 disabled:opacity-60 ${
+              batchAction === "approve"
+                ? "bg-success text-success-foreground"
+                : "bg-danger text-danger-foreground"
+            }`}
+          >
+            {isBatchSubmitting ? "处理中…" : "确认"}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

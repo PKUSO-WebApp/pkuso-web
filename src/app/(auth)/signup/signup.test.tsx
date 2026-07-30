@@ -13,7 +13,8 @@ vi.mock("@/lib/supabase", () => ({
       eq: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
     }),
-    rpc: vi.fn().mockResolvedValue({ data: [{ success: true, message: "验证成功" }], error: null }),
+    // 两阶段默认：check_invitation_code 和 verify_and_use_invitation_code 都返回空数组（无效）
+    rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
     auth: {
       signUp: vi.fn().mockResolvedValue({ error: null, data: { user: { id: "test-user-id" } } }),
       getSession: vi
@@ -27,9 +28,10 @@ vi.mock("@/lib/supabase", () => ({
 }));
 
 // Mock next/navigation
+const mockReplace = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
-    replace: vi.fn(),
+    replace: mockReplace,
   }),
 }));
 
@@ -63,10 +65,21 @@ describe("SignupPage", () => {
   });
 
   it("邀请码验证 - 有效邀请码", async () => {
-    // 模拟邀请码有效：RPC 函数返回成功
-    (supabase.rpc as Mock).mockResolvedValue({
-      data: [{ success: true, message: "验证成功", expires_at: "2030-01-01" }],
-      error: null,
+    // 模拟两阶段调用：check_invitation_code 返回有效（只读验证阶段）
+    (supabase.rpc as Mock).mockImplementation((fn: string) => {
+      if (fn === "check_invitation_code") {
+        return Promise.resolve({
+          data: [{ id: "test-id", code: "TESTCODE", expires_at: "2030-01-01", used: false }],
+          error: null,
+        });
+      }
+      if (fn === "verify_and_use_invitation_code") {
+        return Promise.resolve({
+          data: [{ id: "test-id", code: "TESTCODE", used: true, used_by: "test-user-id" }],
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: [], error: null });
     });
 
     const { container } = render(<SignupPage />);
@@ -97,25 +110,27 @@ describe("SignupPage", () => {
     fireEvent.submit(form);
 
     await waitFor(() => {
-      // 验证 RPC 函数被调用，传入 p_code 和 p_user_id
-      expect(supabase.rpc).toHaveBeenCalledWith("verify_and_use_invitation_code", {
+      // 第一阶段：调用 check_invitation_code 只读验证（不消耗）
+      expect(supabase.rpc).toHaveBeenCalledWith("check_invitation_code", {
         p_code: "TESTCODE",
-        p_user_id: "test-user-id",
       });
     });
   });
 
   it("邀请码验证 - 无效邀请码", async () => {
-    // 模拟邀请码无效：RPC 函数返回失败
-    (supabase.rpc as Mock).mockResolvedValue({
-      data: [{ success: false, message: "邀请码无效或已被使用" }],
-      error: null,
+    // 模拟 check_invitation_code 返回空数组（邀请码无效）
+    (supabase.rpc as Mock).mockImplementation((fn: string) => {
+      if (fn === "check_invitation_code") {
+        return Promise.resolve({ data: [], error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
     });
 
     const { container } = render(<SignupPage />);
     fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
       target: { value: "INVALID" },
     });
+    // 需要填写必填字段，否则表单验证会先失败
     fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
       target: { value: "test@example.com" },
     });
@@ -147,13 +162,18 @@ describe("SignupPage", () => {
   });
 
   it("邀请码验证 - 数据库错误", async () => {
-    // 模拟 RPC 调用失败
-    (supabase.rpc as Mock).mockResolvedValue({ data: null, error: { message: "DB error" } });
+    (supabase.rpc as Mock).mockImplementation((fn: string) => {
+      if (fn === "check_invitation_code") {
+        return Promise.resolve({ data: null, error: { message: "DB error" } });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
 
     const { container } = render(<SignupPage />);
     fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
       target: { value: "TESTCODE" },
     });
+    // 需要填写必填字段，否则表单验证会先失败
     fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
       target: { value: "test@example.com" },
     });
@@ -183,11 +203,7 @@ describe("SignupPage", () => {
   });
 
   it("密码长度验证 - 少于6位", async () => {
-    (supabase.rpc as Mock).mockResolvedValue({
-      data: [{ success: true, message: "验证成功", expires_at: "2030-01-01" }],
-      error: null,
-    });
-
+    // 表单验证在邀请码验证之前，密码长度不够直接返回，不会调用 RPC
     const { container } = render(<SignupPage />);
     fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
       target: { value: "TESTCODE" },
@@ -218,14 +234,12 @@ describe("SignupPage", () => {
     await waitFor(() => {
       expect(screen.getByText(/密码长度至少为 6 位/)).toBeInTheDocument();
     });
+    // 验证：表单验证失败时不会调用邀请码 RPC（不消耗邀请码）
+    expect(supabase.rpc).not.toHaveBeenCalled();
   });
 
   it("确认密码验证 - 两次输入不一致", async () => {
-    (supabase.rpc as Mock).mockResolvedValue({
-      data: [{ success: true, message: "验证成功", expires_at: "2030-01-01" }],
-      error: null,
-    });
-
+    // 表单验证在邀请码验证之前，密码不一致直接返回，不会调用 RPC
     const { container } = render(<SignupPage />);
     fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
       target: { value: "TESTCODE" },
@@ -256,6 +270,8 @@ describe("SignupPage", () => {
     await waitFor(() => {
       expect(screen.getByText(/两次输入的密码不一致/)).toBeInTheDocument();
     });
+    // 验证：表单验证失败时不会调用邀请码 RPC（不消耗邀请码）
+    expect(supabase.rpc).not.toHaveBeenCalled();
   });
 
   it("表单验证 - 必填字段为空", async () => {
@@ -267,19 +283,24 @@ describe("SignupPage", () => {
     await waitFor(() => {
       expect(screen.getByText("请填写完整信息后再提交。")).toBeInTheDocument();
     });
+    // 验证：表单验证失败时不会调用邀请码 RPC（不消耗邀请码）
+    expect(supabase.rpc).not.toHaveBeenCalled();
   });
 
   it("邀请码已过期 - 返回统一错误消息", async () => {
-    // 模拟邀请码已过期：RPC 函数返回失败，返回统一错误消息防止枚举攻击
-    (supabase.rpc as Mock).mockResolvedValue({
-      data: [{ success: false, message: "邀请码已过期" }],
-      error: null,
+    // 模拟 check_invitation_code 返回空数组（RPC 内部已检查过期）
+    (supabase.rpc as Mock).mockImplementation((fn: string) => {
+      if (fn === "check_invitation_code") {
+        return Promise.resolve({ data: [], error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
     });
 
     const { container } = render(<SignupPage />);
     fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
       target: { value: "TESTCODE" },
     });
+    // 需要填写必填字段，否则表单验证会先失败
     fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
       target: { value: "test@example.com" },
     });
@@ -312,16 +333,19 @@ describe("SignupPage", () => {
   });
 
   it("邀请码已被使用完毕 - 返回统一错误消息", async () => {
-    // 模拟邀请码已被使用完毕：RPC 函数返回失败，返回统一错误消息防止枚举攻击
-    (supabase.rpc as Mock).mockResolvedValue({
-      data: [{ success: false, message: "邀请码已被使用完毕" }],
-      error: null,
+    // 模拟 check_invitation_code 返回空数组（邀请码已被使用完毕）
+    (supabase.rpc as Mock).mockImplementation((fn: string) => {
+      if (fn === "check_invitation_code") {
+        return Promise.resolve({ data: [], error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
     });
 
     const { container } = render(<SignupPage />);
     fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
       target: { value: "TESTCODE" },
     });
+    // 需要填写必填字段，否则表单验证会先失败
     fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
       target: { value: "test@example.com" },
     });
@@ -354,10 +378,12 @@ describe("SignupPage", () => {
   });
 
   it("邀请码已被使用 - 返回统一错误消息", async () => {
-    // 模拟邀请码已被使用：RPC 函数返回失败，返回统一错误消息防止枚举攻击
-    (supabase.rpc as Mock).mockResolvedValue({
-      data: [{ success: false, message: "邀请码已被使用" }],
-      error: null,
+    // 模拟 check_invitation_code 返回空数组（邀请码已被使用）
+    (supabase.rpc as Mock).mockImplementation((fn: string) => {
+      if (fn === "check_invitation_code") {
+        return Promise.resolve({ data: [], error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
     });
 
     const { container } = render(<SignupPage />);
@@ -395,12 +421,27 @@ describe("SignupPage", () => {
     });
   });
 
-  it("注册成功后 RPC 函数记录使用者 ID", async () => {
-    // 模拟邀请码验证过程（RPC 函数返回成功）
-    (supabase.rpc as Mock).mockResolvedValue({
-      data: [{ success: true, message: "验证成功", expires_at: "2030-01-01" }],
-      error: null,
+  it("注册成功后调用 verify_and_use_invitation_code 消耗邀请码（两阶段流程）", async () => {
+    // 模拟两阶段 RPC 调用：
+    // 1. check_invitation_code 返回有效（只读验证）
+    // 2. verify_and_use_invitation_code 成功（原子消耗+绑定）
+    const mockRpc = vi.fn().mockImplementation((fn: string, params: Record<string, unknown>) => {
+      void params;
+      if (fn === "check_invitation_code") {
+        return Promise.resolve({
+          data: [{ id: "test-id", code: "TESTCODE", expires_at: "2030-01-01", used: false }],
+          error: null,
+        });
+      }
+      if (fn === "verify_and_use_invitation_code") {
+        return Promise.resolve({
+          data: [{ id: "test-id", code: "TESTCODE", used: true, used_by: "test-user-id" }],
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: [], error: null });
     });
+    (supabase.rpc as Mock).mockImplementation(mockRpc);
 
     const { container } = render(<SignupPage />);
     fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
@@ -430,22 +471,29 @@ describe("SignupPage", () => {
     fireEvent.submit(form);
 
     await waitFor(() => {
-      // 验证 RPC 函数被调用，传入 p_code 和 p_user_id（原子操作）
-      expect(supabase.rpc).toHaveBeenCalledWith("verify_and_use_invitation_code", {
+      // 第一阶段：调用 check_invitation_code 只读验证
+      expect(mockRpc).toHaveBeenCalledWith("check_invitation_code", {
         p_code: "TESTCODE",
-        p_user_id: "test-user-id",
       });
 
-      // 注册成功后不再需要单独更新邀请码表，RPC 函数已原子完成
+      // 第二阶段：注册成功后调用 verify_and_use_invitation_code 原子消耗+绑定
+      // 只传 p_code，RPC 内部用 auth.uid() 取当前用户，避免客户端伪造
+      expect(mockRpc).toHaveBeenCalledWith("verify_and_use_invitation_code", {
+        p_code: "TESTCODE",
+      });
+
+      // 不再通过 supabase.from 直接更新 used_by
       expect(supabase.from).not.toHaveBeenCalled();
     });
   });
 
-  it("邀请码验证失败时删除已注册用户", async () => {
-    // 模拟邀请码验证失败：RPC 函数返回失败
-    (supabase.rpc as Mock).mockResolvedValue({
-      data: [{ success: false, message: "邀请码无效或已被使用" }],
-      error: null,
+  it("邀请码验证失败（只读阶段）时不调用 signUp、不创建用户", async () => {
+    // 两阶段流程：check_invitation_code 失败 → 直接返回，不创建用户
+    (supabase.rpc as Mock).mockImplementation((fn: string) => {
+      if (fn === "check_invitation_code") {
+        return Promise.resolve({ data: [], error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
     });
 
     const { container } = render(<SignupPage />);
@@ -476,8 +524,9 @@ describe("SignupPage", () => {
     fireEvent.submit(form);
 
     await waitFor(() => {
-      // 验证 admin.deleteUser 被调用，清理已注册用户
-      expect(supabase.auth.admin.deleteUser).toHaveBeenCalledWith("test-user-id");
+      // 邀请码只读验证失败，根本不会走到 signUp，所以不需要 admin.deleteUser
+      expect(supabase.auth.signUp).not.toHaveBeenCalled();
+      expect(supabase.auth.admin.deleteUser).not.toHaveBeenCalled();
     });
   });
 
@@ -493,12 +542,26 @@ describe("SignupPage", () => {
     await waitFor(() => {
       expect(screen.getByText("邀请码长度不能超过 20 个字符。")).toBeInTheDocument();
     });
+    // 长度校验在邀请码 RPC 之前，所以不会调用 RPC
+    expect(supabase.rpc).not.toHaveBeenCalled();
   });
 
   it("注册成功显示自定义成功提示", async () => {
-    (supabase.rpc as Mock).mockResolvedValue({
-      data: [{ success: true, message: "验证成功", expires_at: "2030-01-01" }],
-      error: null,
+    // 模拟两阶段 RPC 调用都成功
+    (supabase.rpc as Mock).mockImplementation((fn: string) => {
+      if (fn === "check_invitation_code") {
+        return Promise.resolve({
+          data: [{ id: "test-id", code: "TESTCODE", expires_at: "2030-01-01", used: false }],
+          error: null,
+        });
+      }
+      if (fn === "verify_and_use_invitation_code") {
+        return Promise.resolve({
+          data: [{ id: "test-id", code: "TESTCODE", used: true, used_by: "test-user-id" }],
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: [], error: null });
     });
 
     const { container } = render(<SignupPage />);
@@ -623,5 +686,112 @@ describe("SignupPage", () => {
     await waitFor(() => {
       expect(screen.getByText("注册成功，请等待管理员审核。")).toBeInTheDocument();
     });
+  });
+
+  it("邀请码消耗失败时显示错误提示且不跳转", async () => {
+    // 模拟 check_invitation_code 成功，但 verify_and_use_invitation_code 失败
+    (supabase.rpc as Mock).mockImplementation((fn: string) => {
+      if (fn === "check_invitation_code") {
+        return Promise.resolve({
+          data: [{ id: "test-id", code: "TESTCODE", expires_at: "2030-01-01", used: false }],
+          error: null,
+        });
+      }
+      if (fn === "verify_and_use_invitation_code") {
+        return Promise.resolve({
+          data: null,
+          error: { message: "邀请码已被使用" },
+        });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+
+    const { container } = render(<SignupPage />);
+    fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
+      target: { value: "TESTCODE" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "test@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("再次输入密码"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("请填写真实姓名"), {
+      target: { value: "张三" },
+    });
+    const selects = container.querySelectorAll("select");
+    fireEvent.change(selects[0], { target: { value: "长笛" } });
+    fireEvent.change(screen.getByPlaceholderText("例如：经济学院"), {
+      target: { value: "经济学院" },
+    });
+    fireEvent.change(selects[1], { target: { value: "2024" } });
+    fireEvent.change(selects[2], { target: { value: "秋" } });
+
+    const form = container.querySelector("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(screen.getByText("注册成功但邀请码绑定异常，请联系管理员")).toBeInTheDocument();
+    });
+
+    // 验证没有跳转到登录页
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it("邀请码消耗返回空数组时显示错误提示且不跳转", async () => {
+    // 模拟 check_invitation_code 成功，但 verify_and_use_invitation_code 返回空数组（邀请码已被使用或过期）
+    (supabase.rpc as Mock).mockImplementation((fn: string) => {
+      if (fn === "check_invitation_code") {
+        return Promise.resolve({
+          data: [{ id: "test-id", code: "TESTCODE", expires_at: "2030-01-01", used: false }],
+          error: null,
+        });
+      }
+      if (fn === "verify_and_use_invitation_code") {
+        // RPC 返回 TABLE，邀请码无效/已被使用时返回空数组，error 为 null
+        return Promise.resolve({
+          data: [],
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+
+    const { container } = render(<SignupPage />);
+    fireEvent.change(screen.getByPlaceholderText("请输入乐团邀请码"), {
+      target: { value: "TESTCODE" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "test@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("再次输入密码"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("请填写真实姓名"), {
+      target: { value: "张三" },
+    });
+    const selects = container.querySelectorAll("select");
+    fireEvent.change(selects[0], { target: { value: "长笛" } });
+    fireEvent.change(screen.getByPlaceholderText("例如：经济学院"), {
+      target: { value: "经济学院" },
+    });
+    fireEvent.change(selects[1], { target: { value: "2024" } });
+    fireEvent.change(selects[2], { target: { value: "秋" } });
+
+    const form = container.querySelector("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(screen.getByText("注册成功但邀请码绑定异常，请联系管理员")).toBeInTheDocument();
+    });
+
+    // 验证没有跳转到登录页
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 });

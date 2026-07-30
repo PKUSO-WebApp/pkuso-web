@@ -16,8 +16,10 @@
   --color-border-light: var(--color-border-light);
   --color-danger: var(--color-danger);
   --color-danger-bg: var(--color-danger-bg);
+  --color-danger-foreground: var(--color-danger-foreground);
   --color-success: var(--color-success);
   --color-success-bg: var(--color-success-bg);
+  --color-success-foreground: var(--color-success-foreground);
   --color-warning: var(--color-warning);
   --color-warning-bg: var(--color-warning-bg);
   --color-info: var(--color-info);

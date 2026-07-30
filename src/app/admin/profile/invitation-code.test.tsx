@@ -10,11 +10,16 @@ vi.mock("@/lib/supabase", () => ({
     from: vi.fn().mockReturnValue({
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
-      insert: vi.fn().mockResolvedValue({ error: null }),
+      order: vi.fn().mockReturnThis(),
+      delete: vi.fn().mockReturnThis(),
+      insert: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: null, error: null }),
+      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
     }),
     auth: {
       updateUser: vi.fn().mockResolvedValue({ error: null }),
       signOut: vi.fn().mockResolvedValue({ error: null }),
+      getUser: vi.fn().mockResolvedValue({ data: { user: { id: "test-admin-id" } }, error: null }),
     },
   },
 }));
@@ -43,303 +48,418 @@ describe("邀请码管理", () => {
 
   it("显示邀请码管理区域", () => {
     render(<ProfilePage />);
-    // 使用包含匹配来查找带 emoji 的按钮文本
-    const invitationButton = screen.getByRole("button", { name: /生成邀请码/ });
-    expect(invitationButton).toBeInTheDocument();
+    // 存在"管理邀请码"和"生成邀请码"两个按钮
+    expect(screen.getByRole("button", { name: /管理邀请码/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /生成邀请码/ })).toBeInTheDocument();
   });
 
-  it("切换到邀请码管理模式", async () => {
+  it("打开生成邀请码 Modal 并显示单个/批量切换", async () => {
     render(<ProfilePage />);
     const invitationButton = screen.getByRole("button", { name: /生成邀请码/ });
     fireEvent.click(invitationButton);
 
     await waitFor(() => {
+      expect(screen.getByText("生成方式")).toBeInTheDocument();
+      // Toggle 两个选项的 label
       expect(screen.getByText("单个生成")).toBeInTheDocument();
       expect(screen.getByText("批量生成")).toBeInTheDocument();
     });
   });
 
-  it("单个生成邀请码 - 自定义邀请码", async () => {
-    const insertMock = vi.fn().mockResolvedValue({ error: null });
-    (supabase.from as Mock).mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      insert: insertMock,
-    });
-
-    render(<ProfilePage />);
-    const invitationButton = screen.getByRole("button", { name: /生成邀请码/ });
-    fireEvent.click(invitationButton);
-
-    await waitFor(() => {
-      fireEvent.change(screen.getByPlaceholderText("输入邀请码或留空"), {
-        target: { value: "MYCUSTOMCODE" },
-      });
-    });
-
-    fireEvent.click(screen.getByText("生成"));
-
-    await waitFor(() => {
-      expect(insertMock).toHaveBeenCalledWith([
-        {
-          code: "MYCUSTOMCODE",
-          max_uses: 1,
-          used_count: 0,
-          created_by: "test-admin-id",
-        },
-      ]);
-    });
-  });
-
-  it("单个生成邀请码 - 使用次数为0表示不限", async () => {
-    const insertMock = vi.fn().mockResolvedValue({ error: null });
-    (supabase.from as Mock).mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      insert: insertMock,
-    });
-
-    render(<ProfilePage />);
-    const invitationButton = screen.getByRole("button", { name: /生成邀请码/ });
-    fireEvent.click(invitationButton);
-
-    await waitFor(() => {
-      fireEvent.change(screen.getByPlaceholderText("输入邀请码或留空"), {
-        target: { value: "UNLIMITED" },
-      });
-      const maxUsesInput = screen.getByLabelText("使用次数（默认1，0表示不限次数）");
-      fireEvent.change(maxUsesInput, { target: { value: "0" } });
-    });
-
-    fireEvent.click(screen.getByText("生成"));
-
-    await waitFor(() => {
-      expect(insertMock).toHaveBeenCalledWith([
-        {
-          code: "UNLIMITED",
-          max_uses: 0,
-          used_count: 0,
-          created_by: "test-admin-id",
-        },
-      ]);
-    });
-  });
-
-  it("单个生成邀请码 - 自动生成随机邀请码", async () => {
-    const insertMock = vi.fn().mockResolvedValue({ error: null });
-    (supabase.from as Mock).mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      insert: insertMock,
-    });
-
-    render(<ProfilePage />);
-    const invitationButton = screen.getByRole("button", { name: /生成邀请码/ });
-    fireEvent.click(invitationButton);
-
-    await waitFor(() => {
-      fireEvent.change(screen.getByPlaceholderText("输入邀请码或留空"), {
-        target: { value: "" },
-      });
-    });
-
-    fireEvent.click(screen.getByText("生成"));
-
-    await waitFor(() => {
-      expect(insertMock).toHaveBeenCalled();
-      const insertedData = insertMock.mock.calls[0][0][0];
-      expect(insertedData.code).toHaveLength(20);
-      expect(insertedData.max_uses).toBe(1);
-    });
-  });
-
-  it("单个生成邀请码 - 长度超过20字符验证失败", async () => {
-    const alertMock = vi.spyOn(window, "alert").mockImplementation(() => {});
-
-    render(<ProfilePage />);
-    const invitationButton = screen.getByRole("button", { name: /生成邀请码/ });
-    fireEvent.click(invitationButton);
-
-    await waitFor(() => {
-      fireEvent.change(screen.getByPlaceholderText("输入邀请码或留空"), {
-        target: { value: "ABCDEFGHIJKLMNOPQRSTUVWXYZ" },
-      });
-    });
-
-    fireEvent.click(screen.getByText("生成"));
-
-    expect(alertMock).toHaveBeenCalledWith("邀请码长度不能超过 20 个字符");
-    alertMock.mockRestore();
-  });
-
-  it("批量生成邀请码 - 默认数量为1", async () => {
-    const insertMock = vi.fn().mockResolvedValue({ error: null });
-    const selectMock = vi.fn().mockReturnThis().mockResolvedValue({ data: [] });
+  it("单个生成邀请码 - 自动生成 8 位随机码并写入 invitation_codes", async () => {
+    // 单个生成：insert -> select -> single
+    const singleResult = {
+      id: "code-1",
+      code: "ABCDEFGH",
+      max_uses: 1,
+      used_count: 0,
+      created_by: "test-admin-id",
+      created_at: new Date().toISOString(),
+    };
+    const insertMock = vi.fn().mockReturnThis();
+    const selectMock = vi.fn().mockReturnThis();
+    const singleMock = vi.fn().mockResolvedValue({ data: singleResult, error: null });
     (supabase.from as Mock).mockReturnValue({
       select: selectMock,
       eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      delete: vi.fn().mockReturnThis(),
       insert: insertMock,
+      single: singleMock,
+      maybeSingle: vi.fn().mockReturnThis(),
     });
 
     render(<ProfilePage />);
-    const invitationButton = screen.getByRole("button", { name: /生成邀请码/ });
-    fireEvent.click(invitationButton);
+    fireEvent.click(screen.getByRole("button", { name: /生成邀请码/ }));
 
     await waitFor(() => {
-      fireEvent.click(screen.getByText("批量生成"));
+      // 默认是单个模式，直接可以点"生成"按钮
+      expect(screen.getByRole("button", { name: /^生成$/ })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("生成"));
+    fireEvent.click(screen.getByRole("button", { name: /^生成$/ }));
+
+    await waitFor(() => {
+      // from("invitation_codes") 被调用
+      expect(supabase.from).toHaveBeenCalledWith("invitation_codes");
+      // insert 被调用且 data 中 code 是 8 位字符
+      expect(insertMock).toHaveBeenCalled();
+      const inserted = insertMock.mock.calls[0][0] as Record<string, unknown>;
+      expect(inserted.code).toHaveLength(8);
+      expect(inserted.created_by).toBe("test-admin-id");
+      // insert -> select -> single 链式调用完成
+      expect(selectMock).toHaveBeenCalled();
+      expect(singleMock).toHaveBeenCalled();
+    });
+  });
+
+  it("单个生成邀请码 - 生成结果显示在 Modal 内并提供复制按钮", async () => {
+    const singleResult = {
+      id: "code-2",
+      code: "MYCODE01",
+      max_uses: 1,
+      used_count: 0,
+      created_by: "test-admin-id",
+      created_at: new Date().toISOString(),
+    };
+    (supabase.from as Mock).mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      delete: vi.fn().mockReturnThis(),
+      insert: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: singleResult, error: null }),
+      maybeSingle: vi.fn().mockReturnThis(),
+    });
+
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /生成邀请码/ }));
+
+    await waitFor(() => {
+      screen.getByRole("button", { name: /^生成$/ });
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^生成$/ }));
+
+    await waitFor(() => {
+      // 生成结果中显示 code（font-mono 文本）
+      expect(screen.getByText("MYCODE01")).toBeInTheDocument();
+      // 有"复制"按钮
+      expect(screen.getByRole("button", { name: "复制" })).toBeInTheDocument();
+    });
+  });
+
+  it("批量生成邀请码 - 默认数量为 5 个", async () => {
+    // 批量：insert -> select（不带 single）返回数组
+    const selectMock = vi.fn().mockResolvedValue({
+      data: Array.from({ length: 5 }, (_, i) => ({
+        id: `batch-${i}`,
+        code: `CODE${i.toString().padStart(4, "0")}`,
+        max_uses: 1,
+        used_count: 0,
+        created_by: "test-admin-id",
+        created_at: new Date().toISOString(),
+      })),
+      error: null,
+    });
+    const insertMock = vi.fn().mockReturnValue({ select: selectMock });
+    (supabase.from as Mock).mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      delete: vi.fn().mockReturnThis(),
+      insert: insertMock,
+      single: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockReturnThis(),
+    });
+
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /生成邀请码/ }));
+
+    await waitFor(() => {
+      screen.getByText("批量生成");
+    });
+
+    // 切到批量模式
+    fireEvent.click(screen.getByText("批量生成"));
+
+    // 默认 batchCount 是 5，直接点生成
+    fireEvent.click(screen.getByRole("button", { name: /^生成$/ }));
 
     await waitFor(() => {
       expect(insertMock).toHaveBeenCalled();
-      const insertedData = insertMock.mock.calls[0][0];
-      expect(insertedData).toHaveLength(1);
-      expect(insertedData[0].max_uses).toBe(1);
-      expect(insertedData[0].code).toHaveLength(20);
+      const batch = insertMock.mock.calls[0][0] as Record<string, unknown>[];
+      expect(batch).toHaveLength(5);
+      batch.forEach((item) => {
+        expect(item.code).toHaveLength(8);
+        expect(item.created_by).toBe("test-admin-id");
+      });
+      // insert 之后调用了 select（不带 single）
+      expect(selectMock).toHaveBeenCalled();
     });
   });
 
   it("批量生成邀请码 - 指定数量", async () => {
-    const insertMock = vi.fn().mockResolvedValue({ error: null });
-    const selectMock = vi.fn().mockReturnThis().mockResolvedValue({ data: [] });
+    const selectMock = vi.fn().mockResolvedValue({ data: [], error: null });
+    const insertMock = vi.fn().mockReturnValue({ select: selectMock });
     (supabase.from as Mock).mockReturnValue({
-      select: selectMock,
+      select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      delete: vi.fn().mockReturnThis(),
       insert: insertMock,
+      single: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockReturnThis(),
     });
 
     render(<ProfilePage />);
-    const invitationButton = screen.getByRole("button", { name: /生成邀请码/ });
-    fireEvent.click(invitationButton);
+    fireEvent.click(screen.getByRole("button", { name: /生成邀请码/ }));
 
     await waitFor(() => {
-      fireEvent.click(screen.getByText("批量生成"));
-      const batchCountInput = screen.getByLabelText("生成数量");
-      fireEvent.change(batchCountInput, { target: { value: "5" } });
+      screen.getByText("批量生成");
+    });
+    fireEvent.click(screen.getByText("批量生成"));
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("1-100")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("生成"));
+    // 设置数量为 3（placeholder="1-100" 的那个 input）
+    fireEvent.change(screen.getByPlaceholderText("1-100"), { target: { value: "3" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /^生成$/ }));
 
     await waitFor(() => {
       expect(insertMock).toHaveBeenCalled();
-      const insertedData = insertMock.mock.calls[0][0];
-      expect(insertedData).toHaveLength(5);
+      const batch = insertMock.mock.calls[0][0] as Record<string, unknown>[];
+      expect(batch).toHaveLength(3);
     });
   });
 
-  it("批量生成邀请码 - 数量小于1验证失败", async () => {
-    const alertMock = vi.spyOn(window, "alert").mockImplementation(() => {});
-
-    render(<ProfilePage />);
-    const invitationButton = screen.getByRole("button", { name: /生成邀请码/ });
-    fireEvent.click(invitationButton);
-
-    await waitFor(() => {
-      fireEvent.click(screen.getByText("批量生成"));
-      const batchCountInput = screen.getByLabelText("生成数量");
-      fireEvent.change(batchCountInput, { target: { value: "0" } });
-    });
-
-    fireEvent.click(screen.getByText("生成"));
-
-    expect(alertMock).toHaveBeenCalledWith("生成数量必须在1-100之间");
-    alertMock.mockRestore();
-  });
-
-  it("批量生成邀请码 - 数量大于100验证失败", async () => {
-    const alertMock = vi.spyOn(window, "alert").mockImplementation(() => {});
-
-    render(<ProfilePage />);
-    const invitationButton = screen.getByRole("button", { name: /生成邀请码/ });
-    fireEvent.click(invitationButton);
-
-    await waitFor(() => {
-      fireEvent.click(screen.getByText("批量生成"));
-      const batchCountInput = screen.getByLabelText("生成数量");
-      fireEvent.change(batchCountInput, { target: { value: "101" } });
-    });
-
-    fireEvent.click(screen.getByText("生成"));
-
-    expect(alertMock).toHaveBeenCalledWith("生成数量必须在1-100之间");
-    alertMock.mockRestore();
-  });
-
-  it("生成结果显示使用次数", async () => {
-    const insertMock = vi.fn().mockResolvedValue({ error: null });
+  it("批量生成邀请码 - 数量小于 1 时自动 clamp 到 1", async () => {
+    const selectMock = vi.fn().mockResolvedValue({ data: [], error: null });
+    const insertMock = vi.fn().mockReturnValue({ select: selectMock });
     (supabase.from as Mock).mockReturnValue({
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      delete: vi.fn().mockReturnThis(),
       insert: insertMock,
+      single: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockReturnThis(),
     });
 
     render(<ProfilePage />);
-    const invitationButton = screen.getByRole("button", { name: /生成邀请码/ });
-    fireEvent.click(invitationButton);
+    fireEvent.click(screen.getByRole("button", { name: /生成邀请码/ }));
 
     await waitFor(() => {
-      fireEvent.change(screen.getByPlaceholderText("输入邀请码或留空"), {
-        target: { value: "TESTCODE" },
-      });
+      screen.getByText("批量生成");
+    });
+    fireEvent.click(screen.getByText("批量生成"));
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("1-100")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("生成"));
+    // 输入 0，期望被 clamp 到 1
+    fireEvent.change(screen.getByPlaceholderText("1-100"), { target: { value: "0" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /^生成$/ }));
 
     await waitFor(() => {
-      expect(screen.getByText("使用次数: 1")).toBeInTheDocument();
+      expect(insertMock).toHaveBeenCalled();
+      const batch = insertMock.mock.calls[0][0] as Record<string, unknown>[];
+      expect(batch).toHaveLength(1);
     });
   });
 
-  it("生成结果显示不限次数", async () => {
-    const insertMock = vi.fn().mockResolvedValue({ error: null });
+  it("批量生成邀请码 - 数量大于 100 时自动 clamp 到 100", async () => {
+    const selectMock = vi.fn().mockResolvedValue({ data: [], error: null });
+    const insertMock = vi.fn().mockReturnValue({ select: selectMock });
     (supabase.from as Mock).mockReturnValue({
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      delete: vi.fn().mockReturnThis(),
       insert: insertMock,
+      single: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockReturnThis(),
     });
 
     render(<ProfilePage />);
-    const invitationButton = screen.getByRole("button", { name: /生成邀请码/ });
-    fireEvent.click(invitationButton);
+    fireEvent.click(screen.getByRole("button", { name: /生成邀请码/ }));
 
     await waitFor(() => {
-      fireEvent.change(screen.getByPlaceholderText("输入邀请码或留空"), {
-        target: { value: "UNLIMITED" },
-      });
-      const maxUsesInput = screen.getByLabelText("使用次数（默认1，0表示不限次数）");
-      fireEvent.change(maxUsesInput, { target: { value: "0" } });
+      screen.getByText("批量生成");
+    });
+    fireEvent.click(screen.getByText("批量生成"));
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("1-100")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("生成"));
+    // 输入 101，期望被 clamp 到 100
+    fireEvent.change(screen.getByPlaceholderText("1-100"), { target: { value: "101" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /^生成$/ }));
 
     await waitFor(() => {
-      expect(screen.getByText("使用次数: 不限")).toBeInTheDocument();
+      expect(insertMock).toHaveBeenCalled();
+      const batch = insertMock.mock.calls[0][0] as Record<string, unknown>[];
+      expect(batch).toHaveLength(100);
     });
   });
 
-  it("生成失败显示错误信息", async () => {
-    const alertMock = vi.spyOn(window, "alert").mockImplementation(() => {});
-    const insertMock = vi.fn().mockResolvedValue({ error: { message: "DB error" } });
+  it("生成失败时 Modal 内显示错误提示（text-danger）", async () => {
+    // 单个生成返回错误（single 返回 data: null, error: { message: "DB error" }）
+    // handleGenerate 里 result 为 null → 显示 genError 固定文案"邀请码生成失败，请重试"
     (supabase.from as Mock).mockReturnValue({
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
-      insert: insertMock,
+      order: vi.fn().mockReturnThis(),
+      delete: vi.fn().mockReturnThis(),
+      insert: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: null, error: { message: "DB error" } }),
+      maybeSingle: vi.fn().mockReturnThis(),
     });
 
     render(<ProfilePage />);
-    const invitationButton = screen.getByRole("button", { name: /生成邀请码/ });
-    fireEvent.click(invitationButton);
+    fireEvent.click(screen.getByRole("button", { name: /生成邀请码/ }));
 
     await waitFor(() => {
-      fireEvent.change(screen.getByPlaceholderText("输入邀请码或留空"), {
-        target: { value: "TESTCODE" },
-      });
+      screen.getByRole("button", { name: /^生成$/ });
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^生成$/ }));
+
+    await waitFor(() => {
+      // 单个生成失败时 genError 显示固定文案，class 为 text-danger
+      const errEl = screen.getByText("邀请码生成失败，请重试");
+      expect(errEl.closest("p")).toHaveClass("text-danger");
+    });
+  });
+
+  it("批量生成结果列表显示所有 code 并带复制按钮", async () => {
+    const codes = Array.from({ length: 3 }, (_, i) => ({
+      id: `b-${i}`,
+      code: `BATCH${i}`,
+      max_uses: 1,
+      used_count: 0,
+      created_by: "test-admin-id",
+      created_at: new Date().toISOString(),
+    }));
+    const insertMock = vi.fn().mockReturnValue({
+      select: vi.fn().mockResolvedValue({ data: codes, error: null }),
+    });
+    (supabase.from as Mock).mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      delete: vi.fn().mockReturnThis(),
+      insert: insertMock,
+      single: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockReturnThis(),
     });
 
-    fireEvent.click(screen.getByText("生成"));
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /生成邀请码/ }));
 
-    expect(alertMock).toHaveBeenCalledWith("生成失败: DB error");
-    alertMock.mockRestore();
+    await waitFor(() => {
+      screen.getByText("批量生成");
+    });
+    fireEvent.click(screen.getByText("批量生成"));
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("1-100")).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByPlaceholderText("1-100"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: /^生成$/ }));
+
+    await waitFor(() => {
+      // 结果列表显示 3 个 code
+      codes.forEach((c) => {
+        expect(screen.getByText(c.code)).toBeInTheDocument();
+      });
+      // 结果标题包含数量
+      expect(screen.getByText(/生成结果.*3.*个/)).toBeInTheDocument();
+    });
+  });
+
+  it("生成失败时批量也显示错误提示", async () => {
+    // 批量生成：select 返回错误（或 results.length === 0）
+    // handleGenerate 检查 results.length === 0 → 显示固定文案"邀请码生成失败，请重试"
+    const insertMock = vi.fn().mockReturnValue({
+      select: vi.fn().mockResolvedValue({ data: [], error: { message: "Batch insert failed" } }),
+    });
+    (supabase.from as Mock).mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      delete: vi.fn().mockReturnThis(),
+      insert: insertMock,
+      single: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockReturnThis(),
+    });
+
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /生成邀请码/ }));
+
+    await waitFor(() => {
+      screen.getByText("批量生成");
+    });
+    fireEvent.click(screen.getByText("批量生成"));
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("1-100")).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByPlaceholderText("1-100"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: /^生成$/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("邀请码生成失败，请重试")).toBeInTheDocument();
+    });
+  });
+
+  it("单个生成邀请码 - 随机码排除易混淆字符（0/O/1/I）", async () => {
+    const insertMock = vi.fn().mockReturnThis();
+    (supabase.from as Mock).mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      delete: vi.fn().mockReturnThis(),
+      insert: insertMock,
+      single: vi.fn().mockImplementation(async () => {
+        // 这里验证 insert 里的 code 不含 0/O/1/I
+        const inserted = insertMock.mock.calls[insertMock.mock.calls.length - 1][0] as Record<
+          string,
+          unknown
+        >;
+        return {
+          data: { ...inserted, id: "x", created_at: new Date().toISOString() },
+          error: null,
+        };
+      }),
+      maybeSingle: vi.fn().mockReturnThis(),
+    });
+
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /生成邀请码/ }));
+
+    await waitFor(() => {
+      screen.getByRole("button", { name: /^生成$/ });
+    });
+
+    // 多次生成，确保每次都不含易混淆字符
+    for (let i = 0; i < 5; i++) {
+      fireEvent.click(screen.getByRole("button", { name: /^生成$/ }));
+      await waitFor(() => {
+        expect(insertMock).toHaveBeenCalled();
+      });
+      const inserted = insertMock.mock.calls[insertMock.mock.calls.length - 1][0] as Record<
+        string,
+        unknown
+      >;
+      const code = inserted.code as string;
+      expect(code).not.toMatch(/[0O1I]/);
+      expect(code).toHaveLength(8);
+    }
   });
 });

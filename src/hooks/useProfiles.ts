@@ -25,8 +25,11 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
   const savingRef = React.useRef<Map<string, boolean>>(new Map());
+  const fetchSeqRef = React.useRef(0);
 
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization -- filter reference stable, use optional chain deps to avoid excessive re-creation
   const fetch = React.useCallback(async () => {
+    const seq = ++fetchSeqRef.current;
     setLoading(true);
     setError(null);
 
@@ -38,6 +41,8 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
 
     const { data: rows, error: dbError } = await query;
 
+    // 只有最新请求的结果才更新 state，避免竞态导致旧数据覆盖新数据
+    if (seq !== fetchSeqRef.current) return;
     setLoading(false);
     if (dbError) {
       setError(dbError.message);
@@ -50,8 +55,7 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
     } else {
       setData((rows as ProfileRow[]) ?? []);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- filter reference stable
-  }, [client, filter?.status, filter?.ids]);
+  }, [client, filter?.status, filter?.ids, filter?.userId]);
 
   React.useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -148,5 +152,81 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
     [client],
   );
 
-  return { data, loading, error, saving, fetch, approve, reject, insert };
+  /**
+   * 全部批准：将所有 pending 状态用户改为 approved
+   */
+  const approveAll = React.useCallback(async () => {
+    const batchKey = "__batch__";
+    if (savingRef.current.has(batchKey)) return false;
+    savingRef.current.set(batchKey, true);
+    setSaving(true);
+    try {
+      const {
+        data: { session },
+      } = await client.auth.getSession();
+      const response = await window.fetch("/api/admin/approve-all", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        setError(result.error || "批量批准失败");
+        return false;
+      }
+      // 清空当前列表
+      setData([]);
+      setError(null);
+      return true;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } catch (_err: unknown) {
+      setError("网络错误");
+      return false;
+    } finally {
+      savingRef.current.delete(batchKey);
+      setSaving(savingRef.current.size > 0);
+    }
+  }, [client]);
+
+  /**
+   * 全部拒绝：将所有 pending 状态用户改为 rejected
+   */
+  const rejectAll = React.useCallback(async () => {
+    const batchKey = "__batch__";
+    if (savingRef.current.has(batchKey)) return false;
+    savingRef.current.set(batchKey, true);
+    setSaving(true);
+    try {
+      const {
+        data: { session },
+      } = await client.auth.getSession();
+      const response = await window.fetch("/api/admin/reject-all", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        setError(result.error || "批量拒绝失败");
+        return false;
+      }
+      // 清空当前列表
+      setData([]);
+      setError(null);
+      return true;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } catch (_err: unknown) {
+      setError("网络错误");
+      return false;
+    } finally {
+      savingRef.current.delete(batchKey);
+      setSaving(savingRef.current.size > 0);
+    }
+  }, [client]);
+
+  return { data, loading, error, saving, fetch, approve, reject, insert, approveAll, rejectAll };
 }

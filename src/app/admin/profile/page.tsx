@@ -7,6 +7,9 @@ import { LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
+import { useInvitationCodes } from "@/hooks/useInvitationCodes";
+import { formatDateTime } from "@/lib/date-utils";
+import type { InvitationCodeRow } from "@/types/database";
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -16,120 +19,38 @@ export default function ProfilePage() {
   const email = user?.email ?? "—";
   const initials = fullName !== "—" ? fullName.slice(0, 2) || fullName.slice(0, 1) || "--" : "--";
 
+  // 修改密码
   const [isPwdModalOpen, setIsPwdModalOpen] = React.useState(false);
   const [newPwd, setNewPwd] = React.useState("");
   const [confirmPwd, setConfirmPwd] = React.useState("");
   const [isUpdatingPwd, setIsUpdatingPwd] = React.useState(false);
 
-  // 邀请码管理状态
-  const [showInvitationCode, setShowInvitationCode] = React.useState(false);
-  const [invitationMode, setInvitationMode] = React.useState<"single" | "batch">("single");
-  const [customCode, setCustomCode] = React.useState("");
-  const [maxUses, setMaxUses] = React.useState(1);
-  const [batchCount, setBatchCount] = React.useState(1);
-  const [generatedCodes, setGeneratedCodes] = React.useState<{ code: string; max_uses: number }[]>(
-    [],
-  );
-  const [isGenerating, setIsGenerating] = React.useState(false);
+  // 邀请码管理
+  const {
+    data: invitationCodes,
+    loading: codesLoading,
+    error: codesError,
+    creating: codesCreating,
+    deleting: codesDeleting,
+    isDeleting: isCodeDeleting,
+    fetch: fetchCodes,
+    createSingle,
+    createBatch,
+    remove: deleteCode,
+  } = useInvitationCodes(supabase);
 
-  // 生成随机邀请码
-  const generateRandomCode = (length: number = 20): string => {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let code = "";
-    for (let i = 0; i < length; i++) {
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return code;
-  };
+  // 生成邀请码 Modal
+  const [isGenModalOpen, setIsGenModalOpen] = React.useState(false);
+  const [genMode, setGenMode] = React.useState<"single" | "batch">("single");
+  const [batchCount, setBatchCount] = React.useState<number>(5);
+  const [genResults, setGenResults] = React.useState<InvitationCodeRow[]>([]);
+  const [genError, setGenError] = React.useState<string | null>(null);
+  const [isGenSubmitting, setIsGenSubmitting] = React.useState(false);
 
-  // 生成唯一邀请码（确保不重复）
-  const generateUniqueCode = async (): Promise<string> => {
-    let code: string;
-    do {
-      code = generateRandomCode(20).toUpperCase();
-      const { data } = await supabase.from("invitation_codes").select("code").eq("code", code);
-      if (!data?.length) break;
-    } while (true);
-    return code;
-  };
-
-  // 单个生成邀请码
-  const handleSingleGenerate = async () => {
-    if (isGenerating) return;
-    const code = customCode.trim().toUpperCase() || generateRandomCode(20).toUpperCase();
-    if (code.length > 20) {
-      alert("邀请码长度不能超过 20 个字符");
-      return;
-    }
-    if (!code) {
-      alert("请输入邀请码或留空自动生成");
-      return;
-    }
-
-    setIsGenerating(true);
-    try {
-      const { error } = await supabase.from("invitation_codes").insert([
-        {
-          code,
-          max_uses: maxUses,
-          used_count: 0,
-          created_by: user?.id || null,
-        },
-      ]);
-
-      if (error) {
-        alert(`生成失败: ${error.message}`);
-      } else {
-        setGeneratedCodes([{ code, max_uses: maxUses }]);
-        setCustomCode("");
-      }
-    } catch (err) {
-      alert(`生成失败: ${(err as Error).message}`);
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  // 批量生成邀请码
-  const handleBatchGenerate = async () => {
-    if (isGenerating) return;
-    if (batchCount < 1 || batchCount > 100) {
-      alert("生成数量必须在1-100之间");
-      return;
-    }
-
-    setIsGenerating(true);
-    try {
-      const codes: { code: string; max_uses: number }[] = [];
-      for (let i = 0; i < batchCount; i++) {
-        const code = await generateUniqueCode();
-        codes.push({
-          code,
-          max_uses: 1,
-        });
-      }
-
-      const insertData = codes.map((c) => ({
-        code: c.code,
-        max_uses: c.max_uses,
-        used_count: 0,
-        created_by: user?.id || null,
-      }));
-
-      const { error } = await supabase.from("invitation_codes").insert(insertData);
-
-      if (error) {
-        alert(`生成失败: ${error.message}`);
-      } else {
-        setGeneratedCodes(codes);
-        setBatchCount(1);
-      }
-    } catch (err) {
-      alert(`生成失败: ${(err as Error).message}`);
-    } finally {
-      setIsGenerating(false);
-    }
-  };
+  // 管理邀请码 Modal
+  const [isManageModalOpen, setIsManageModalOpen] = React.useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = React.useState<string | null>(null);
+  const [deleteConfirmCode, setDeleteConfirmCode] = React.useState<string>("");
 
   const handleLogout = () => {
     logout();
@@ -152,6 +73,70 @@ export default function ProfilePage() {
     }
   };
 
+  const handleOpenGenModal = () => {
+    setGenResults([]);
+    setGenError(null);
+    setGenMode("single");
+    setBatchCount(5);
+    setIsGenModalOpen(true);
+  };
+
+  const handleGenerate = async () => {
+    if (isGenSubmitting) return;
+    setIsGenSubmitting(true);
+    setGenResults([]);
+    setGenError(null);
+
+    try {
+      if (genMode === "single") {
+        const result = await createSingle();
+        if (result) {
+          setGenResults([result]);
+        } else {
+          setGenError("邀请码生成失败，请重试");
+        }
+      } else {
+        const count = Math.max(1, Math.min(100, batchCount));
+        const results = await createBatch(count);
+        if (results.length === 0) {
+          setGenError("邀请码生成失败，请重试");
+        } else {
+          setGenResults(results);
+        }
+      }
+    } finally {
+      setIsGenSubmitting(false);
+    }
+  };
+
+  const handleOpenManageModal = () => {
+    setIsManageModalOpen(true);
+    void fetchCodes();
+  };
+
+  const handleDeleteClick = (id: string, code: string) => {
+    // 确认弹窗已打开时，忽略新的删除点击，防止目标被切换
+    if (deleteConfirmId) return;
+    if (isCodeDeleting(id)) return;
+    setDeleteConfirmId(id);
+    setDeleteConfirmCode(code);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteConfirmId) return;
+    const ok = await deleteCode(deleteConfirmId);
+    if (ok) {
+      setDeleteConfirmId(null);
+      setDeleteConfirmCode("");
+    } else {
+      alert("删除失败，请重试");
+    }
+  };
+
+  const handleCopyCode = (code: string) => {
+    void navigator.clipboard.writeText(code);
+  };
+
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-border-light bg-surface p-4 shadow-[var(--shadow-card)]">
@@ -167,110 +152,23 @@ export default function ProfilePage() {
         </div>
       </section>
 
+      {/* 管理邀请码 */}
       <button
         type="button"
-        onClick={() => setShowInvitationCode(!showInvitationCode)}
+        onClick={handleOpenManageModal}
         className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
       >
-        🎟️ 生成邀请码
+        📋 管理邀请码
       </button>
 
-      {showInvitationCode && (
-        <div className="rounded-xl border border-border bg-surface p-4">
-          <Toggle
-            options={["单个生成", "批量生成"] as const}
-            value={invitationMode === "single" ? "单个生成" : "批量生成"}
-            onChange={(value) => {
-              setInvitationMode(value === "单个生成" ? "single" : "batch");
-              setGeneratedCodes([]);
-            }}
-          />
-
-          {invitationMode === "single" ? (
-            <div className="mt-4 space-y-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-text-muted">
-                  邀请码（可选，留空则随机生成20位）
-                </label>
-                <input
-                  type="text"
-                  value={customCode}
-                  onChange={(e) => setCustomCode(e.target.value)}
-                  className="input"
-                  placeholder="输入邀请码或留空"
-                  maxLength={20}
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-text-muted">
-                  使用次数（默认1，0表示不限次数）
-                </label>
-                <input
-                  type="number"
-                  value={maxUses}
-                  onChange={(e) => setMaxUses(Math.max(0, parseInt(e.target.value) || 1))}
-                  className="input"
-                  min="0"
-                  placeholder="1"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={handleSingleGenerate}
-                disabled={isGenerating}
-                className="w-full rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
-              >
-                {isGenerating ? "生成中..." : "生成"}
-              </button>
-            </div>
-          ) : (
-            <div className="mt-4 space-y-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-text-muted">生成数量</label>
-                <input
-                  type="number"
-                  value={batchCount}
-                  onChange={(e) =>
-                    setBatchCount(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))
-                  }
-                  className="input"
-                  min="1"
-                  max="100"
-                  placeholder="1"
-                />
-              </div>
-              <p className="text-xs text-text-muted">随机生成的邀请码使用次数为1</p>
-              <button
-                type="button"
-                onClick={handleBatchGenerate}
-                disabled={isGenerating}
-                className="w-full rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
-              >
-                {isGenerating ? "生成中..." : "生成"}
-              </button>
-            </div>
-          )}
-
-          {generatedCodes.length > 0 && (
-            <div className="mt-4">
-              <p className="mb-2 text-xs font-medium text-text-muted">生成结果</p>
-              <div className="max-h-[200px] overflow-y-auto space-y-2">
-                {generatedCodes.map((item, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center justify-between rounded-lg bg-muted px-3 py-2 text-xs"
-                  >
-                    <span className="text-text">{item.code}</span>
-                    <span className="text-text-muted">
-                      使用次数: {item.max_uses === 0 ? "不限" : item.max_uses}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      {/* 生成邀请码 */}
+      <button
+        type="button"
+        onClick={handleOpenGenModal}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
+      >
+        ✨ 生成邀请码
+      </button>
 
       <button
         type="button"
@@ -283,12 +181,13 @@ export default function ProfilePage() {
       <button
         type="button"
         onClick={handleLogout}
-        className="flex w-full items-center justify-center gap-2 rounded-full bg-danger-bg px-4 py-2.5 text-sm font-medium text-danger shadow-sm hover:opacity-80"
+        className="flex w-full items-center justify-center gap-2 rounded-full bg-danger-bg px-4 py-2.5 text-sm font-medium text-danger shadow-sm hover:opacity-90"
       >
         <LogOut className="h-4 w-4" />
         退出登录
       </button>
 
+      {/* 修改密码 Modal */}
       <Modal
         open={isPwdModalOpen}
         onClose={() => {
@@ -337,6 +236,200 @@ export default function ProfilePage() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* 生成邀请码 Modal */}
+      <Modal
+        open={isGenModalOpen}
+        onClose={() => {
+          if (!isGenSubmitting && !codesCreating) setIsGenModalOpen(false);
+        }}
+        title="生成邀请码"
+        position="bottom"
+        closeOnOverlay={!isGenSubmitting && !codesCreating}
+      >
+        <div className="mt-4 space-y-4 pb-safe">
+          {/* 切换单个/批量 */}
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-text-muted">生成方式</span>
+            <Toggle
+              options={["single", "batch"] as const}
+              value={genMode}
+              onChange={(v) => setGenMode(v)}
+              getLabel={(opt) => (opt === "single" ? "单个生成" : "批量生成")}
+            />
+          </div>
+
+          {/* 批量数量输入 */}
+          {genMode === "batch" && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-text-muted">生成数量</label>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={batchCount}
+                onChange={(e) => setBatchCount(parseInt(e.target.value, 10) || 1)}
+                className="input"
+                placeholder="1-100"
+              />
+            </div>
+          )}
+
+          {/* 生成按钮 */}
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={isGenSubmitting || codesCreating}
+            className="w-full rounded-xl bg-primary py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+          >
+            {isGenSubmitting || codesCreating ? "生成中…" : "生成"}
+          </button>
+
+          {/* 错误提示 */}
+          {genError && <p className="text-xs text-danger">{genError}</p>}
+
+          {/* 结果列表 */}
+          {genResults.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-text-muted">
+                生成结果（{genResults.length} 个）
+              </p>
+              <div className="max-h-[200px] space-y-2 overflow-y-auto">
+                {genResults.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between rounded-xl border border-border bg-page-bg px-3 py-2"
+                  >
+                    <span className="font-mono text-sm text-text">{item.code}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyCode(item.code)}
+                      className="rounded-full px-2 py-1 text-xs text-text-muted hover:bg-border"
+                    >
+                      复制
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 关闭按钮 */}
+          <button
+            type="button"
+            disabled={isGenSubmitting || codesCreating}
+            onClick={() => setIsGenModalOpen(false)}
+            className="w-full rounded-xl border border-border bg-surface py-2.5 text-sm font-medium text-text-muted hover:bg-muted disabled:opacity-60"
+          >
+            关闭
+          </button>
+        </div>
+      </Modal>
+
+      {/* 管理邀请码 Modal */}
+      <Modal
+        open={isManageModalOpen}
+        onClose={() => {
+          if (!codesDeleting) setIsManageModalOpen(false);
+        }}
+        title="管理邀请码"
+        position="bottom"
+        closeOnOverlay={!codesDeleting}
+      >
+        <div className="mt-4 space-y-3 pb-safe">
+          {codesLoading ? (
+            <p className="py-8 text-center text-xs text-text-muted">加载中…</p>
+          ) : codesError ? (
+            <div className="py-8 text-center">
+              <p className="text-xs text-danger">加载失败：{codesError}</p>
+              <button
+                type="button"
+                onClick={() => void fetchCodes()}
+                className="mt-3 rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted"
+              >
+                重试
+              </button>
+            </div>
+          ) : invitationCodes.length === 0 ? (
+            <p className="py-8 text-center text-xs text-text-muted">暂无邀请码</p>
+          ) : (
+            <div className="max-h-[320px] space-y-3 overflow-y-auto">
+              {invitationCodes.map((item) => (
+                <div key={item.id} className="rounded-xl border border-border bg-surface p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <span className="block font-mono text-sm font-medium text-text">
+                        {item.code}
+                      </span>
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-text-muted">
+                        <span>
+                          状态：
+                          <span className={item.used ? "text-text-muted" : "text-success"}>
+                            {item.used ? "已使用" : "未使用"}
+                          </span>
+                        </span>
+                        <span>生成：{formatDateTime(item.created_at)}</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteClick(item.id, item.code)}
+                      disabled={isCodeDeleting(item.id) || !!deleteConfirmId}
+                      className="shrink-0 rounded-full bg-danger-bg px-3 py-1.5 text-xs font-medium text-danger hover:opacity-90 disabled:opacity-60"
+                    >
+                      {isCodeDeleting(item.id) ? "删除中…" : "删除"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button
+            type="button"
+            disabled={codesDeleting}
+            onClick={() => setIsManageModalOpen(false)}
+            className="w-full rounded-xl border border-border bg-surface py-2.5 text-sm font-medium text-text-muted hover:bg-muted disabled:opacity-60"
+          >
+            关闭
+          </button>
+        </div>
+      </Modal>
+
+      {/* 删除确认弹窗 */}
+      <Modal
+        open={!!deleteConfirmId}
+        onClose={() => {
+          if (!codesDeleting) setDeleteConfirmId(null);
+        }}
+        position="center"
+        closeOnOverlay={!codesDeleting}
+      >
+        <h3 className="text-base font-semibold text-text">确认删除</h3>
+        <p className="mt-2 text-sm text-text-muted">
+          确定要删除邀请码{" "}
+          <span className="font-mono font-medium text-text">{deleteConfirmCode}</span>{" "}
+          吗？删除后无法恢复。
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            disabled={codesDeleting}
+            onClick={() => setDeleteConfirmId(null)}
+            className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted disabled:opacity-60"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={codesDeleting}
+            onClick={handleConfirmDelete}
+            className="rounded-full bg-danger px-4 py-2 text-xs font-medium text-danger-foreground hover:opacity-90 disabled:opacity-60"
+          >
+            {codesDeleting ? "删除中…" : "确认删除"}
+          </button>
+        </div>
       </Modal>
     </div>
   );

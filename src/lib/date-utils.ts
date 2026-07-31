@@ -105,3 +105,47 @@ export function formatDateTime(dateStr: string | null): string {
     hour12: false,
   }).format(date);
 }
+
+/**
+ * 将 UTC 时间字符串转换为中国时区显示
+ * 检测以下 UTC 格式：
+ * - 以 Z 结尾：如 "2024-07-31T14:30:00Z"
+ * - 以 +00 结尾：如 "2026-07-31 08:19:11.1906+00"
+ * - 带时区偏移：如 "2024-07-31T14:30:00+00:00"
+ * 如果没有时区后缀，则直接按本地时间解析显示
+ *
+ * @param dateStr - ISO 格式字符串或 null
+ * @returns 格式为 "MM/DD HH:mm" 的字符串，无效时返回 "—"
+ */
+export function formatDateTimeInChina(dateStr: string | null): string {
+  if (!dateStr) return "—";
+
+  // 检测是否为 UTC 时间（Z 后缀 或 +00:00 偏移）
+  const isUTC =
+    dateStr.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(dateStr) || /\+00(?::\d{2})?$/.test(dateStr);
+
+  if (isUTC) {
+    // UTC 时间，转换为中国时区
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return "—";
+    return new Intl.DateTimeFormat("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "Asia/Shanghai",
+    }).format(date);
+  } else {
+    // 本地时间（无时区后缀），直接解析
+    const date = parseLocalISO(dateStr);
+    if (isNaN(date.getTime())) return "—";
+    return new Intl.DateTimeFormat("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(date);
+  }
+}

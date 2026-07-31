@@ -2,7 +2,7 @@
 
 import React from "react";
 import { Modal } from "@/components/ui/Modal";
-import { formatDateTime } from "@/lib/date-utils";
+import { formatDateTimeInChina } from "@/lib/date-utils";
 import type { AnnouncementRow } from "@/types/database";
 
 type AnnouncementListModalProps = {
@@ -170,7 +170,7 @@ export function AnnouncementListModal({
                 </div>
               </div>
               <p className="text-xs text-text-muted">
-                发布时间：{formatDateTime(selectedAnnouncement.created_at)}
+                发布时间：{formatDateTimeInChina(selectedAnnouncement.created_at)}
               </p>
               <div className="max-h-[40vh] overflow-y-auto rounded-xl border border-border bg-surface p-4">
                 <p className="text-sm text-text leading-relaxed whitespace-pre-wrap break-words">
@@ -197,7 +197,7 @@ export function AnnouncementListModal({
                 >
                   <div className="min-w-0 flex-1">
                     <p className="text-xs text-text-muted mb-1">
-                      {formatDateTime(item.created_at)}
+                      {formatDateTimeInChina(item.created_at)}
                     </p>
                     <p className="text-sm text-text line-clamp-3">
                       {truncateContent(item.content, 100)}

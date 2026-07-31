@@ -63,8 +63,7 @@ export type Database = {
           expires_at: string | null;
           id: string;
           max_uses: number | null;
-          used: boolean | null;
-          used_by: string | null;
+          used_by: string[] | null;
           used_count: number | null;
         };
         Insert: {
@@ -74,8 +73,7 @@ export type Database = {
           expires_at?: string | null;
           id?: string;
           max_uses?: number | null;
-          used?: boolean | null;
-          used_by?: string | null;
+          used_by?: string[] | null;
           used_count?: number | null;
         };
         Update: {
@@ -85,8 +83,7 @@ export type Database = {
           expires_at?: string | null;
           id?: string;
           max_uses?: number | null;
-          used?: boolean | null;
-          used_by?: string | null;
+          used_by?: string[] | null;
           used_count?: number | null;
         };
         Relationships: [];
@@ -354,7 +351,8 @@ export type Database = {
           code: string;
           expires_at: string;
           id: string;
-          used: boolean;
+          max_uses: number;
+          used_count: number;
         }[];
       };
       is_admin: { Args: never; Returns: boolean };
@@ -364,8 +362,8 @@ export type Database = {
           code: string;
           expires_at: string;
           id: string;
-          used: boolean;
-          used_by: string;
+          used_by: string[];
+          used_count: number;
         }[];
       };
     };

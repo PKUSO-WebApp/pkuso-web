@@ -46,7 +46,6 @@ const sampleCode: InvitationCodeRow = {
   created_by: "admin-1",
   expires_at: null,
   max_uses: null,
-  used: false,
   used_by: null,
   used_count: 0,
 };
@@ -434,6 +433,162 @@ describe("useInvitationCodes", () => {
     });
     expect(created).toBeNull();
     await waitFor(() => expect(result.current.error).toContain("仅支持"));
+  });
+
+  // ---- expiresInDays 有效期校验（Issue #90 回归）----
+  it("createSingle expiresInDays 为非整数时被拒绝", async () => {
+    const c = mockClient([{ data: [], error: null }]);
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    let created: InvitationCodeRow | null = null;
+    await act(async () => {
+      created = await result.current.createSingle({ expiresInDays: 3.5 });
+    });
+    expect(created).toBeNull();
+    await waitFor(() => expect(result.current.error).toContain("有效期必须为 1-30 天的整数"));
+  });
+
+  it("createSingle expiresInDays 小于 1 时被拒绝", async () => {
+    const c = mockClient([{ data: [], error: null }]);
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    let created: InvitationCodeRow | null = null;
+    await act(async () => {
+      created = await result.current.createSingle({ expiresInDays: 0 });
+    });
+    expect(created).toBeNull();
+    await waitFor(() => expect(result.current.error).toContain("有效期必须为 1-30 天的整数"));
+  });
+
+  it("createSingle expiresInDays 大于 30 时被拒绝", async () => {
+    const c = mockClient([{ data: [], error: null }]);
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    let created: InvitationCodeRow | null = null;
+    await act(async () => {
+      created = await result.current.createSingle({ expiresInDays: 31 });
+    });
+    expect(created).toBeNull();
+    await waitFor(() => expect(result.current.error).toContain("有效期必须为 1-30 天的整数"));
+  });
+
+  it("createSingle expiresInDays 为负数时被拒绝", async () => {
+    const c = mockClient([{ data: [], error: null }]);
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    let created: InvitationCodeRow | null = null;
+    await act(async () => {
+      created = await result.current.createSingle({ expiresInDays: -5 });
+    });
+    expect(created).toBeNull();
+    await waitFor(() => expect(result.current.error).toContain("有效期必须为 1-30 天的整数"));
+  });
+
+  it("createSingle expiresInDays 默认为 7 天", async () => {
+    let insertData: Record<string, unknown> | null = null;
+    const newCode = { ...sampleCode, id: "default-exp", code: "DEFAULT01" };
+
+    const c = {
+      from: () => ({
+        select: () => ({
+          order: () => ({
+            then: (resolve: (v: unknown) => void) => resolve({ data: [], error: null }),
+          }),
+        }),
+        insert: (data: Record<string, unknown>) => {
+          insertData = data;
+          return {
+            select: () => ({
+              single: () => ({
+                then: (resolve: (v: unknown) => void) => resolve({ data: newCode, error: null }),
+              }),
+            }),
+          };
+        },
+      }),
+      auth: {
+        getUser: () =>
+          Promise.resolve({ data: { user: { id: "admin-1", email: "admin@test.com" } } }),
+      },
+    };
+
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    await act(async () => {
+      await result.current.createSingle(); // 不传 expiresInDays
+    });
+
+    expect(insertData).not.toBeNull();
+    // 验证 expires_at 存在（精确时间由时区决定，这里只验证字段存在）
+    expect(insertData!.expires_at).toBeDefined();
+    const expiresAt = new Date(insertData!.expires_at as string);
+    // 验证是未来时间（默认 7 天后）
+    expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("createSingle expiresInDays 为有效值时正常创建", async () => {
+    let insertData: Record<string, unknown> | null = null;
+    const newCode = { ...sampleCode, id: "valid-exp", code: "VALIDEXP01" };
+
+    const c = {
+      from: () => ({
+        select: () => ({
+          order: () => ({
+            then: (resolve: (v: unknown) => void) => resolve({ data: [], error: null }),
+          }),
+        }),
+        insert: (data: Record<string, unknown>) => {
+          insertData = data;
+          return {
+            select: () => ({
+              single: () => ({
+                then: (resolve: (v: unknown) => void) => resolve({ data: newCode, error: null }),
+              }),
+            }),
+          };
+        },
+      }),
+      auth: {
+        getUser: () =>
+          Promise.resolve({ data: { user: { id: "admin-1", email: "admin@test.com" } } }),
+      },
+    };
+
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    await act(async () => {
+      await result.current.createSingle({ expiresInDays: 14 }); // 14 天有效期
+    });
+
+    expect(insertData).not.toBeNull();
+    expect(insertData!.expires_at).toBeDefined();
+    const expiresAt = new Date(insertData!.expires_at as string);
+    // 验证是未来时间
+    expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
   });
 
   // ---- createBatch ----

@@ -6,6 +6,7 @@ import {
   formatTime,
   formatDisplayDate,
   formatDateTime,
+  formatDateTimeInChina,
 } from "./date-utils";
 
 describe("date-utils", () => {
@@ -238,6 +239,67 @@ describe("date-utils", () => {
 
     it("应该正确处理个位数月份和日期", () => {
       expect(formatDateTime("2024-03-05T09:05:03")).toBe("03/05 09:05");
+    });
+  });
+
+  describe("formatDateTimeInChina", () => {
+    it("应该对null输入返回—", () => {
+      expect(formatDateTimeInChina(null)).toBe("—");
+    });
+
+    it("应该对空字符串返回—", () => {
+      expect(formatDateTimeInChina("")).toBe("—");
+    });
+
+    it("应该对无效Z后缀字符串返回—", () => {
+      // new Date("not-a-date-Z") 会产生 Invalid Date
+      expect(formatDateTimeInChina("not-a-date-Z")).toBe("—");
+    });
+
+    it("应该对无效本地时间字符串不抛异常", () => {
+      // parseLocalISO 对无效输入返回默认 Date（1970-01-01 本地时间），
+      // 因此不会命中 isNaN 分支，而是正常格式化
+      const result = formatDateTimeInChina("garbage");
+      expect(result).toBeTruthy();
+      expect(result).not.toBe("—");
+    });
+
+    it("应该将UTC时间转换为中国时区（Z后缀路径）", () => {
+      // 2024-07-31T14:30:00Z = UTC 14:30，北京时间 22:30（同一天）
+      const result = formatDateTimeInChina("2024-07-31T14:30:00Z");
+      expect(result).toMatch(/07\/31 22:30|7\/31 22:30/);
+    });
+
+    it("应该正确处理跨日边界（UTC 23:30 → 中国次日 07:30）", () => {
+      // 2024-07-31T23:30:00Z = UTC 23:30，北京时间次日 07:30
+      const result = formatDateTimeInChina("2024-07-31T23:30:00Z");
+      expect(result).toMatch(/08\/01 07:30|8\/1 07:30/);
+    });
+
+    it("应该正确处理本地时间（无时区后缀）", () => {
+      // 本地时间 2024-06-15T14:30:45，直接按本地时间显示
+      const result = formatDateTimeInChina("2024-06-15T14:30:45");
+      expect(result).toMatch(/06\/15 14:30|6\/15 14:30/);
+    });
+
+    it("应该正确处理 +00 后缀的 UTC 时间（Issue #90 回归）", () => {
+      // Supabase 返回的 timestamptz 格式：2026-07-31 08:19:11.1906+00
+      // UTC 08:19 → 北京时间 16:19（同一天）
+      const result = formatDateTimeInChina("2026-07-31 08:19:11.1906+00");
+      expect(result).toMatch(/07\/31 16:19|7\/31 16:19/);
+    });
+
+    it("应该正确处理 +00:00 时区偏移格式", () => {
+      // 另一种 UTC 格式：带完整时区偏移
+      // UTC 14:30 → 北京时间 22:30
+      const result = formatDateTimeInChina("2024-07-31T14:30:00+00:00");
+      expect(result).toMatch(/07\/31 22:30|7\/31 22:30/);
+    });
+
+    it("应该正确处理 +00 后缀的跨日边界（UTC 时间）", () => {
+      // UTC 20:00 → 北京时间次日 04:00
+      const result = formatDateTimeInChina("2024-07-31 20:00:00+00");
+      expect(result).toMatch(/08\/01 04:00|8\/1 04:00/);
     });
   });
 });

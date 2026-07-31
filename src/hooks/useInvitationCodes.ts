@@ -25,6 +25,8 @@ export type CreateSingleOptions = {
   customCode?: string;
   /** 最大使用次数，默认为 1 */
   maxUses?: number;
+  /** 有效期（天数），默认为 7 天，范围 1-30 天 */
+  expiresInDays?: number;
 };
 
 export function useInvitationCodes(client: typeof defaultClient = defaultClient) {
@@ -106,11 +108,28 @@ export function useInvitationCodes(client: typeof defaultClient = defaultClient)
           maxUses = m;
         }
 
+        // ---- 参数校验：expiresInDays ----
+        const expiresInDays = options?.expiresInDays ?? 7; // 默认 7 天
+        if (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 30) {
+          setError("有效期必须为 1-30 天的整数");
+          return null;
+        }
+
         const code = custom || generateRandomCode();
         const userId = await getCurrentUserId();
+
+        // 计算 expires_at（当前时间 + N 天），使用中国时区确保时间一致
+        const now = new Date();
+        // 使用 toLocaleString 获取中国时区的日期，避免服务器时区变化影响
+        const chinaTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Shanghai" }));
+        chinaTime.setDate(chinaTime.getDate() + expiresInDays);
+        chinaTime.setHours(23, 59, 59, 999); // 设置为当天的 23:59:59
+        const expiresAt = chinaTime;
+
         const insertData: Record<string, unknown> = {
           code,
           max_uses: maxUses ?? 1,
+          expires_at: expiresAt.toISOString(),
         };
         if (userId) {
           insertData.created_by = userId;
@@ -135,6 +154,7 @@ export function useInvitationCodes(client: typeof defaultClient = defaultClient)
 
   /**
    * 批量生成邀请码
+   * 使用次数固定为 1，有效期固定为 7 天
    */
   const createBatch = React.useCallback(
     async (count: number) => {
@@ -142,10 +162,20 @@ export function useInvitationCodes(client: typeof defaultClient = defaultClient)
       setError(null);
       try {
         const userId = await getCurrentUserId();
+
+        // 批量生成固定一周有效期，使用中国时区确保时间一致
+        const now = new Date();
+        // 使用 toLocaleString 获取中国时区的日期，避免服务器时区变化影响
+        const chinaTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Shanghai" }));
+        chinaTime.setDate(chinaTime.getDate() + 7);
+        chinaTime.setHours(23, 59, 59, 999); // 设置为当天的 23:59:59
+        const expiresAt = chinaTime;
+
         const codes = Array.from({ length: count }, () => {
           const item: Record<string, unknown> = {
             code: generateRandomCode(),
             max_uses: 1, // 批量生成固定使用次数为 1
+            expires_at: expiresAt.toISOString(), // 固定一周有效期
           };
           if (userId) {
             item.created_by = userId;

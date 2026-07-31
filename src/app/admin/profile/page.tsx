@@ -8,7 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
 import { useInvitationCodes } from "@/hooks/useInvitationCodes";
-import { formatDateTime } from "@/lib/date-utils";
+import { formatDateTimeInChina } from "@/lib/date-utils";
 import type { InvitationCodeRow } from "@/types/database";
 
 export default function ProfilePage() {
@@ -45,6 +45,7 @@ export default function ProfilePage() {
   const [batchCount, setBatchCount] = React.useState<number>(5);
   const [customCode, setCustomCode] = React.useState("");
   const [maxUses, setMaxUses] = React.useState<number>(1);
+  const [expiresInDays, setExpiresInDays] = React.useState<number>(7); // 有效期天数
   const [genResults, setGenResults] = React.useState<InvitationCodeRow[]>([]);
   const [genError, setGenError] = React.useState<string | null>(null);
   const [isGenSubmitting, setIsGenSubmitting] = React.useState(false);
@@ -53,6 +54,8 @@ export default function ProfilePage() {
   const [isManageModalOpen, setIsManageModalOpen] = React.useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = React.useState<string | null>(null);
   const [deleteConfirmCode, setDeleteConfirmCode] = React.useState<string>("");
+  const [copiedAll, setCopiedAll] = React.useState(false);
+  const [copiedCode, setCopiedCode] = React.useState<string | null>(null);
 
   const handleLogout = () => {
     logout();
@@ -82,20 +85,31 @@ export default function ProfilePage() {
     setBatchCount(5);
     setCustomCode("");
     setMaxUses(1);
+    setExpiresInDays(7); // 重置为默认 7 天
     setIsGenModalOpen(true);
   };
 
   const handleGenerate = async () => {
     if (isGenSubmitting) return;
+
+    // 清除之前的错误
+    setGenError(null);
+
+    // 批量生成前校验数量
+    if (genMode === "batch" && (batchCount < 1 || batchCount > 100)) {
+      setGenError("生成数量必须为 1-100");
+      return;
+    }
+
     setIsGenSubmitting(true);
     setGenResults([]);
-    setGenError(null);
 
     try {
       if (genMode === "single") {
         const result = await createSingle({
           customCode: customCode.trim() || undefined,
           maxUses: maxUses >= 1 ? maxUses : 1,
+          expiresInDays: expiresInDays >= 1 && expiresInDays <= 30 ? expiresInDays : 7,
         });
         if (result) {
           setGenResults([result]);
@@ -103,8 +117,7 @@ export default function ProfilePage() {
           setGenError("邀请码生成失败，请重试");
         }
       } else {
-        const count = Math.max(1, Math.min(100, batchCount));
-        const results = await createBatch(count);
+        const results = await createBatch(batchCount);
         if (results.length === 0) {
           setGenError("邀请码生成失败，请重试");
         } else {
@@ -140,8 +153,14 @@ export default function ProfilePage() {
     }
   };
 
-  const handleCopyCode = (code: string) => {
-    void navigator.clipboard.writeText(code);
+  const handleCopyCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopiedCode(code);
+      setTimeout(() => setCopiedCode((prev) => (prev === code ? null : prev)), 2000);
+    } catch {
+      alert("复制失败，请手动复制");
+    }
   };
 
   return (
@@ -290,17 +309,39 @@ export default function ProfilePage() {
                   type="number"
                   min={1}
                   value={maxUses}
-                  onChange={(e) => setMaxUses(parseInt(e.target.value, 10) || 1)}
+                  onChange={(e) => setMaxUses(Math.max(1, parseInt(e.target.value, 10) || 1))}
                   className="input"
                   placeholder="1"
                 />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-text-muted">
+                  有效期（天数）
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={expiresInDays}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10) || 7;
+                    setExpiresInDays(Math.max(1, Math.min(30, val)));
+                  }}
+                  className="input"
+                  placeholder="1-30"
+                />
+                <p className="mt-1 text-xs text-text-muted">有效期 1-30 天，默认 7 天</p>
               </div>
             </>
           )}
 
           {/* 批量生成：提示自动生成 */}
           {genMode === "batch" && (
-            <p className="text-xs text-danger">批量生成将自动生成邀请码，使用次数固定为 1</p>
+            <div className="space-y-2">
+              <p className="text-xs text-danger">
+                批量生成将自动生成邀请码，有效期固定为一周，使用次数固定为 1
+              </p>
+            </div>
           )}
 
           {/* 批量数量输入 */}
@@ -312,7 +353,11 @@ export default function ProfilePage() {
                 min={1}
                 max={100}
                 value={batchCount}
-                onChange={(e) => setBatchCount(parseInt(e.target.value, 10) || 1)}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  // 允许空值和 0（校验在 handleGenerate 中进行）
+                  setBatchCount(Number.isNaN(val) ? 0 : val);
+                }}
                 className="input"
                 placeholder="1-100"
               />
@@ -335,9 +380,30 @@ export default function ProfilePage() {
           {/* 结果列表 */}
           {genResults.length > 0 && (
             <div className="space-y-2">
-              <p className="text-xs font-medium text-text-muted">
-                生成结果（{genResults.length} 个）
-              </p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-text-muted">
+                  生成结果（{genResults.length} 个）
+                </p>
+                {/* 批量生成时显示"复制全部"按钮 */}
+                {genMode === "batch" && genResults.length >= 1 && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const allCodes = genResults.map((item) => item.code).join("\n");
+                        await navigator.clipboard.writeText(allCodes);
+                        setCopiedAll(true);
+                        setTimeout(() => setCopiedAll(false), 2000);
+                      } catch {
+                        alert("复制失败，请手动复制");
+                      }
+                    }}
+                    className="rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium text-text-muted hover:bg-muted"
+                  >
+                    {copiedAll ? "已复制全部" : "复制全部"}
+                  </button>
+                )}
+              </div>
               <div className="max-h-[200px] space-y-2 overflow-y-auto">
                 {genResults.map((item) => (
                   <div
@@ -345,20 +411,31 @@ export default function ProfilePage() {
                     className="flex items-center justify-between rounded-xl border border-border bg-page-bg px-3 py-2"
                   >
                     <div className="min-w-0 flex-1">
-                      <span className="font-mono text-sm text-text">{item.code}</span>
-                      {item.max_uses != null && item.max_uses > 1 && (
-                        <span className="ml-2 text-xs text-text-muted">
-                          最多 {item.max_uses} 次
-                        </span>
+                      <div>
+                        <span className="font-mono text-sm text-text">{item.code}</span>
+                        {item.max_uses != null && item.max_uses > 1 && (
+                          <span className="ml-2 text-xs text-text-muted">
+                            最多 {item.max_uses} 次
+                          </span>
+                        )}
+                      </div>
+                      {/* 显示截止时间 */}
+                      {item.expires_at && (
+                        <p className="mt-0.5 text-xs text-text-muted">
+                          截止：{formatDateTimeInChina(item.expires_at)}
+                        </p>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleCopyCode(item.code)}
-                      className="rounded-full px-2 py-1 text-xs text-text-muted hover:bg-border"
-                    >
-                      复制
-                    </button>
+                    {/* 单个生成时显示逐条复制按钮 */}
+                    {genMode === "single" && (
+                      <button
+                        type="button"
+                        onClick={() => handleCopyCode(item.code)}
+                        className="shrink-0 rounded-full px-2 py-1 text-xs text-text-muted hover:bg-border"
+                      >
+                        {copiedCode === item.code ? "已复制" : "复制"}
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -404,41 +481,88 @@ export default function ProfilePage() {
           ) : invitationCodes.length === 0 ? (
             <p className="py-8 text-center text-xs text-text-muted">暂无邀请码</p>
           ) : (
-            <div className="max-h-[320px] space-y-3 overflow-y-auto">
-              {invitationCodes.map((item) => (
-                <div key={item.id} className="rounded-xl border border-border bg-surface p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <span className="block font-mono text-sm font-medium text-text">
-                        {item.code}
-                      </span>
-                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-text-muted">
-                        <span>
-                          状态：
-                          <span className={item.used ? "text-text-muted" : "text-success"}>
-                            {item.used ? "已用完" : "使用中"}
-                          </span>
-                        </span>
-                        {item.max_uses != null && (
-                          <span>
-                            使用：{item.used_count ?? 0}/{item.max_uses}
-                          </span>
-                        )}
-                        <span>生成：{formatDateTime(item.created_at)}</span>
-                      </div>
-                    </div>
+            <>
+              <div className="mb-2">
+                <span className="text-xs text-text-muted">
+                  共 {invitationCodes.length} 个邀请码
+                </span>
+              </div>
+              {/* 删除确认内联块 */}
+              {deleteConfirmId && (
+                <div className="mb-3 rounded-xl border border-danger/30 bg-danger/5 p-4">
+                  <p className="mb-3 text-sm text-danger">
+                    确认删除邀请码{" "}
+                    <span className="font-mono font-medium text-text">{deleteConfirmCode}</span>
+                    ？删除后无法恢复。
+                  </p>
+                  <div className="flex gap-2">
                     <button
                       type="button"
-                      onClick={() => handleDeleteClick(item.id, item.code)}
-                      disabled={isCodeDeleting(item.id) || !!deleteConfirmId}
-                      className="shrink-0 rounded-full bg-danger-bg px-3 py-1.5 text-xs font-medium text-danger hover:opacity-90 disabled:opacity-60"
+                      disabled={codesDeleting}
+                      onClick={() => setDeleteConfirmId(null)}
+                      className="flex-1 rounded-lg bg-border px-3 py-2 text-sm text-text-muted hover:bg-muted disabled:opacity-60"
                     >
-                      {isCodeDeleting(item.id) ? "删除中…" : "删除"}
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      disabled={codesDeleting}
+                      onClick={handleConfirmDelete}
+                      className="flex-1 rounded-lg bg-danger px-3 py-2 text-sm text-danger-foreground hover:bg-danger/90 disabled:opacity-60"
+                    >
+                      {codesDeleting ? "删除中…" : "确认删除"}
                     </button>
                   </div>
                 </div>
-              ))}
-            </div>
+              )}
+              <div className="max-h-[320px] space-y-3 overflow-y-auto">
+                {invitationCodes.map((item) => (
+                  <div key={item.id} className="rounded-xl border border-border bg-surface p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <span className="block font-mono text-sm font-medium text-text">
+                          {item.code}
+                        </span>
+                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-text-muted">
+                          {(() => {
+                            // 新逻辑：只用 used_count 和 max_uses 判断状态
+                            const isExhausted =
+                              item.max_uses != null && (item.used_count ?? 0) >= item.max_uses;
+                            return (
+                              <span>
+                                状态：
+                                <span className={isExhausted ? "text-text-muted" : "text-success"}>
+                                  {isExhausted ? "已用完" : "可用"}
+                                </span>
+                              </span>
+                            );
+                          })()}
+                          {item.max_uses != null ? (
+                            <span>
+                              使用：{item.used_count ?? 0}/{item.max_uses}
+                            </span>
+                          ) : (
+                            <span>无限次 · 已使用 {item.used_count ?? 0} 次</span>
+                          )}
+                          <span>生成：{formatDateTimeInChina(item.created_at)}</span>
+                          {item.expires_at && (
+                            <span>截止：{formatDateTimeInChina(item.expires_at)}</span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteClick(item.id, item.code)}
+                        disabled={isCodeDeleting(item.id) || !!deleteConfirmId}
+                        className="shrink-0 rounded-full bg-danger-bg px-3 py-1.5 text-xs font-medium text-danger hover:opacity-90 disabled:opacity-60"
+                      >
+                        {isCodeDeleting(item.id) ? "删除中…" : "删除"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
 
           <button
@@ -448,41 +572,6 @@ export default function ProfilePage() {
             className="w-full rounded-xl border border-border bg-surface py-2.5 text-sm font-medium text-text-muted hover:bg-muted disabled:opacity-60"
           >
             关闭
-          </button>
-        </div>
-      </Modal>
-
-      {/* 删除确认弹窗 */}
-      <Modal
-        open={!!deleteConfirmId}
-        onClose={() => {
-          if (!codesDeleting) setDeleteConfirmId(null);
-        }}
-        position="center"
-        closeOnOverlay={!codesDeleting}
-      >
-        <h3 className="text-base font-semibold text-text">确认删除</h3>
-        <p className="mt-2 text-sm text-text-muted">
-          确定要删除邀请码{" "}
-          <span className="font-mono font-medium text-text">{deleteConfirmCode}</span>{" "}
-          吗？删除后无法恢复。
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            disabled={codesDeleting}
-            onClick={() => setDeleteConfirmId(null)}
-            className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted disabled:opacity-60"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            disabled={codesDeleting}
-            onClick={handleConfirmDelete}
-            className="rounded-full bg-danger px-4 py-2 text-xs font-medium text-danger-foreground hover:opacity-90 disabled:opacity-60"
-          >
-            {codesDeleting ? "删除中…" : "确认删除"}
           </button>
         </div>
       </Modal>

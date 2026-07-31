@@ -5,7 +5,7 @@ import { Modal } from "@/components/ui/Modal";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
 import { AnnouncementListModal } from "./components/announcement-list-modal";
-import { formatDateTime } from "@/lib/date-utils";
+import { formatDateTimeInChina } from "@/lib/date-utils";
 
 export default function AdminPage() {
   const {
@@ -180,7 +180,7 @@ export default function AdminPage() {
                   <p className="mt-0.5 text-xs text-text-muted">{r.instrument || "未选声部"}</p>
                   <p className="mt-0.5 text-xs text-text-muted">{r.email || "—"}</p>
                   <p className="mt-0.5 text-caption text-text-subtle">
-                    注册：{formatDateTime(r.created_at)}
+                    注册：{formatDateTimeInChina(r.created_at)}
                   </p>
                 </div>
                 <div className="flex gap-1">
@@ -266,7 +266,7 @@ export default function AdminPage() {
         onClose={() => {
           if (rejectingId === null) setRejectingSingleId(null);
         }}
-        position="center"
+        position="bottom"
         closeOnOverlay={rejectingId === null}
       >
         <h3 className="text-base font-semibold text-text">确认拒绝</h3>
@@ -299,7 +299,7 @@ export default function AdminPage() {
         onClose={() => {
           if (!isBatchSubmitting) setBatchAction(null);
         }}
-        position="center"
+        position="bottom"
         closeOnOverlay={!isBatchSubmitting}
       >
         <h3 className="text-base font-semibold text-text">

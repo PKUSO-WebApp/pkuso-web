@@ -215,7 +215,7 @@ export function AdminScheduleGantt({ schedules, remove, selectedDate, isExpanded
 
   return (
     <>
-      <div className={`relative flex w-full h-full ${!isExpanded ? "min-h-[280px]" : ""}`}>
+      <div className={`relative flex w-full h-full ${!isExpanded ? "min-h-[480px]" : ""}`}>
         <div
           className="flex-shrink-0 w-12 border-r border-border"
           style={{ backgroundColor: "var(--color-gantt-sidebar)" }}

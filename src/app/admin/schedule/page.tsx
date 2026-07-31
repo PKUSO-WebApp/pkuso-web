@@ -403,7 +403,7 @@ export default function AdminSchedulePage() {
 
       <div className="flex-1 min-h-0 mb-4 overflow-y-auto rounded-xl border border-border bg-card">
         {loading ? (
-          <div className="flex h-80 items-center justify-center">
+          <div className="flex h-full items-center justify-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
           </div>
         ) : (
@@ -412,6 +412,7 @@ export default function AdminSchedulePage() {
             user={user}
             remove={remove}
             selectedDate={selectedDate}
+            isExpanded={isGanttExpanded}
           />
         )}
       </div>

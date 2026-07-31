@@ -12,6 +12,7 @@ type Props = {
   user: { id: string } | null | undefined;
   remove: (id: number, date?: string) => Promise<boolean>;
   selectedDate: string;
+  isExpanded?: boolean;
 };
 
 function getScheduleColor(id: number): string {
@@ -41,7 +42,7 @@ function formatTime(timeStr: string | null): string {
   return date.toTimeString().slice(0, 5);
 }
 
-export function AdminScheduleGantt({ schedules, remove, selectedDate }: Props) {
+export function AdminScheduleGantt({ schedules, remove, selectedDate, isExpanded }: Props) {
   const router = useRouter();
   const [selectedSchedule, setSelectedSchedule] = React.useState<ScheduleRow | null>(null);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
@@ -214,7 +215,7 @@ export function AdminScheduleGantt({ schedules, remove, selectedDate }: Props) {
 
   return (
     <>
-      <div className="relative flex w-full" style={{ height: "480px" }}>
+      <div className={`relative flex w-full h-full ${!isExpanded ? "min-h-[280px]" : ""}`}>
         <div
           className="flex-shrink-0 w-12 border-r border-border"
           style={{ backgroundColor: "var(--color-gantt-sidebar)" }}

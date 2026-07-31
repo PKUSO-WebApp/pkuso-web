@@ -17,6 +17,16 @@ function generateRandomCode(length = 8): string {
   return result;
 }
 
+/**
+ * 单个生成邀请码的可选参数
+ */
+export type CreateSingleOptions = {
+  /** 自定义邀请码内容，留空则自动生成 */
+  customCode?: string;
+  /** 最大使用次数，默认为 1 */
+  maxUses?: number;
+};
+
 export function useInvitationCodes(client: typeof defaultClient = defaultClient) {
   const [data, setData] = React.useState<InvitationCodeRow[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -65,31 +75,63 @@ export function useInvitationCodes(client: typeof defaultClient = defaultClient)
   /**
    * 生成单个邀请码
    */
-  const createSingle = React.useCallback(async () => {
-    setCreating(true);
-    setError(null);
-    try {
-      const code = generateRandomCode();
-      const userId = await getCurrentUserId();
-      const insertData: Record<string, unknown> = { code };
-      if (userId) {
-        insertData.created_by = userId;
+  const createSingle = React.useCallback(
+    async (options?: CreateSingleOptions) => {
+      setCreating(true);
+      setError(null);
+      try {
+        // ---- 参数校验：customCode ----
+        const CODE_MAX_LEN = 20;
+        const custom = options?.customCode?.trim();
+        if (custom) {
+          if (custom.length > CODE_MAX_LEN) {
+            setError(`邀请码最多 ${CODE_MAX_LEN} 字符`);
+            return null;
+          }
+          if (!/^[A-Za-z0-9_-]+$/.test(custom)) {
+            setError("仅支持字母、数字、- 和 _");
+            return null;
+          }
+        }
+
+        // ---- 参数校验：maxUses ----
+        const MAX_USES_HARD_CAP = 9999;
+        let maxUses: number | undefined;
+        if (options?.maxUses != null) {
+          const m = Math.floor(options.maxUses);
+          if (!Number.isFinite(m) || m < 1 || m > MAX_USES_HARD_CAP) {
+            setError(`最大使用次数必须为 1-${MAX_USES_HARD_CAP} 的整数`);
+            return null;
+          }
+          maxUses = m;
+        }
+
+        const code = custom || generateRandomCode();
+        const userId = await getCurrentUserId();
+        const insertData: Record<string, unknown> = {
+          code,
+          max_uses: maxUses ?? 1,
+        };
+        if (userId) {
+          insertData.created_by = userId;
+        }
+        const { data: newCode, error: dbError } = await client
+          .from("invitation_codes")
+          .insert(insertData)
+          .select()
+          .single();
+        if (dbError) {
+          setError(dbError.message);
+          return null;
+        }
+        setData((prev) => [newCode as InvitationCodeRow, ...prev]);
+        return newCode as InvitationCodeRow;
+      } finally {
+        setCreating(false);
       }
-      const { data: newCode, error: dbError } = await client
-        .from("invitation_codes")
-        .insert(insertData)
-        .select()
-        .single();
-      if (dbError) {
-        setError(dbError.message);
-        return null;
-      }
-      setData((prev) => [newCode as InvitationCodeRow, ...prev]);
-      return newCode as InvitationCodeRow;
-    } finally {
-      setCreating(false);
-    }
-  }, [client, getCurrentUserId]);
+    },
+    [client, getCurrentUserId],
+  );
 
   /**
    * 批量生成邀请码
@@ -101,7 +143,10 @@ export function useInvitationCodes(client: typeof defaultClient = defaultClient)
       try {
         const userId = await getCurrentUserId();
         const codes = Array.from({ length: count }, () => {
-          const item: Record<string, unknown> = { code: generateRandomCode() };
+          const item: Record<string, unknown> = {
+            code: generateRandomCode(),
+            max_uses: 1, // 批量生成固定使用次数为 1
+          };
           if (userId) {
             item.created_by = userId;
           }

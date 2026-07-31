@@ -43,6 +43,8 @@ export default function ProfilePage() {
   const [isGenModalOpen, setIsGenModalOpen] = React.useState(false);
   const [genMode, setGenMode] = React.useState<"single" | "batch">("single");
   const [batchCount, setBatchCount] = React.useState<number>(5);
+  const [customCode, setCustomCode] = React.useState("");
+  const [maxUses, setMaxUses] = React.useState<number>(1);
   const [genResults, setGenResults] = React.useState<InvitationCodeRow[]>([]);
   const [genError, setGenError] = React.useState<string | null>(null);
   const [isGenSubmitting, setIsGenSubmitting] = React.useState(false);
@@ -78,6 +80,8 @@ export default function ProfilePage() {
     setGenError(null);
     setGenMode("single");
     setBatchCount(5);
+    setCustomCode("");
+    setMaxUses(1);
     setIsGenModalOpen(true);
   };
 
@@ -89,7 +93,10 @@ export default function ProfilePage() {
 
     try {
       if (genMode === "single") {
-        const result = await createSingle();
+        const result = await createSingle({
+          customCode: customCode.trim() || undefined,
+          maxUses: maxUses >= 1 ? maxUses : 1,
+        });
         if (result) {
           setGenResults([result]);
         } else {
@@ -260,6 +267,44 @@ export default function ProfilePage() {
             />
           </div>
 
+          {/* 单个生成：自定义邀请码和使用次数 */}
+          {genMode === "single" && (
+            <>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-text-muted">
+                  自定义邀请码（留空自动生成）
+                </label>
+                <input
+                  type="text"
+                  value={customCode}
+                  onChange={(e) => setCustomCode(e.target.value)}
+                  className="input"
+                  placeholder="如：MY-INVITE-001"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-text-muted">
+                  最大使用次数
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  value={maxUses}
+                  onChange={(e) => setMaxUses(parseInt(e.target.value, 10) || 1)}
+                  className="input"
+                  placeholder="1"
+                />
+              </div>
+            </>
+          )}
+
+          {/* 批量生成：提示自动生成 */}
+          {genMode === "batch" && (
+            <div className="rounded-xl border border-border bg-page-bg px-3 py-2">
+              <p className="text-xs text-text-muted">批量生成将自动生成邀请码，使用次数固定为 1</p>
+            </div>
+          )}
+
           {/* 批量数量输入 */}
           {genMode === "batch" && (
             <div>
@@ -301,7 +346,14 @@ export default function ProfilePage() {
                     key={item.id}
                     className="flex items-center justify-between rounded-xl border border-border bg-page-bg px-3 py-2"
                   >
-                    <span className="font-mono text-sm text-text">{item.code}</span>
+                    <div className="min-w-0 flex-1">
+                      <span className="font-mono text-sm text-text">{item.code}</span>
+                      {item.max_uses != null && item.max_uses > 1 && (
+                        <span className="ml-2 text-xs text-text-muted">
+                          最多 {item.max_uses} 次
+                        </span>
+                      )}
+                    </div>
                     <button
                       type="button"
                       onClick={() => handleCopyCode(item.code)}
@@ -366,9 +418,14 @@ export default function ProfilePage() {
                         <span>
                           状态：
                           <span className={item.used ? "text-text-muted" : "text-success"}>
-                            {item.used ? "已使用" : "未使用"}
+                            {item.used ? "已用完" : "使用中"}
                           </span>
                         </span>
+                        {item.max_uses != null && (
+                          <span>
+                            使用：{item.used_count ?? 0}/{item.max_uses}
+                          </span>
+                        )}
                         <span>生成：{formatDateTime(item.created_at)}</span>
                       </div>
                     </div>

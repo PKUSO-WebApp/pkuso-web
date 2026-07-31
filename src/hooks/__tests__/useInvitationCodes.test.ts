@@ -283,6 +283,159 @@ describe("useInvitationCodes", () => {
     });
   });
 
+  it("createSingle 支持自定义邀请码内容", async () => {
+    let insertData: Record<string, unknown> | null = null;
+    const customCode = { ...sampleCode, id: "custom-code", code: "MY-INVITE-001" };
+
+    const c = {
+      from: () => ({
+        select: () => ({
+          order: () => ({
+            then: (resolve: (v: unknown) => void) => resolve({ data: [], error: null }),
+          }),
+        }),
+        insert: (data: Record<string, unknown>) => {
+          insertData = data;
+          return {
+            select: () => ({
+              single: () => ({
+                then: (resolve: (v: unknown) => void) => resolve({ data: customCode, error: null }),
+              }),
+            }),
+          };
+        },
+      }),
+      auth: {
+        getUser: () =>
+          Promise.resolve({ data: { user: { id: "admin-1", email: "admin@test.com" } } }),
+      },
+    };
+
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    let created: InvitationCodeRow | null = null;
+    await act(async () => {
+      created = await result.current.createSingle({ customCode: "MY-INVITE-001" });
+    });
+
+    expect(created).not.toBeNull();
+    expect(created!.code).toBe("MY-INVITE-001");
+    expect(insertData!.code).toBe("MY-INVITE-001");
+    expect(insertData!.max_uses).toBe(1); // 默认使用次数
+  });
+
+  it("createSingle 支持自定义使用次数", async () => {
+    let insertData: Record<string, unknown> | null = null;
+    const newCode = { ...sampleCode, id: "multi-use", code: "ABCDEFGH", max_uses: 5 };
+
+    const c = {
+      from: () => ({
+        select: () => ({
+          order: () => ({
+            then: (resolve: (v: unknown) => void) => resolve({ data: [], error: null }),
+          }),
+        }),
+        insert: (data: Record<string, unknown>) => {
+          insertData = data;
+          return {
+            select: () => ({
+              single: () => ({
+                then: (resolve: (v: unknown) => void) => resolve({ data: newCode, error: null }),
+              }),
+            }),
+          };
+        },
+      }),
+      auth: {
+        getUser: () =>
+          Promise.resolve({ data: { user: { id: "admin-1", email: "admin@test.com" } } }),
+      },
+    };
+
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    let created: InvitationCodeRow | null = null;
+    await act(async () => {
+      created = await result.current.createSingle({ maxUses: 5 });
+    });
+
+    expect(created).not.toBeNull();
+    expect(insertData!.max_uses).toBe(5);
+  });
+
+  it("createSingle maxUses 为 0 或负数时被拒绝", async () => {
+    const c = mockClient([{ data: [], error: null }]);
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    // maxUses = 0 应被拒绝
+    let created: InvitationCodeRow | null = null;
+    await act(async () => {
+      created = await result.current.createSingle({ maxUses: 0 });
+    });
+    expect(created).toBeNull();
+    await waitFor(() => expect(result.current.error).toContain("最大使用次数"));
+  });
+
+  it("createSingle maxUses 超过上限 9999 时被拒绝", async () => {
+    const c = mockClient([{ data: [], error: null }]);
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    let created: InvitationCodeRow | null = null;
+    await act(async () => {
+      created = await result.current.createSingle({ maxUses: 999999 });
+    });
+    expect(created).toBeNull();
+    await waitFor(() => expect(result.current.error).toContain("最大使用次数"));
+  });
+
+  it("createSingle customCode 超过 20 字符时被拒绝", async () => {
+    const c = mockClient([{ data: [], error: null }]);
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    let created: InvitationCodeRow | null = null;
+    await act(async () => {
+      created = await result.current.createSingle({ customCode: "THIS-CODE-IS-WAY-TOO-LONG" });
+    });
+    expect(created).toBeNull();
+    await waitFor(() => expect(result.current.error).toContain("最多"));
+  });
+
+  it("createSingle customCode 含非法字符时被拒绝", async () => {
+    const c = mockClient([{ data: [], error: null }]);
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    let created: InvitationCodeRow | null = null;
+    await act(async () => {
+      created = await result.current.createSingle({ customCode: "MY CODE" });
+    });
+    expect(created).toBeNull();
+    await waitFor(() => expect(result.current.error).toContain("仅支持"));
+  });
+
   // ---- createBatch ----
   it("createBatch 成功批量创建并插入到列表头部", async () => {
     const batchCodes = [

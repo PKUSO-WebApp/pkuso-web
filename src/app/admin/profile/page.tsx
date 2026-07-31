@@ -300,9 +300,7 @@ export default function ProfilePage() {
 
           {/* 批量生成：提示自动生成 */}
           {genMode === "batch" && (
-            <div className="rounded-xl border border-border bg-page-bg px-3 py-2">
-              <p className="text-xs text-text-muted">批量生成将自动生成邀请码，使用次数固定为 1</p>
-            </div>
+            <p className="text-xs text-danger">批量生成将自动生成邀请码，使用次数固定为 1</p>
           )}
 
           {/* 批量数量输入 */}

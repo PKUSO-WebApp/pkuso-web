@@ -84,23 +84,23 @@ describe("AdminScheduleGantt 组件", () => {
   };
 
   // ==========================================
-  // 验收标准 1: 高度自适应（h-full + min-h-[280px]）
+  // 验收标准 1: 高度自适应（h-full + min-h-[480px]）
   // ==========================================
   describe("高度自适应（对应验收标准 1/4）", () => {
-    it("默认（未展开）状态下根容器应同时包含 h-full 与 min-h-[280px]", () => {
+    it("默认（未展开）状态下根容器应同时包含 h-full 与 min-h-[480px]", () => {
       const { container } = render(<AdminScheduleGantt {...defaultProps} />);
-      // 根容器：relative flex w-full h-full，且未展开时附加 min-h-[280px]
+      // 根容器：relative flex w-full h-full，且未展开时附加 min-h-[480px]
       const rootDiv = container.firstElementChild as HTMLElement;
       expect(rootDiv).not.toBeNull();
       expect(rootDiv.className).toContain("h-full");
-      expect(rootDiv.className).toContain("min-h-[280px]");
+      expect(rootDiv.className).toContain("min-h-[480px]");
     });
 
-    it("展开（isExpanded=true）时不应出现 min-h-[280px]，仅保留 h-full", () => {
+    it("展开（isExpanded=true）时不应出现 min-h-[480px]，仅保留 h-full", () => {
       const { container } = render(<AdminScheduleGantt {...defaultProps} isExpanded={true} />);
       const rootDiv = container.firstElementChild as HTMLElement;
       expect(rootDiv.className).toContain("h-full");
-      expect(rootDiv.className).not.toContain("min-h-[280px]");
+      expect(rootDiv.className).not.toContain("min-h-[480px]");
     });
 
     it("展开后应可填满父容器，无固定像素高度（480px 已移除）", () => {

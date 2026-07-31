@@ -26,7 +26,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   if (!user || user.role !== "admin") {
     return (
       <div className="flex min-h-[70vh] items-center justify-center text-sm text-text-muted">
-        仅限管理员访问…
+        正在加载…
       </div>
     );
   }

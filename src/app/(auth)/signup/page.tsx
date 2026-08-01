@@ -119,13 +119,16 @@ export default function SignupPage() {
       }
 
       // 第四步：注册成功后，原子消耗邀请码并绑定使用者
-      // （需要 authenticated 用户身份，失败时提示用户联系管理员）
+      // （函数接收新注册用户 ID（来自 signUp 响应），校验该用户存在且为近期创建（10 分钟内），
+      // 不再依赖 auth.uid()；权限为 anon 可调用，适配注册流程新用户无 session 的场景。
+      // 失败时提示用户联系管理员）
       let invitationConsumeFailed = false;
       try {
         const { data: consumeData, error: consumeError } = await supabase.rpc(
           "verify_and_use_invitation_code",
           {
             p_code: normalizedCode,
+            p_user_id: signUpData.user.id,
           },
         );
         if (consumeError) {

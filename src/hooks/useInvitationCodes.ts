@@ -29,6 +29,21 @@ export type CreateSingleOptions = {
   expiresInDays?: number;
 };
 
+/**
+ * createSingle 的返回值
+ * - data：新建的邀请码行；失败时为 null
+ * - error：失败原因（与 hook 的 error 状态一致）；成功时为 null
+ *
+ * 之所以同时返回 error 而非仅依赖 hook 的 error 状态：
+ * React 18 automatic batching 下，连续两次相同 23505 冲突会让 setError(null)→setError(msg)
+ * 被 batch 成最终与上一次相同的值，Object.is 判等触发 React bailout，useEffect 不会重新执行，
+ * 调用方拿不到最新错误。改为把 error 直接随返回值带出，调用方可在 handleGenerate 同步设置 UI 文案。
+ */
+export type CreateSingleResult = {
+  data: InvitationCodeRow | null;
+  error: string | null;
+};
+
 export function useInvitationCodes(client: typeof defaultClient = defaultClient) {
   const [data, setData] = React.useState<InvitationCodeRow[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -78,7 +93,7 @@ export function useInvitationCodes(client: typeof defaultClient = defaultClient)
    * 生成单个邀请码
    */
   const createSingle = React.useCallback(
-    async (options?: CreateSingleOptions) => {
+    async (options?: CreateSingleOptions): Promise<CreateSingleResult> => {
       setCreating(true);
       setError(null);
       try {
@@ -87,12 +102,14 @@ export function useInvitationCodes(client: typeof defaultClient = defaultClient)
         const custom = options?.customCode?.trim();
         if (custom) {
           if (custom.length > CODE_MAX_LEN) {
-            setError(`邀请码最多 ${CODE_MAX_LEN} 字符`);
-            return null;
+            const msg = `邀请码最多 ${CODE_MAX_LEN} 字符`;
+            setError(msg);
+            return { data: null, error: msg };
           }
           if (!/^[A-Za-z0-9_-]+$/.test(custom)) {
-            setError("仅支持字母、数字、- 和 _");
-            return null;
+            const msg = "仅支持字母、数字、- 和 _";
+            setError(msg);
+            return { data: null, error: msg };
           }
         }
 
@@ -102,8 +119,9 @@ export function useInvitationCodes(client: typeof defaultClient = defaultClient)
         if (options?.maxUses != null) {
           const m = Math.floor(options.maxUses);
           if (!Number.isFinite(m) || m < 1 || m > MAX_USES_HARD_CAP) {
-            setError(`最大使用次数必须为 1-${MAX_USES_HARD_CAP} 的整数`);
-            return null;
+            const msg = `最大使用次数必须为 1-${MAX_USES_HARD_CAP} 的整数`;
+            setError(msg);
+            return { data: null, error: msg };
           }
           maxUses = m;
         }
@@ -111,8 +129,9 @@ export function useInvitationCodes(client: typeof defaultClient = defaultClient)
         // ---- 参数校验：expiresInDays ----
         const expiresInDays = options?.expiresInDays ?? 7; // 默认 7 天
         if (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 30) {
-          setError("有效期必须为 1-30 天的整数");
-          return null;
+          const msg = "有效期必须为 1-30 天的整数";
+          setError(msg);
+          return { data: null, error: msg };
         }
 
         const code = custom || generateRandomCode();
@@ -140,11 +159,19 @@ export function useInvitationCodes(client: typeof defaultClient = defaultClient)
           .select()
           .single();
         if (dbError) {
-          setError(dbError.message);
-          return null;
+          // 23505 = unique_violation：自定义邀请码已存在，给出明确提示
+          // dbError 可能为 undefined/null，访问 code 前做空值防护
+          if (dbError?.code === "23505") {
+            const msg = "邀请码已存在，请更换";
+            setError(msg);
+            return { data: null, error: msg };
+          }
+          const msg = dbError?.message ?? "邀请码生成失败";
+          setError(msg);
+          return { data: null, error: msg };
         }
         setData((prev) => [newCode as InvitationCodeRow, ...prev]);
-        return newCode as InvitationCodeRow;
+        return { data: newCode as InvitationCodeRow, error: null };
       } finally {
         setCreating(false);
       }

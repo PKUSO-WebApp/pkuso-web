@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
-import { useInvitationCodes } from "../useInvitationCodes";
+import { useInvitationCodes, type CreateSingleResult } from "../useInvitationCodes";
 import type { InvitationCodeRow } from "@/types/database";
 
 /**
@@ -167,13 +167,14 @@ describe("useInvitationCodes", () => {
     });
     expect(result.current.data).toHaveLength(1);
 
-    let created: InvitationCodeRow | null = null;
+    let created: CreateSingleResult | null = null;
     await act(async () => {
       created = await result.current.createSingle();
     });
 
     expect(created).not.toBeNull();
-    expect(created!.code).toHaveLength(8);
+    expect(created!.data).not.toBeNull();
+    expect(created!.data!.code).toHaveLength(8);
     expect(result.current.data).toHaveLength(2);
     expect(result.current.data[0].id).toBe("new-code");
     expect(result.current.creating).toBe(false);
@@ -190,15 +191,104 @@ describe("useInvitationCodes", () => {
       await result.current.fetch();
     });
 
-    let created: InvitationCodeRow | null = sampleCode;
+    let created: CreateSingleResult | null = { data: sampleCode, error: null };
     await act(async () => {
       created = await result.current.createSingle();
     });
 
-    expect(created).toBeNull();
+    expect(created).not.toBeNull();
+    expect(created!.data).toBeNull();
+    expect(created!.error).toBe("创建失败");
     expect(result.current.error).toBe("创建失败");
     expect(result.current.data).toHaveLength(1); // 不改变列表
     expect(result.current.creating).toBe(false);
+  });
+
+  // ---- Issue #94 回归：23505 unique_violation 显式文案 ----
+  it("createSingle 遇到 23505 unique_violation 时返回'邀请码已存在，请更换'", async () => {
+    // 模拟 PostgreSQL 23505 duplicate key 错误（customCode 与已有邀请码冲突）
+    // 现有失败用例的 error 都没有 code 字段，走 dbError?.message 分支；
+    // 此用例专门覆盖 dbError?.code === "23505" 分支
+    const c = mockClient([
+      { data: [sampleCode], error: null }, // fetch
+      {
+        data: null,
+        error: {
+          code: "23505",
+          message: "duplicate key value violates unique constraint",
+        },
+      }, // insert.single
+    ]);
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    let created: CreateSingleResult | null = null;
+    await act(async () => {
+      created = await result.current.createSingle({ customCode: "DUPCODE01" });
+    });
+
+    expect(created).not.toBeNull();
+    expect(created!.data).toBeNull();
+    // 关键断言：23505 命中专门文案，而非 dbError.message 或兜底
+    expect(created!.error).toBe("邀请码已存在，请更换");
+    expect(result.current.error).toBe("邀请码已存在，请更换");
+    expect(result.current.data).toHaveLength(1); // 列表不变
+    expect(result.current.creating).toBe(false);
+  });
+
+  // ---- Issue #94 回归：dbError 空值防护 ----
+  it("createSingle dbError 对象无 message 字段时走兜底文案'邀请码生成失败'", async () => {
+    // 覆盖 dbError?.message 为 undefined 的兜底场景：
+    // 某些驱动/边缘情况下返回的极简 error 对象可能只有 code 没有 message，
+    // 此时代码 dbError?.message ?? "邀请码生成失败" 应触发 ?? 兜底
+    const c = mockClient([
+      { data: [sampleCode], error: null }, // fetch
+      { data: null, error: { code: "PGRST999" } }, // insert.single，无 message
+    ]);
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    let created: CreateSingleResult | null = null;
+    await act(async () => {
+      created = await result.current.createSingle();
+    });
+
+    expect(created).not.toBeNull();
+    expect(created!.data).toBeNull();
+    // dbError?.message 为 undefined → ?? 兜底为"邀请码生成失败"
+    expect(created!.error).toBe("邀请码生成失败");
+    expect(result.current.error).toBe("邀请码生成失败");
+  });
+
+  it("createSingle dbError.message 为 null 时走兜底文案'邀请码生成失败'", async () => {
+    // 覆盖 dbError.message 显式为 null 的兜底场景：
+    // ?? 运算符拦截 null，触发兜底
+    const c = mockClient([
+      { data: [sampleCode], error: null }, // fetch
+      { data: null, error: { code: "PGRST999", message: null } }, // insert.single
+    ]);
+    const { result } = renderHook(() => useInvitationCodes(c as never));
+
+    await act(async () => {
+      await result.current.fetch();
+    });
+
+    let created: CreateSingleResult | null = null;
+    await act(async () => {
+      created = await result.current.createSingle();
+    });
+
+    expect(created).not.toBeNull();
+    expect(created!.data).toBeNull();
+    // dbError?.message 为 null → ?? 兜底为"邀请码生成失败"
+    expect(created!.error).toBe("邀请码生成失败");
+    expect(result.current.error).toBe("邀请码生成失败");
   });
 
   it("createSingle 执行期间 creating 为 true（UI 层依赖此状态禁用按钮防重复）", async () => {
@@ -277,8 +367,8 @@ describe("useInvitationCodes", () => {
     // 检查 mock 返回的邀请码格式
     await act(async () => {
       const created = await result.current.createSingle();
-      expect(created).not.toBeNull();
-      expect(created!.code).toMatch(/^[A-HJ-NP-Z2-9]{8}$/);
+      expect(created.data).not.toBeNull();
+      expect(created!.data!.code).toMatch(/^[A-HJ-NP-Z2-9]{8}$/);
     });
   });
 
@@ -316,13 +406,14 @@ describe("useInvitationCodes", () => {
       await result.current.fetch();
     });
 
-    let created: InvitationCodeRow | null = null;
+    let created: CreateSingleResult | null = null;
     await act(async () => {
       created = await result.current.createSingle({ customCode: "MY-INVITE-001" });
     });
 
     expect(created).not.toBeNull();
-    expect(created!.code).toBe("MY-INVITE-001");
+    expect(created!.data).not.toBeNull();
+    expect(created!.data!.code).toBe("MY-INVITE-001");
     expect(insertData!.code).toBe("MY-INVITE-001");
     expect(insertData!.max_uses).toBe(1); // 默认使用次数
   });
@@ -361,12 +452,13 @@ describe("useInvitationCodes", () => {
       await result.current.fetch();
     });
 
-    let created: InvitationCodeRow | null = null;
+    let created: CreateSingleResult | null = null;
     await act(async () => {
       created = await result.current.createSingle({ maxUses: 5 });
     });
 
     expect(created).not.toBeNull();
+    expect(created!.data).not.toBeNull();
     expect(insertData!.max_uses).toBe(5);
   });
 
@@ -379,11 +471,13 @@ describe("useInvitationCodes", () => {
     });
 
     // maxUses = 0 应被拒绝
-    let created: InvitationCodeRow | null = null;
+    let created: CreateSingleResult | null = null;
     await act(async () => {
       created = await result.current.createSingle({ maxUses: 0 });
     });
-    expect(created).toBeNull();
+    expect(created).not.toBeNull();
+    expect(created!.data).toBeNull();
+    expect(created!.error).toContain("最大使用次数");
     await waitFor(() => expect(result.current.error).toContain("最大使用次数"));
   });
 
@@ -395,11 +489,13 @@ describe("useInvitationCodes", () => {
       await result.current.fetch();
     });
 
-    let created: InvitationCodeRow | null = null;
+    let created: CreateSingleResult | null = null;
     await act(async () => {
       created = await result.current.createSingle({ maxUses: 999999 });
     });
-    expect(created).toBeNull();
+    expect(created).not.toBeNull();
+    expect(created!.data).toBeNull();
+    expect(created!.error).toContain("最大使用次数");
     await waitFor(() => expect(result.current.error).toContain("最大使用次数"));
   });
 
@@ -411,11 +507,13 @@ describe("useInvitationCodes", () => {
       await result.current.fetch();
     });
 
-    let created: InvitationCodeRow | null = null;
+    let created: CreateSingleResult | null = null;
     await act(async () => {
       created = await result.current.createSingle({ customCode: "THIS-CODE-IS-WAY-TOO-LONG" });
     });
-    expect(created).toBeNull();
+    expect(created).not.toBeNull();
+    expect(created!.data).toBeNull();
+    expect(created!.error).toContain("最多");
     await waitFor(() => expect(result.current.error).toContain("最多"));
   });
 
@@ -427,11 +525,13 @@ describe("useInvitationCodes", () => {
       await result.current.fetch();
     });
 
-    let created: InvitationCodeRow | null = null;
+    let created: CreateSingleResult | null = null;
     await act(async () => {
       created = await result.current.createSingle({ customCode: "MY CODE" });
     });
-    expect(created).toBeNull();
+    expect(created).not.toBeNull();
+    expect(created!.data).toBeNull();
+    expect(created!.error).toContain("仅支持");
     await waitFor(() => expect(result.current.error).toContain("仅支持"));
   });
 
@@ -444,11 +544,13 @@ describe("useInvitationCodes", () => {
       await result.current.fetch();
     });
 
-    let created: InvitationCodeRow | null = null;
+    let created: CreateSingleResult | null = null;
     await act(async () => {
       created = await result.current.createSingle({ expiresInDays: 3.5 });
     });
-    expect(created).toBeNull();
+    expect(created).not.toBeNull();
+    expect(created!.data).toBeNull();
+    expect(created!.error).toContain("有效期必须为 1-30 天的整数");
     await waitFor(() => expect(result.current.error).toContain("有效期必须为 1-30 天的整数"));
   });
 
@@ -460,11 +562,13 @@ describe("useInvitationCodes", () => {
       await result.current.fetch();
     });
 
-    let created: InvitationCodeRow | null = null;
+    let created: CreateSingleResult | null = null;
     await act(async () => {
       created = await result.current.createSingle({ expiresInDays: 0 });
     });
-    expect(created).toBeNull();
+    expect(created).not.toBeNull();
+    expect(created!.data).toBeNull();
+    expect(created!.error).toContain("有效期必须为 1-30 天的整数");
     await waitFor(() => expect(result.current.error).toContain("有效期必须为 1-30 天的整数"));
   });
 
@@ -476,11 +580,13 @@ describe("useInvitationCodes", () => {
       await result.current.fetch();
     });
 
-    let created: InvitationCodeRow | null = null;
+    let created: CreateSingleResult | null = null;
     await act(async () => {
       created = await result.current.createSingle({ expiresInDays: 31 });
     });
-    expect(created).toBeNull();
+    expect(created).not.toBeNull();
+    expect(created!.data).toBeNull();
+    expect(created!.error).toContain("有效期必须为 1-30 天的整数");
     await waitFor(() => expect(result.current.error).toContain("有效期必须为 1-30 天的整数"));
   });
 
@@ -492,11 +598,13 @@ describe("useInvitationCodes", () => {
       await result.current.fetch();
     });
 
-    let created: InvitationCodeRow | null = null;
+    let created: CreateSingleResult | null = null;
     await act(async () => {
       created = await result.current.createSingle({ expiresInDays: -5 });
     });
-    expect(created).toBeNull();
+    expect(created).not.toBeNull();
+    expect(created!.data).toBeNull();
+    expect(created!.error).toContain("有效期必须为 1-30 天的整数");
     await waitFor(() => expect(result.current.error).toContain("有效期必须为 1-30 天的整数"));
   });
 

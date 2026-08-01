@@ -343,9 +343,90 @@ describe("邀请码管理", () => {
     fireEvent.click(screen.getByRole("button", { name: /^生成$/ }));
 
     await waitFor(() => {
-      const errEl = screen.getByText("邀请码生成失败，请重试");
+      // createSingle 失败时直接返回 dbError.message，handleGenerate 据此设置 genError，
+      // 因此 Modal 内显示的是具体的 DB 错误信息（"DB error"）而非通用兜底文案
+      const errEl = screen.getByText("DB error");
       expect(errEl.closest("p")).toHaveClass("text-danger");
     });
+  });
+
+  // ---- Issue #94 回归：23505 unique_violation 显式文案 ----
+  it("createSingle 返回 23505 错误时，Modal 内显示'邀请码已存在，请更换'", async () => {
+    // 模拟 PostgreSQL 23505 duplicate key 错误（customCode 与已有邀请码冲突）
+    // hook 的 createSingle 检测到 dbError.code === "23505" 后返回专门文案，
+    // handleGenerate 直接消费 result.error 设置 genError，UI 显示专门文案
+    const singleMock = vi.fn().mockResolvedValue({
+      data: null,
+      error: {
+        code: "23505",
+        message: "duplicate key value violates unique constraint",
+      },
+    });
+    setupSupabaseMock({
+      fetchData: [],
+      insertData: { select: vi.fn().mockReturnThis(), single: singleMock },
+    });
+
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /生成邀请码/ }));
+
+    await waitFor(() => screen.getByRole("button", { name: /^生成$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^生成$/ }));
+
+    await waitFor(() => {
+      // 关键断言：UI 显示专门文案，而非 dbError.message 或通用兜底
+      const errEl = screen.getByText("邀请码已存在，请更换");
+      expect(errEl.closest("p")).toHaveClass("text-danger");
+    });
+  });
+
+  it("连续两次 23505 错误，UI 两次都显示'邀请码已存在，请更换'（不退化为通用文案）", async () => {
+    // 这是首轮 adversary 击破的核心场景：
+    // React 18 automatic batching 下，连续两次相同 23505 冲突会让 setError(null)→setError(msg)
+    // 被 batch 成最终与上一次相同的值，Object.is 判等触发 React bailout，useEffect 不会重新执行，
+    // 调用方拿不到最新错误，UI 第二次显示通用兜底文案而非 23505 专门文案。
+    // 修复后 createSingle 直接返回 { data, error }，handleGenerate 同步设置 genError，
+    // 不再依赖 useEffect 同步 hook 的 error 状态，故第二次仍显示专门文案。
+    const singleMock = vi.fn().mockResolvedValue({
+      data: null,
+      error: {
+        code: "23505",
+        message: "duplicate key value violates unique constraint",
+      },
+    });
+    setupSupabaseMock({
+      fetchData: [],
+      insertData: { select: vi.fn().mockReturnThis(), single: singleMock },
+    });
+
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /生成邀请码/ }));
+
+    // 第一次生成
+    await waitFor(() => screen.getByRole("button", { name: /^生成$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^生成$/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("邀请码已存在，请更换")).toBeInTheDocument();
+    });
+
+    // 等待按钮重新可点击（isGenSubmitting 在 finally 中重置）
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^生成$/ })).not.toBeDisabled();
+    });
+
+    // 第二次生成（关键：不再变通用文案，仍是"邀请码已存在，请更换"）
+    fireEvent.click(screen.getByRole("button", { name: /^生成$/ }));
+
+    await waitFor(() => {
+      // 关键断言：第二次仍显示专门文案，而非"邀请码生成失败，请重试"
+      expect(screen.getByText("邀请码已存在，请更换")).toBeInTheDocument();
+      // 不应出现通用兜底文案（adversary 击破时的退化现象）
+      expect(screen.queryByText("邀请码生成失败，请重试")).not.toBeInTheDocument();
+    });
+
+    // 两次 createSingle 调用都触发了 single mock
+    expect(singleMock).toHaveBeenCalledTimes(2);
   });
 
   it("批量生成结果列表显示所有 code 并带复制按钮", async () => {

@@ -106,13 +106,17 @@ export default function ProfilePage() {
 
     try {
       if (genMode === "single") {
+        // createSingle 直接返回 { data, error }，避免依赖 useEffect 同步 hook 的 error 状态
+        // （连续相同 23505 冲突时 React batching 会让 useEffect 不触发，导致通用兜底文案覆盖具体错误）
         const result = await createSingle({
           customCode: customCode.trim() || undefined,
           maxUses: maxUses >= 1 ? maxUses : 1,
           expiresInDays: expiresInDays >= 1 && expiresInDays <= 30 ? expiresInDays : 7,
         });
-        if (result) {
-          setGenResults([result]);
+        if (result.data) {
+          setGenResults([result.data]);
+        } else if (result.error) {
+          setGenError(result.error);
         } else {
           setGenError("邀请码生成失败，请重试");
         }

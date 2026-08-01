@@ -477,9 +477,10 @@ describe("SignupPage", () => {
       });
 
       // 第二阶段：注册成功后调用 verify_and_use_invitation_code 原子消耗+绑定
-      // 只传 p_code，RPC 内部用 auth.uid() 取当前用户，避免客户端伪造
+      // 传入 p_code 和 p_user_id（来自 signUp 响应），RPC 内部校验用户存在且为近期创建
       expect(mockRpc).toHaveBeenCalledWith("verify_and_use_invitation_code", {
         p_code: "TESTCODE",
+        p_user_id: "test-user-id",
       });
 
       // 不再通过 supabase.from 直接更新 used_by

@@ -51,13 +51,16 @@ src/app/
 │   │   └── components/  # rehearsal-card, code-verify-modal, utils
 │   ├── community/    # 社区帖子
 │   └── profile/      # 个人信息+密码修改
-├── admin/            # 普通目录, URL: /admin, /admin/rehearsals, /admin/members, /admin/profile
-│   ├── layout.tsx    # admin tab bar（控制台/排练/成员/我的）+ 角色鉴权
+├── admin/            # 普通目录, URL: /admin, /admin/rehearsals, /admin/schedule, /admin/members, /admin/profile
+│   ├── layout.tsx    # admin tab bar（控制台/排练/日程/成员/我的）+ 角色鉴权 + 守护页超时刷新
 │   ├── page.tsx      # 仪表盘（审批+公告）
+│   ├── components/   # admin 共享组件（announcement-list-modal 等）
 │   ├── rehearsals/   # 排练管理（CRUD+考勤查看）
-│   │   └── components/  # admin-rehearsal-card
+│   │   └── components/  # rehearsal-card
+│   ├── schedule/     # 日程管理（甘特图+预约 CRUD）
+│   │   └── components/  # admin-schedule-gantt, create-schedule-modal, date-selector
 │   ├── members/      # 花名册+考勤统计
-│   └── profile/      # 个人设置
+│   └── profile/      # 个人设置（含邀请码管理）
 └── api/              # API routes（notify）
 ```
 
@@ -69,7 +72,7 @@ src/app/
 | -------- | ------------------------------------------- | ------------------------------------ |
 | 路由前缀 | `/`                                         | `/admin`                             |
 | 布局     | `(member)/layout.tsx`                       | `admin/layout.tsx`                   |
-| Tab bar  | 首页 · 日程 · 社区 · 我的                   | 控制台 · 排练 · 成员 · 我的          |
+| Tab bar  | 首页 · 日程 · 社区 · 我的                   | 控制台 · 排练 · 日程 · 成员 · 我的   |
 | 角色守卫 | 无（AuthGate 统一鉴权）                     | `layout.tsx` 检查 `role === "admin"` |
 | 开发入口 | 新功能加在 `(member)/` 下                   | 新功能加在 `admin/` 下               |
 | 组件     | 各端组件放在各自目录的 `components/` 子目录 | 同                                   |
@@ -122,6 +125,7 @@ src/app/
   - 仓库内文件统一保存为 **UTF-8 无 BOM**。不要让编辑器自动加 BOM,否则 prettier / ESLint 可能误报。
   - git 已配置 `core.autocrlf` 时,本地 checkout 可能是 CRLF,提交回库时会自动转回 LF。不要手动改行尾。
   - PowerShell here-string(`@"..."@`)在多行中文场景下更可靠,优于多个 `-m` 拼接 commit message。
+  - **bash heredoc（`cat <<'EOF'`）在 PowerShell 中不可用**，会报 "Missing file specification after redirection operator"。多行中文 commit message / PR body 改用文件方式：写入临时文件后 `git commit -F <file>` / `gh pr create --body-file <file>`，完成后删除临时文件。
   - **PowerShell `Select-Object` 在管道输出中文时会出现乱码**,改用 `ForEach-Object` 或直接输出。如需格式化对象输出,使用 `ConvertTo-Json -Depth 10` 或手动拼接字符串。
 - **`supabase/` 文件夹必须保持 git 追踪**：`.gitignore` 中只忽略 `supabase/.temp/`，不忽略 `supabase/migrations/` 等目录。所有 migration 文件、Edge Functions、配置文件都应进入版本控制，确保 schema 变更可追溯、可回滚。
 - 历代功能 spec(颜色系统、admin/member 拆分、hooks-modal 重构、排练房预订等)已迁移至项目 wiki。
@@ -282,6 +286,17 @@ const fetchAuthorName = async (scheduleId: string) => {
 ```
 
 将时间轴和内容放在同一滚动容器内，移除内容区域单独的 `overflow-y-auto`。
+
+### 守护页加载态兜底
+
+布局组件（如 AdminLayout）在 user 未就绪时显示守护页，必须提供超时兜底，避免 profile 加载延迟导致永久卡住：
+
+- **状态拆分**：区分"加载中"（`user === null`，数据未到）与"未授权"（`user.role !== "admin"`，数据已到但不满足条件），两者语义不同，不应共用同一逻辑分支
+- **超时自动刷新**：仅在"加载中"状态启动定时器（如 5 秒），到时触发 `window.location.reload()`
+- **防死循环**：用 `sessionStorage` 记录刷新次数，限制最多 2 次
+- **失败恢复**：达到刷新上限后切换到"加载失败"UI + 手动重试按钮（清除计数后刷新）
+- **跨会话清理**：组件卸载时也清除 `sessionStorage` 计数，避免残留计数导致后续访问误判为失败
+- **提示文案区分**：加载中显示"正在加载…"，未授权显示"正在跳转…"，避免误导
 
 ## 交付流程
 

@@ -298,12 +298,49 @@ const fetchAuthorName = async (scheduleId: string) => {
 - **跨会话清理**：组件卸载时也清除 `sessionStorage` 计数，避免残留计数导致后续访问误判为失败
 - **提示文案区分**：加载中显示"正在加载…"，未授权显示"正在跳转…"，避免误导
 
+## Subagent Team
+
+项目配置了 5 个专用 subagent（定义在 `.claude/agents/`），由主智能体按流水线调度。子智能体上下文互相隔离，之间不能互相调用。
+
+| Agent             | 模型      | 职责                                                          | 工具                                                         |
+| ----------------- | --------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
+| pkuso-implementer | Sonnet    | 编码实现（Issue 明确、分支就绪后调用）                        | Read/Write/Edit/Glob/Grep/Bash/Task/Skill/WebSearch/WebFetch |
+| pkuso-reviewer    | **Haiku** | CLAUDE.md 合规审查（命名/颜色 Token/架构/编码规范）           | Read/Glob/Grep/Bash（只读，不修代码）                        |
+| pkuso-adversary   | Sonnet    | 找 Bug/逻辑漏洞/边界情况（reviewer PASS 后调用）              | Read/Glob/Grep/Bash（只读，不修代码）                        |
+| pkuso-tester      | Sonnet    | 测试补齐与回归（adversary 未击破后调用）                      | Read/Write/Edit/Glob/Grep/Bash/Task                          |
+| pkuso-dba         | Sonnet    | 数据库变更（schema/RLS/枚举/migration，唯一可产出 migration） | + Supabase MCP tools                                         |
+
+**模型选择理由**：reviewer 是纯机械性规则匹配（grep 文件名/颜色/import），不需要推理能力，Haiku 比 Sonnet 便宜 ~10 倍。其余 agent 都需要理解代码语义、做判断或生成内容，必须 Sonnet。
+
+### 编排流水线
+
+完整流程走 `/pkuso-pipeline` skill（定义在 `.claude/skills/pkuso-pipeline/SKILL.md`）：
+
+```
+DBA(按需) → 实现 → 审查 → 对抗 → 测试 → 提交
+```
+
+- **关卡失败**：携带完整报告回 implementer 返工，从 reviewer 重走全流程，**禁止跳关**
+- **上下文隔离**：每次调用子智能体时传入完整背景（任务描述、涉及文件、验收标准、上一环节报告）
+- **透明声明**：激活子智能体前向用户输出 `🤖 正在激活 [Agent] 处理 [子任务]`
+
+### 主智能体编辑权限
+
+**主智能体只编排，不写业务代码。** `src/` 下的任何修改一律由 pkuso-implementer 执行——哪怕只是 reviewer 指出的一行小改，也必须携带报告回 implementer 返工。原因：子智能体上下文隔离，主智能体直接改会导致 reviewer 报告、implementer 自检声明与仓库实际状态脱节。
+
+唯一例外（微修复通道，同时满足全部条件）：
+
+1. 单行内的纯机械修正（错别字、文案、import 顺序、格式化、显式类型标注），不含逻辑/条件/SQL/样式 token 变更
+2. 改完立即调 pkuso-reviewer 复核该行，拿到 PASS
+3. 最终交付汇报中显式声明"主智能体代改了什么、为什么"
+
 ## 交付流程
 
-功能开发走 **Issue → 分支 → 实现+测试 → PR → CI → Squash Merge**。Conventional Commits 含 `Closes #<issue>`。
+功能开发走 **Issue → 分支 → 编排流水线 → PR → CI → Squash Merge**。Conventional Commits 含 `Closes #<issue>`。
 
 常见坑：
 
 - **sed 改代码后 prettier 格式错乱**：始终用 Edit/Write 工具
 - **commitlint type 白名单**：仅 `build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test`
 - **draft PR 不能 merge**：需 `gh pr ready` 后再 `gh pr merge --squash`
+- **commitlint + PowerShell here-string**：`@"..."@` 多行中文 commit message 可能被解析为 subject-empty。改用 bash heredoc（`git commit -F - <<'MSG'`）或写入临时文件 `git commit -F <file>`

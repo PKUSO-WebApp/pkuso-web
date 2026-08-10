@@ -10,6 +10,13 @@ import { Card } from "@/components/ui/Card";
 import { RehearsalCard } from "./schedule/components/rehearsal-card";
 import { CodeVerifyModal } from "./schedule/components/code-verify-modal";
 import type { RehearsalRow } from "@/types/database";
+import { parseLocalISO, formatLocalISO } from "@/lib/date-utils";
+import { judgeAttendanceStatus } from "@/lib/attendance-utils";
+
+/** 已签到状态：出席或迟到算作已签到 */
+function hasSignedStatus(status?: string): boolean {
+  return status === "present" || status === "late";
+}
 
 export default function Home() {
   const { data: announcement, loading: announcementLoading } = useAnnouncements();
@@ -38,14 +45,36 @@ export default function Home() {
 
   const handleSignIn = async (rehearsal: RehearsalRow) => {
     if (!user || !rehearsals) return;
-    if (attendanceMap[rehearsal.id]) return;
+    if (hasSignedStatus(attendanceMap[rehearsal.id]?.status)) return;
+    if (!rehearsal.start_time) {
+      alert("该排练未设置时间，无法签到");
+      return;
+    }
+
+    const now = new Date();
+    const start = parseLocalISO(rehearsal.start_time);
+    const end = rehearsal.end_time
+      ? parseLocalISO(rehearsal.end_time)
+      : new Date(start.getTime() + 3 * 60 * 60 * 1000);
+    const status = judgeAttendanceStatus(now, start, end);
 
     if (rehearsal.type === "section") {
       const err = await upsert([
-        { rehearsal_id: rehearsal.id, user_id: user.id, status: "present" },
+        {
+          rehearsal_id: rehearsal.id,
+          user_id: user.id,
+          status,
+          sign_in_time: formatLocalISO(now),
+        },
       ]);
       if (!err) {
-        alert("签到成功");
+        alert(
+          status === "late"
+            ? "签到成功，已记录迟到"
+            : status === "absent"
+              ? "签到成功（排练已结束，记为缺勤）"
+              : "签到成功",
+        );
         void fetchMyAttendances(
           user.id,
           rehearsals.map((r) => r.id),
@@ -72,12 +101,31 @@ export default function Home() {
       return;
     }
     setCodeSubmitting(true);
+
+    const now = new Date();
+    const start = parseLocalISO(codeRehearsal.start_time!);
+    const end = codeRehearsal.end_time
+      ? parseLocalISO(codeRehearsal.end_time)
+      : new Date(start.getTime() + 3 * 60 * 60 * 1000);
+    const status = judgeAttendanceStatus(now, start, end);
+
     const err = await upsert([
-      { rehearsal_id: codeRehearsal.id, user_id: user.id, status: "present" },
+      {
+        rehearsal_id: codeRehearsal.id,
+        user_id: user.id,
+        status,
+        sign_in_time: formatLocalISO(now),
+      },
     ]);
     setCodeSubmitting(false);
     if (!err) {
-      alert("签到成功");
+      alert(
+        status === "late"
+          ? "签到成功，已记录迟到"
+          : status === "absent"
+            ? "签到成功（排练已结束，记为缺勤）"
+            : "签到成功",
+      );
       setCodeRehearsal(null);
       void fetchMyAttendances(
         user.id,
@@ -139,7 +187,7 @@ export default function Home() {
             <RehearsalCard
               key={String(r.id)}
               item={r}
-              hasSigned={!!attendanceMap[r.id]}
+              hasSigned={hasSignedStatus(attendanceMap[r.id]?.status)}
               onSignIn={() => handleSignIn(r)}
             />
           ))

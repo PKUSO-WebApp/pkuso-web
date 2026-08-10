@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { useRehearsals } from "@/hooks/useRehearsals";
-import { useAttendance } from "@/hooks/useAttendance";
+import { useAttendance, type AttendanceEntry } from "@/hooks/useAttendance";
 import { useSchedule } from "@/hooks/useSchedule";
+import { useProfiles } from "@/hooks/useProfiles";
+import type { ProfileRow } from "@/types/database";
 import { Toggle } from "@/components/ui/Toggle";
 import { Modal } from "@/components/ui/Modal";
 import { AdminRehearsalCard } from "./components/rehearsal-card";
@@ -15,7 +17,7 @@ import {
   type CreateFormState,
 } from "@/app/(member)/schedule/components/create-rehearsal-modal";
 import { AttendanceModal } from "@/app/(member)/schedule/components/attendance-modal";
-import type { RehearsalRow, AttendanceRowWithUser } from "@/types/database";
+import type { RehearsalRow, AttendanceRowWithUser, AttendanceStatus } from "@/types/database";
 import { formatLocalISO, parseLocalISO, getLocalDateString } from "@/lib/date-utils";
 
 type RehearsalType = "合排" | "分排";
@@ -33,13 +35,20 @@ const EMPTY_FORM: CreateFormState = {
 export default function AdminRehearsalsPage() {
   const router = useRouter();
   const { data: schedules, loading, create, update, remove } = useRehearsals();
-  const { loading: attendanceLoading, fetchByRehearsal } = useAttendance();
+  const {
+    loading: attendanceLoading,
+    fetchByRehearsal,
+    updateStatus,
+    batchInsert,
+  } = useAttendance();
   const { checkConflict } = useSchedule();
+  const { data: allProfiles } = useProfiles({ status: "approved" });
 
   const [currentType, setCurrentType] = React.useState<RehearsalType>("合排");
   const [createOpen, setCreateOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<number | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
+  const submittingRef = React.useRef(false);
   const [notifyByEmail, setNotifyByEmail] = React.useState(false);
   const [form, setForm] = React.useState<CreateFormState>(EMPTY_FORM);
   const [conflictModalOpen, setConflictModalOpen] = React.useState(false);
@@ -48,14 +57,37 @@ export default function AdminRehearsalsPage() {
 
   const [attendanceRehearsal, setAttendanceRehearsal] = React.useState<RehearsalRow | null>(null);
   const [attendanceList, setAttendanceList] = React.useState<AttendanceRowWithUser[]>([]);
+  const [attendanceSaving, setAttendanceSaving] = React.useState(false);
+  const pendingAttendanceChanges = React.useRef<Map<string, string>>(new Map<string, string>());
 
   // 管理员查看考勤
   React.useEffect(() => {
     if (!attendanceRehearsal) return;
-    void fetchByRehearsal(attendanceRehearsal.id).then((rows) =>
-      setAttendanceList(rows as AttendanceRowWithUser[]),
-    );
+    pendingAttendanceChanges.current.clear();
+    void fetchByRehearsal(attendanceRehearsal.id).then((rows) => setAttendanceList(rows));
   }, [attendanceRehearsal, fetchByRehearsal]);
+
+  const handleSaveAttendance = async () => {
+    if (!attendanceRehearsal) return;
+    const changes = pendingAttendanceChanges.current;
+    if (changes.size === 0) {
+      setAttendanceRehearsal(null);
+      return;
+    }
+    setAttendanceSaving(true);
+    let hasError = false;
+    for (const [userId, status] of changes) {
+      const errMsg = await updateStatus(attendanceRehearsal.id, userId, status as AttendanceStatus);
+      if (errMsg) hasError = true;
+    }
+    setAttendanceSaving(false);
+    if (hasError) alert("部分出勤更新失败，请刷新后重试");
+    // 刷新列表
+    const rows = await fetchByRehearsal(attendanceRehearsal.id);
+    setAttendanceList(rows);
+    pendingAttendanceChanges.current.clear();
+    setAttendanceRehearsal(null);
+  };
 
   const list = React.useMemo(
     () =>
@@ -122,71 +154,107 @@ export default function AdminRehearsalsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (submitting || !form.startTime || !form.location || !form.repertoire) return;
+    if (
+      submittingRef.current ||
+      submitting ||
+      !form.startTime ||
+      !form.endTime ||
+      !form.location ||
+      !form.repertoire
+    )
+      return;
+    if (form.endTime <= form.startTime) {
+      alert("结束时间必须晚于开始时间");
+      return;
+    }
 
     if (form.type === "full" && (!form.signInCode || !/^\d{4}$/.test(form.signInCode))) {
       alert("合排需要设置4位数字签到密码");
       return;
     }
 
-    // 检查时间冲突
-    const date = getLocalDateString(form.startTime);
-    const startTimeStr = `${String(form.startTime.getHours()).padStart(2, "0")}:${String(form.startTime.getMinutes()).padStart(2, "0")}`;
-    const endTimeStr = form.endTime
-      ? `${String(form.endTime.getHours()).padStart(2, "0")}:${String(form.endTime.getMinutes()).padStart(2, "0")}`
-      : startTimeStr;
-    const conflictResult = await checkConflict(
-      date,
-      startTimeStr,
-      endTimeStr,
-      editingId ?? undefined,
-    );
-    if (conflictResult) {
-      setConflictModalOpen(true);
-      return;
-    }
-
+    // 同步 + 异步双重防重复提交
+    submittingRef.current = true;
     setSubmitting(true);
-    const payload: Record<string, unknown> = {
-      type: form.type,
-      target_section: form.type === "section" ? form.targetSection || null : null,
-      start_time: formatLocalISO(form.startTime),
-      end_time: form.endTime ? formatLocalISO(form.endTime) : null,
-      location: form.location,
-      repertoire: form.repertoire,
-      sign_in_code: form.type === "full" ? form.signInCode : null,
-    };
 
-    const ok = editingId ? await update(editingId, payload) : await create(payload);
-    setSubmitting(false);
-    if (!ok) {
-      alert(editingId ? "更新失败" : "发布失败");
-      return;
-    }
-
-    if (notifyByEmail) {
-      const dateStr = `${form.startTime.getFullYear()}-${String(form.startTime.getMonth() + 1).padStart(2, "0")}-${String(form.startTime.getDate()).padStart(2, "0")}`;
-      try {
-        const { supabase } = await import("@/lib/supabase");
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        const res = await fetch("/api/notify", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-          },
-          body: JSON.stringify({ title: form.repertoire, dateStr, location: form.location }),
-        });
-        alert(res.ok ? "✅ 排练已发布,邮件已发送" : "❌ 邮件发送失败");
-      } catch {
-        alert("❌ 邮件发送失败");
+    try {
+      // 检查时间冲突
+      const date = getLocalDateString(form.startTime);
+      const startTimeStr = `${String(form.startTime.getHours()).padStart(2, "0")}:${String(form.startTime.getMinutes()).padStart(2, "0")}`;
+      const endTimeStr = `${String(form.endTime.getHours()).padStart(2, "0")}:${String(form.endTime.getMinutes()).padStart(2, "0")}`;
+      const conflictResult = await checkConflict(
+        date,
+        startTimeStr,
+        endTimeStr,
+        editingId ?? undefined,
+      );
+      if (conflictResult) {
+        setConflictModalOpen(true);
+        return;
       }
-    } else {
-      alert(editingId ? "已保存" : "发布成功");
+
+      const payload: Record<string, unknown> = {
+        type: form.type,
+        target_section: form.type === "section" ? form.targetSection || null : null,
+        start_time: formatLocalISO(form.startTime),
+        end_time: formatLocalISO(form.endTime),
+        location: form.location,
+        repertoire: form.repertoire,
+        sign_in_code: form.type === "full" ? form.signInCode : null,
+      };
+
+      const rehearsalId = editingId
+        ? (await update(editingId, payload), editingId)
+        : await create(payload);
+
+      if (!rehearsalId) {
+        alert(editingId ? "更新失败" : "发布失败");
+        return;
+      }
+
+      // 新建排练时自动为所有已批准团员生成出勤记录（默认缺席）
+      if (!editingId) {
+        const members = (allProfiles as ProfileRow[]).filter((r) => (r.role ?? "") !== "admin");
+        if (members.length > 0) {
+          const rows: AttendanceEntry[] = members.map((m) => ({
+            rehearsal_id: rehearsalId,
+            user_id: m.id,
+            status: "absent",
+          }));
+          const errMsg = await batchInsert(rows);
+          if (errMsg) {
+            console.error("批量创建出勤记录失败:", errMsg);
+          }
+        }
+      }
+
+      if (notifyByEmail) {
+        const dateStr = `${form.startTime.getFullYear()}-${String(form.startTime.getMonth() + 1).padStart(2, "0")}-${String(form.startTime.getDate()).padStart(2, "0")}`;
+        try {
+          const { supabase } = await import("@/lib/supabase");
+          const {
+            data: { session },
+          } = await supabase.auth.getSession();
+          const res = await fetch("/api/notify", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+            },
+            body: JSON.stringify({ title: form.repertoire, dateStr, location: form.location }),
+          });
+          alert(res.ok ? "✅ 排练已发布,邮件已发送" : "❌ 邮件发送失败");
+        } catch {
+          alert("❌ 邮件发送失败");
+        }
+      } else {
+        alert(editingId ? "已保存" : "发布成功");
+      }
+      closeCreate();
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
-    closeCreate();
   };
 
   const handleDelete = async (id: number) => {
@@ -260,7 +328,14 @@ export default function AdminRehearsalsPage() {
         submitting={submitting}
         notifyByEmail={notifyByEmail}
         onNotifyByEmailChange={setNotifyByEmail}
-        onChange={(f, v) => setForm((p) => ({ ...p, [f]: v }))}
+        onChange={(f, v) => {
+          if (f === "startTime" && v instanceof Date) {
+            const endTime = new Date(v.getTime() + 3 * 60 * 60 * 1000);
+            setForm((p) => ({ ...p, startTime: v, endTime }));
+          } else {
+            setForm((p) => ({ ...p, [f]: v }));
+          }
+        }}
         onClose={closeCreate}
         onSubmit={handleSubmit}
       />
@@ -270,7 +345,18 @@ export default function AdminRehearsalsPage() {
         title={attendanceRehearsal?.repertoire ?? ""}
         loading={attendanceLoading}
         list={attendanceList}
-        onClose={() => setAttendanceRehearsal(null)}
+        editable
+        onStatusChange={(userId, status) => {
+          pendingAttendanceChanges.current.set(userId, status);
+        }}
+        onSave={handleSaveAttendance}
+        saving={attendanceSaving}
+        onClose={() => {
+          if (!attendanceSaving) {
+            pendingAttendanceChanges.current.clear();
+            setAttendanceRehearsal(null);
+          }
+        }}
       />
 
       <Modal

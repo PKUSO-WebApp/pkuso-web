@@ -98,7 +98,7 @@ export function CreateRehearsalModal({
               showTimeSelect
               timeIntervals={15}
               dateFormat="yyyy-MM-dd HH:mm"
-              placeholderText="选择结束时间（可选）"
+              placeholderText="选择结束时间"
               className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
               popperClassName="react-datepicker-popper-orchestra"
               calendarClassName="react-datepicker-orchestra"

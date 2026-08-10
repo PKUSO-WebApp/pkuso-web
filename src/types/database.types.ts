@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.5"
+    PostgrestVersion: "14.15"
   }
   public: {
     Tables: {
@@ -36,18 +36,21 @@ export type Database = {
         Row: {
           id: number
           rehearsal_id: number
+          sign_in_time: string | null
           status: Database["public"]["Enums"]["attendanceStatus"] | null
           user_id: string
         }
         Insert: {
           id?: never
           rehearsal_id: number
+          sign_in_time?: string | null
           status?: Database["public"]["Enums"]["attendanceStatus"] | null
           user_id: string
         }
         Update: {
           id?: never
           rehearsal_id?: number
+          sign_in_time?: string | null
           status?: Database["public"]["Enums"]["attendanceStatus"] | null
           user_id?: string
         }
@@ -57,6 +60,13 @@ export type Database = {
             columns: ["rehearsal_id"]
             isOneToOne: false
             referencedRelation: "rehearsals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attendances_user_id_profiles_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]

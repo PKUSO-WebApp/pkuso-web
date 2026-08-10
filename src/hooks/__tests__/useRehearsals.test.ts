@@ -12,6 +12,8 @@ function mockClient<T>(responses: T[]) {
     order: () => chain(res),
     limit: () => chain(res),
     delete: () => chain(res),
+    select: () => chain(res),
+    single: () => res,
     then: (resolve: (v: T) => void) => resolve(res),
   });
   return {
@@ -42,7 +44,7 @@ describe("useRehearsals", () => {
   it("create + re-fetch", async () => {
     const c = mockClient([
       { data: [], error: null }, // initial fetch
-      { data: null, error: null }, // insert
+      { data: { id: 1 }, error: null }, // insert (returns id via .select("id").single())
       { data: [{ id: 1, repertoire: "新排练" }], error: null }, // re-fetch
     ]);
     const { result } = renderHook(() => useRehearsals(c as never));

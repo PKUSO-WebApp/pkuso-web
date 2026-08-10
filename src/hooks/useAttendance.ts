@@ -2,16 +2,18 @@
 
 import React from "react";
 import { supabase as defaultClient } from "@/lib/supabase";
+import type { AttendanceRowWithUser, AttendanceStatus } from "@/types/database";
 
 export type AttendanceEntry = {
   rehearsal_id: number;
   user_id: string;
   status: "present" | "late" | "absent" | "excused";
+  sign_in_time?: string | null;
 };
 
 export function useAttendance(client: typeof defaultClient = defaultClient) {
   const [map, setMap] = React.useState<Record<number, { status: string }>>({});
-  const [list, setList] = React.useState<unknown[]>([]);
+  const [list, setList] = React.useState<AttendanceRowWithUser[]>([]);
   const [loading, setLoading] = React.useState(false);
 
   /** 团员: 加载自己在当前排练池中的考勤 */
@@ -41,21 +43,22 @@ export function useAttendance(client: typeof defaultClient = defaultClient) {
     [client],
   );
 
-  /** 管理员: 查看某场排练的考勤名单 */
+  /** 管理员: 查看某场排练的考勤名单（含 profiles） */
   const fetchByRehearsal = React.useCallback(
     async (rehearsalId: number) => {
       setLoading(true);
       const { data, error } = await client
         .from("attendances")
-        .select("*")
+        .select("*, profiles!inner(full_name, instrument)")
         .eq("rehearsal_id", rehearsalId);
       setLoading(false);
       if (error) {
         setList([]);
         return [];
       }
-      setList(data ?? []);
-      return (data ?? []) as unknown[];
+      const rows = (data ?? []) as AttendanceRowWithUser[];
+      setList(rows);
+      return rows;
     },
     [client],
   );
@@ -66,6 +69,31 @@ export function useAttendance(client: typeof defaultClient = defaultClient) {
       const { error } = await client
         .from("attendances")
         .upsert(rows as never, { onConflict: "rehearsal_id,user_id" } as never);
+      if (error) return error.message;
+      return null;
+    },
+    [client],
+  );
+
+  /** 管理员: 更新单条出勤状态 */
+  const updateStatus = React.useCallback(
+    async (rehearsalId: number, userId: string, status: AttendanceStatus) => {
+      const { error } = await client
+        .from("attendances")
+        .update({ status })
+        .eq("rehearsal_id", rehearsalId)
+        .eq("user_id", userId);
+      if (error) return error.message;
+      return null;
+    },
+    [client],
+  );
+
+  /** 管理员: 批量插入出勤记录（创建排练时自动生成） */
+  const batchInsert = React.useCallback(
+    async (rows: AttendanceEntry[]) => {
+      if (rows.length === 0) return null;
+      const { error } = await client.from("attendances").insert(rows as never);
       if (error) return error.message;
       return null;
     },
@@ -88,5 +116,15 @@ export function useAttendance(client: typeof defaultClient = defaultClient) {
     [client],
   );
 
-  return { map, list, loading, fetchMyAttendances, fetchByRehearsal, upsert, fetchStats };
+  return {
+    map,
+    list,
+    loading,
+    fetchMyAttendances,
+    fetchByRehearsal,
+    upsert,
+    updateStatus,
+    batchInsert,
+    fetchStats,
+  };
 }

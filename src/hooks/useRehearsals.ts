@@ -33,14 +33,18 @@ export function useRehearsals(client: typeof defaultClient = defaultClient) {
   const create = React.useCallback(
     async (payload: Record<string, unknown>) => {
       setSaving(true);
-      const { error: dbError } = await client.from("rehearsals").insert([payload] as never);
+      const { data: inserted, error: dbError } = await client
+        .from("rehearsals")
+        .insert([payload] as never)
+        .select("id")
+        .single();
       setSaving(false);
-      if (dbError) {
-        setError(dbError.message);
-        return false;
+      if (dbError || !inserted) {
+        setError(dbError?.message ?? "创建失败");
+        return null;
       }
       await fetch();
-      return true;
+      return (inserted as { id: number }).id;
     },
     [client, fetch],
   );

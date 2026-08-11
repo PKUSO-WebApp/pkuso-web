@@ -71,7 +71,6 @@ export default function AdminRehearsalsPage() {
     if (!attendanceRehearsal) return;
     const changes = pendingAttendanceChanges.current;
     if (changes.size === 0) {
-      setAttendanceRehearsal(null);
       return;
     }
     setAttendanceSaving(true);
@@ -86,7 +85,6 @@ export default function AdminRehearsalsPage() {
     const rows = await fetchByRehearsal(attendanceRehearsal.id);
     setAttendanceList(rows);
     pendingAttendanceChanges.current.clear();
-    setAttendanceRehearsal(null);
   };
 
   const list = React.useMemo(

@@ -150,7 +150,9 @@ export default function Home() {
         <Card className="mb-4 border-warning-bg bg-warning-bg/80">
           <div className="flex items-center gap-2">
             <span className="shrink-0 text-warning">📢</span>
-            <p className="min-w-0 truncate text-xs text-warning">{announcement.content}</p>
+            <p className="min-w-0 break-words line-clamp-3 text-xs text-warning">
+              {announcement.content}
+            </p>
           </div>
         </Card>
       )}

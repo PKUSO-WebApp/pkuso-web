@@ -8,6 +8,7 @@ function mockClient<T>(responses: T[]) {
   let i = 0;
   const c = (r: T) => ({
     eq: () => c(r),
+    maybeSingle: () => c(r),
     order: () => c(r),
     then: (resolve: (v: T) => void) => resolve(r),
   });
@@ -21,6 +22,7 @@ function mockClient<T>(responses: T[]) {
     storage: {
       from: () => ({
         upload: () => c(responses[i++]),
+        remove: () => c(responses[i++]),
         getPublicUrl: () => responses[i++], // 同步,不 then
       }),
     },
@@ -30,7 +32,7 @@ function mockClient<T>(responses: T[]) {
 describe("usePosts", () => {
   it("fetch 加载帖子", async () => {
     const c = mockClient([{ data: [{ id: "1", title: "测试" }], error: null }]);
-    const { result } = renderHook(() => usePosts(c as never));
+    const { result } = renderHook(() => usePosts({ client: c as never }));
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.data).toHaveLength(1);
   });
@@ -41,7 +43,7 @@ describe("usePosts", () => {
       { data: null, error: null }, // insert
       { data: [{ id: "1" }], error: null }, // re-fetch
     ]);
-    const { result } = renderHook(() => usePosts(c as never));
+    const { result } = renderHook(() => usePosts({ client: c as never }));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(async () => {
@@ -53,10 +55,11 @@ describe("usePosts", () => {
   it("remove 删除帖子", async () => {
     const c = mockClient([
       { data: [{ id: "1" }], error: null }, // fetch
+      { data: null, error: null }, // select image_url（无图片）
       { data: null, error: null }, // delete
       { data: [], error: null }, // re-fetch
     ]);
-    const { result } = renderHook(() => usePosts(c as never));
+    const { result } = renderHook(() => usePosts({ client: c as never }));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(async () => {
@@ -71,7 +74,7 @@ describe("usePosts", () => {
       { data: null, error: null }, // upload
       { data: { publicUrl: "http://img/1.jpg" } }, // getPublicUrl
     ]);
-    const { result } = renderHook(() => usePosts(c as never));
+    const { result } = renderHook(() => usePosts({ client: c as never }));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     const r = await act(() => result.current.uploadImage(new File([], "test.jpg"), "u1"));

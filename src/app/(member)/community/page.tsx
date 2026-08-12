@@ -42,6 +42,9 @@ export default function CommunityPage() {
   const [detailPost, setDetailPost] = React.useState<PostRow | null>(null);
   const [publishOpen, setPublishOpen] = React.useState(false);
   const [editId, setEditId] = React.useState<string | null>(null);
+  const submittingRef = React.useRef(false);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
+  const [zoomImageUrl, setZoomImageUrl] = React.useState<string | null>(null);
   const [form, setForm] = React.useState<FormState>({
     title: "",
     content: "",
@@ -104,7 +107,7 @@ export default function CommunityPage() {
       setForm({
         title: "",
         content: "",
-        type: "ensemble",
+        type: view,
         contactInfo: "",
         currentSections: "",
         missingSections: "",
@@ -141,7 +144,8 @@ export default function CommunityPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (submitting) return;
+    // 同步 + 异步双重防重复提交
+    if (submittingRef.current || submitting) return;
     if (!form.title.trim()) {
       alert("请填写标题。");
       return;
@@ -151,68 +155,77 @@ export default function CommunityPage() {
       return;
     }
 
-    let imageUrl: string | null = null;
-    if (form.imageFile) {
-      let fileToUpload: File = form.imageFile;
-      try {
-        fileToUpload = await imageCompression(form.imageFile, {
-          maxSizeMB: 0.3,
-          maxWidthOrHeight: 1024,
-          useWebWorker: true,
-        });
-      } catch {
-        /* fall through */
-      }
-      const result = await uploadImage(fileToUpload, user?.id ?? "anon");
-      if ("error" in result) {
-        alert("图片上传失败");
-        return;
-      }
-      imageUrl = result.url;
-    } else if (editId && imagePreviewUrl?.startsWith("http")) {
-      imageUrl = imagePreviewUrl;
-    }
+    submittingRef.current = true;
 
-    const basePayload: Record<string, unknown> = {
-      title: form.title.trim(),
-      content: form.content.trim() || null,
-      type: form.type,
-      contact_info: form.contactInfo.trim(),
-    };
-    if (form.type === "ensemble") {
-      basePayload.current_sections = form.currentSections.trim() || null;
-      basePayload.missing_sections = form.missingSections.trim() || null;
-    } else {
-      basePayload.current_sections = null;
-      basePayload.missing_sections = null;
-    }
-    if (imageUrl !== null) basePayload.image_url = imageUrl;
+    try {
+      let imageUrl: string | null = null;
+      if (form.imageFile) {
+        let fileToUpload: File = form.imageFile;
+        try {
+          fileToUpload = await imageCompression(form.imageFile, {
+            maxSizeMB: 0.3,
+            maxWidthOrHeight: 1024,
+            useWebWorker: true,
+          });
+        } catch {
+          /* fall through */
+        }
+        const result = await uploadImage(fileToUpload, user?.id ?? "anon");
+        if ("error" in result) {
+          alert("图片上传失败");
+          return;
+        }
+        imageUrl = result.url;
+      } else if (editId && imagePreviewUrl?.startsWith("http")) {
+        imageUrl = imagePreviewUrl;
+      }
 
-    if (editId) {
-      const ok = await update(editId, basePayload);
-      if (!ok) {
-        alert("更新失败");
-        return;
+      const basePayload: Record<string, unknown> = {
+        title: form.title.trim(),
+        content: form.content.trim() || null,
+        type: form.type,
+        contact_info: form.contactInfo.trim(),
+      };
+      if (form.type === "ensemble") {
+        basePayload.current_sections = form.currentSections.trim() || null;
+        basePayload.missing_sections = form.missingSections.trim() || null;
+      } else {
+        basePayload.current_sections = null;
+        basePayload.missing_sections = null;
       }
-      alert("已更新。");
-    } else {
-      if (!user) {
-        alert("请先登录。");
-        return;
+      if (imageUrl !== null) basePayload.image_url = imageUrl;
+
+      if (editId) {
+        const ok = await update(editId, basePayload);
+        if (!ok) {
+          alert("更新失败");
+          return;
+        }
+        alert("已更新。");
+      } else {
+        if (!user) {
+          alert("请先登录。");
+          return;
+        }
+        const ok = await create({ ...basePayload, image_url: imageUrl, author_id: user.id });
+        if (!ok) {
+          alert("发布失败");
+          return;
+        }
+        alert("发布成功！");
       }
-      const ok = await create({ ...basePayload, image_url: imageUrl, author_id: user.id });
-      if (!ok) {
-        alert("发布失败");
-        return;
-      }
-      alert("发布成功！");
+      closePublish();
+    } finally {
+      submittingRef.current = false;
     }
-    closePublish();
   };
 
   const handleDelete = async (id: string) => {
+    if (deletingId) return;
     if (!window.confirm("确定要删除这条公告吗？")) return;
+    setDeletingId(id);
     const ok = await remove(id);
+    setDeletingId(null);
     if (!ok) {
       alert("删除失败");
       return;
@@ -324,7 +337,24 @@ export default function CommunityPage() {
           post={detailPost}
           onClose={() => setDetailPost(null)}
           onSaveQr={handleSaveQr}
+          onZoomImage={setZoomImageUrl}
         />
+      )}
+
+      {/* 图片放大查看浮层 */}
+      {zoomImageUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setZoomImageUrl(null)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={zoomImageUrl}
+            alt="图片放大查看"
+            className="max-h-[90vh] max-w-full rounded-2xl object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
       )}
 
       {publishOpen && (
@@ -347,15 +377,15 @@ function DetailModal({
   post,
   onClose,
   onSaveQr,
+  onZoomImage,
 }: {
   post: PostRowWithAuthor;
   onClose: () => void;
   onSaveQr: (url: string) => void;
+  onZoomImage: (url: string) => void;
 }) {
   const p = post.profiles;
-  const author = p?.full_name
-    ? `${p.full_name}${p.instrument ? ` · ${p.instrument}` : ""}`
-    : "未知";
+  const author = p?.full_name ? `创建者：${p.full_name}` : "未知";
   const showCurrent = post.type === "ensemble" && hasSectionText(post.current_sections);
   const showMissing = post.type === "ensemble" && hasSectionText(post.missing_sections);
 
@@ -391,6 +421,24 @@ function DetailModal({
         {post.content != null && post.content.trim() !== "" && (
           <p className="whitespace-pre-line leading-relaxed">{post.content}</p>
         )}
+        {post.image_url && (
+          <div className="space-y-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={post.image_url}
+              alt="二维码或配图"
+              className="rounded-2xl border border-border max-w-full h-auto max-h-64 object-contain cursor-pointer hover:opacity-90"
+              onClick={() => onZoomImage(post.image_url!)}
+            />
+            <button
+              type="button"
+              onClick={() => onSaveQr(post.image_url!)}
+              className="rounded-full bg-muted px-3 py-1.5 text-label font-medium text-text hover:bg-border"
+            >
+              保存图片
+            </button>
+          </div>
+        )}
         {post.contact_info && (
           <Card className="flex items-center justify-between gap-2">
             <div>
@@ -405,23 +453,6 @@ function DetailModal({
               一键复制
             </button>
           </Card>
-        )}
-        {post.image_url && (
-          <div className="space-y-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={post.image_url}
-              alt="二维码或配图"
-              className="rounded-2xl border border-border max-w-full h-auto max-h-64 object-contain"
-            />
-            <button
-              type="button"
-              onClick={() => onSaveQr(post.image_url!)}
-              className="rounded-full bg-muted px-3 py-1.5 text-label font-medium text-text hover:bg-border"
-            >
-              保存二维码
-            </button>
-          </div>
         )}
       </div>
     </Modal>

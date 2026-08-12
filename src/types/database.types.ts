@@ -113,6 +113,7 @@ export type Database = {
           current_sections: string | null
           id: string
           image_url: string | null
+          is_locked: boolean
           missing_sections: string | null
           title: string
           type: Database["public"]["Enums"]["postType"]
@@ -125,6 +126,7 @@ export type Database = {
           current_sections?: string | null
           id?: string
           image_url?: string | null
+          is_locked?: boolean
           missing_sections?: string | null
           title: string
           type?: Database["public"]["Enums"]["postType"]
@@ -137,11 +139,20 @@ export type Database = {
           current_sections?: string | null
           id?: string
           image_url?: string | null
+          is_locked?: boolean
           missing_sections?: string | null
           title?: string
           type?: Database["public"]["Enums"]["postType"]
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "posts_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {

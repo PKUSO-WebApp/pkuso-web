@@ -225,27 +225,78 @@ Supabase CLI 多个子命令在非 TTY（自动化/子智能体）环境下会�
 
 **子智能体（pkuso-dba 等）执行任何 supabase 命令时，必须显式带 `--yes` 或对应非交互参数，禁止裸跑 `supabase db push` / `db pull` / `db reset` / `link`。** 调用 pkuso-dba 时主智能体应在指令中强调这一点。
 
+### PostgREST 外键必须指向 public schema
+
+Supabase 的嵌入资源 join 语法（`profiles(full_name, instrument)` 或 `profiles!inner(...)`）依赖 PostgREST 识别 FK 关系。FK 必须指向 `public` schema 的表（如 `public.profiles`），不能指向 `auth.users` 等内部 schema。如果 FK 目标不对，PostgREST 无法解析 join，整个请求被网关拒绝返回 `400 No API key`（误导性错误——实际不是 API key 问题）。
+
+**检查方法**：运行 `pnpm gen-types` 后查看 `database.types.ts` 中对应表的 `Relationships` 数组是否包含预期的 FK。若为空或缺失，说明 FK 未指向 public schema。
+
+```sql
+-- 修复：删旧 FK，重建指向 public schema
+ALTER TABLE posts DROP CONSTRAINT posts_author_id_fkey;
+ALTER TABLE posts ADD CONSTRAINT posts_author_id_fkey
+  FOREIGN KEY (author_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
+```
+
+### Storage bucket 删除/更新需要显式 RLS 策略
+
+Supabase Storage bucket 默认只有 `SELECT` 和 `INSERT` 策略（允许公开查看和上传）。**`DELETE` 和 `UPDATE` 操作没有默认策略**，即使请求带了有效的用户 JWT 也会被 RLS 拒绝（静默失败）。
+
+在代码中调用 `client.storage.from("bucket").remove([path])` 前，确认数据库中有对应的 DELETE 策略：
+
+```sql
+-- 查看现有策略
+SELECT policyname, cmd FROM pg_policies
+WHERE schemaname = 'storage' AND tablename = 'objects';
+
+-- 如缺少 DELETE，添加认证用户删除策略
+CREATE POLICY "认证用户可删除" ON storage.objects
+  FOR DELETE USING (bucket_id = '<bucket-name>' AND auth.role() = 'authenticated');
+```
+
+### `.single()` vs `.maybeSingle()`
+
+Supabase JS client 的 `.single()` 在查询返回 0 行时返回 `406 Not Acceptable` 错误（而非 `data: null`），会中断 async 流程。查询**可能不存在**的行（如删除前查 image_url、查可选关联数据）时用 `.maybeSingle()`——0 行返回 `{ data: null, error: null }`，不抛错。配合 try/catch 兜底确保核心操作不受影响。
+
 ## 前端开发防坑指南
 
 ### 防止重复提交
 
-表单提交时必须添加 `isSubmitting` 状态控制，防止用户快速点击多次提交：
+表单提交时必须添加双重 guard（同步 ref + 异步 state），防止用户快速点击多次提交。**仅用 state（`isSubmitting`）不够**——React setState 是异步的，两次快速点击之间 state 仍为 false。
 
 ```tsx
 const [isSubmitting, setIsSubmitting] = useState(false);
+const submittingRef = useRef(false); // 同步 guard，阻断竞态窗口
 
 const handleSubmit = async () => {
-  if (isSubmitting) return;
+  // 双重检查：ref 同步阻断，state 异步兜底
+  if (submittingRef.current || isSubmitting) return;
+  submittingRef.current = true;
   setIsSubmitting(true);
   try {
     // 提交逻辑
   } finally {
+    submittingRef.current = false;
     setIsSubmitting(false);
   }
 };
 ```
 
 按钮需配合 `disabled={isSubmitting}` 使用。
+
+同样的模式也适用于删除操作——用 `deletingId` state 记录正在删除的 ID，防止重复删除：
+
+```tsx
+const [deletingId, setDeletingId] = useState<string | null>(null);
+
+const handleDelete = async (id: string) => {
+  if (deletingId) return; // 同步阻断（setState 虽异步，但 deletingId 在当前闭包已是旧值，
+  setDeletingId(id); // 第二次点击前 React 已 re-render，deletingId 非 null）
+  const ok = await remove(id);
+  setDeletingId(null);
+  // ...
+};
+```
 
 ### 竞态条件处理
 

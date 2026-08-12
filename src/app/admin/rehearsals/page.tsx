@@ -126,6 +126,8 @@ export default function AdminRehearsalsPage() {
 
   const openCreate = () => {
     resetForm();
+    // 创建类型跟随当前 toggle
+    setForm((prev) => ({ ...prev, type: currentType === "合排" ? "full" : "section" }));
     setCreateOpen(true);
   };
 

@@ -16,12 +16,6 @@ type AnnouncementListModalProps = {
   onUpdate: (id: string, content: string) => Promise<boolean>;
 };
 
-function truncateContent(content: string | null, maxLength: number = 50) {
-  if (!content) return "无内容";
-  if (content.length <= maxLength) return content;
-  return content.substring(0, maxLength) + "...";
-}
-
 export function AnnouncementListModal({
   open,
   onClose,
@@ -199,8 +193,8 @@ export function AnnouncementListModal({
                     <p className="text-xs text-text-muted mb-1">
                       {formatDateTimeInChina(item.created_at)}
                     </p>
-                    <p className="text-sm text-text line-clamp-3">
-                      {truncateContent(item.content, 100)}
+                    <p className="text-sm text-text break-words line-clamp-3">
+                      {item.content || "无内容"}
                     </p>
                   </div>
                   <button

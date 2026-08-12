@@ -60,6 +60,7 @@ export default function CommunityPage() {
     data: rawPosts,
     loading,
     saving: submitting,
+    error,
     create,
     update,
     remove,
@@ -198,7 +199,8 @@ export default function CommunityPage() {
       if (editId) {
         const ok = await update(editId, basePayload);
         if (!ok) {
-          alert("更新失败");
+          // 优先展示 usePosts 中的具体错误信息，避免误导
+          alert(error || "更新失败");
           return;
         }
         alert("已更新。");
@@ -209,7 +211,8 @@ export default function CommunityPage() {
         }
         const ok = await create({ ...basePayload, image_url: imageUrl, author_id: user.id });
         if (!ok) {
-          alert("发布失败");
+          // 优先展示 usePosts 中的具体错误信息，避免误导
+          alert(error || "发布失败");
           return;
         }
         alert("发布成功！");
@@ -227,7 +230,8 @@ export default function CommunityPage() {
     const ok = await remove(id);
     setDeletingId(null);
     if (!ok) {
-      alert("删除失败");
+      // 优先展示 usePosts 中的具体错误信息，避免误导
+      alert(error || "删除失败");
       return;
     }
     setDetailPost(null);

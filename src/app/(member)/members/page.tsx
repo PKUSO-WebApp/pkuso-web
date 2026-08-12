@@ -65,7 +65,7 @@ export default function MembersPage() {
         getLabel={(opt) => (opt === "all" ? "全团成员" : "声部查看")}
       />
 
-      <div className="max-h-[300px] overflow-y-auto">
+      <div className="max-h-[480px] overflow-y-auto">
         {rosterLoading ? (
           <p className="py-8 text-center text-xs text-text-subtle">加载中…</p>
         ) : rosterError ? (

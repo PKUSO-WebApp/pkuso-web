@@ -44,16 +44,22 @@ export function usePosts(options?: { client?: typeof defaultClient; includeLocke
   const create = React.useCallback(
     async (payload: Record<string, unknown>) => {
       setSaving(true);
-      const { error: dbError } = await client.from("posts").insert(payload as never);
+      const { data: inserted, error: dbError } = await client
+        .from("posts")
+        .insert(payload as never)
+        .select();
       setSaving(false);
       if (dbError) {
         setError(dbError.message);
         return false;
       }
-      await fetch();
+      // 乐观更新：新帖子直接插入列表头部，不依赖 fetch 刷新（fetch 的 join 查询可能失败）
+      const insertedRow = Array.isArray(inserted) ? inserted[0] : null;
+      if (insertedRow) setData((prev) => [insertedRow, ...prev]);
+      setError(null);
       return true;
     },
-    [client, fetch],
+    [client],
   );
 
   const update = React.useCallback(
@@ -68,10 +74,18 @@ export function usePosts(options?: { client?: typeof defaultClient; includeLocke
         setError(dbError.message);
         return false;
       }
-      await fetch();
+      // 乐观更新：原地合并修改内容，不依赖 fetch 刷新
+      setData((prev) =>
+        prev.map((p) =>
+          (p as { id?: string } | null)?.id === id
+            ? { ...(p as Record<string, unknown>), ...payload }
+            : p,
+        ),
+      );
+      setError(null);
       return true;
     },
-    [client, fetch],
+    [client],
   );
 
   const remove = React.useCallback(
@@ -104,10 +118,12 @@ export function usePosts(options?: { client?: typeof defaultClient; includeLocke
         setError(dbError.message);
         return false;
       }
-      await fetch();
+      // 乐观更新：从本地列表移除，不依赖 fetch 刷新
+      setData((prev) => prev.filter((p) => (p as { id?: string } | null)?.id !== id));
+      setError(null);
       return true;
     },
-    [client, fetch],
+    [client],
   );
 
   const uploadImage = React.useCallback(

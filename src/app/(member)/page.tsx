@@ -7,11 +7,12 @@ import { useAttendance } from "@/hooks/useAttendance";
 import { useUser } from "@/context/user-context";
 import { Toggle } from "@/components/ui/Toggle";
 import { Card } from "@/components/ui/Card";
+import { Modal } from "@/components/ui/Modal";
 import { RehearsalCard } from "./schedule/components/rehearsal-card";
 import { CodeVerifyModal } from "./schedule/components/code-verify-modal";
 import type { RehearsalRow } from "@/types/database";
-import { parseLocalISO, formatLocalISO } from "@/lib/date-utils";
-import { judgeAttendanceStatus } from "@/lib/attendance-utils";
+import { parseLocalISO, formatLocalISO, formatDateTimeInChina } from "@/lib/date-utils";
+import { judgeAttendanceStatus, canSignIn } from "@/lib/attendance-utils";
 
 /** 已签到状态：出席或迟到算作已签到 */
 function hasSignedStatus(status?: string): boolean {
@@ -24,6 +25,7 @@ export default function Home() {
   const { user } = useUser();
   const { map: attendanceMap, fetchMyAttendances, upsert } = useAttendance();
   const [scheduleTab, setScheduleTab] = React.useState<"full" | "section">("full");
+  const [showAnnouncementDetail, setShowAnnouncementDetail] = React.useState(false);
 
   // 签到码
   const [codeRehearsal, setCodeRehearsal] = React.useState<RehearsalRow | null>(null);
@@ -56,6 +58,17 @@ export default function Home() {
     const end = rehearsal.end_time
       ? parseLocalISO(rehearsal.end_time)
       : new Date(start.getTime() + 3 * 60 * 60 * 1000);
+
+    // 签到窗口检查：排练已结束或提前超过 30 分钟不允许签到
+    if (now.getTime() > end.getTime()) {
+      alert("排练已结束，无法签到");
+      return;
+    }
+    if (!canSignIn(now, start, end)) {
+      alert("排练尚未开始，暂不能签到");
+      return;
+    }
+
     const status = judgeAttendanceStatus(now, start, end);
 
     if (rehearsal.type === "section") {
@@ -100,15 +113,25 @@ export default function Home() {
       setCodeError("签到码错误");
       return;
     }
-    setCodeSubmitting(true);
 
     const now = new Date();
     const start = parseLocalISO(codeRehearsal.start_time!);
     const end = codeRehearsal.end_time
       ? parseLocalISO(codeRehearsal.end_time)
       : new Date(start.getTime() + 3 * 60 * 60 * 1000);
+
+    // 签到窗口检查：排练已结束或提前超过 30 分钟不允许签到
+    if (now.getTime() > end.getTime()) {
+      alert("排练已结束，无法签到");
+      return;
+    }
+    if (!canSignIn(now, start, end)) {
+      alert("排练尚未开始，暂不能签到");
+      return;
+    }
     const status = judgeAttendanceStatus(now, start, end);
 
+    setCodeSubmitting(true);
     const err = await upsert([
       {
         rehearsal_id: codeRehearsal.id,
@@ -145,16 +168,22 @@ export default function Home() {
         </div>
       )}
 
-      {/* 公告 */}
+      {/* 公告（点击查看详情） */}
       {!announcementLoading && announcement?.content && (
-        <Card className="mb-4 border-warning-bg bg-warning-bg/80">
-          <div className="flex items-center gap-2">
-            <span className="shrink-0 text-warning">📢</span>
-            <p className="min-w-0 break-words line-clamp-3 text-xs text-warning">
-              {announcement.content}
-            </p>
-          </div>
-        </Card>
+        <button
+          type="button"
+          onClick={() => setShowAnnouncementDetail(true)}
+          className="mb-4 block w-full text-left"
+        >
+          <Card className="border-warning-bg bg-warning-bg/80">
+            <div className="flex items-center gap-2">
+              <span className="shrink-0 text-warning">📢</span>
+              <p className="min-w-0 break-words line-clamp-3 text-xs text-warning">
+                {announcement.content}
+              </p>
+            </div>
+          </Card>
+        </button>
       )}
 
       {/* 排练日程 */}
@@ -195,6 +224,23 @@ export default function Home() {
           ))
         )}
       </section>
+
+      {/* 公告详情 */}
+      <Modal
+        open={showAnnouncementDetail}
+        onClose={() => setShowAnnouncementDetail(false)}
+        title="公告详情"
+        position="bottom"
+      >
+        <div className="space-y-3">
+          <p className="text-label text-text-muted">
+            发布时间：{formatDateTimeInChina(announcement?.created_at ?? null)}
+          </p>
+          <p className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-text">
+            {announcement?.content}
+          </p>
+        </div>
+      </Modal>
 
       <CodeVerifyModal
         open={!!codeRehearsal}

@@ -15,7 +15,7 @@ function mockClient<T>(responses: T[]) {
   return {
     from: () => ({
       select: () => c(responses[i++]),
-      insert: () => c(responses[i++]),
+      insert: () => ({ select: () => c(responses[i++]) }),
       update: () => ({ eq: () => c(responses[i++]) }),
       delete: () => ({ eq: () => c(responses[i++]) }),
     }),
@@ -40,8 +40,7 @@ describe("usePosts", () => {
   it("create 发布帖子", async () => {
     const c = mockClient([
       { data: [], error: null }, // fetch
-      { data: null, error: null }, // insert
-      { data: [{ id: "1" }], error: null }, // re-fetch
+      { data: [{ id: "1", title: "新帖子", author_id: "u1" }], error: null }, // insert（乐观更新，无需再 fetch）
     ]);
     const { result } = renderHook(() => usePosts({ client: c as never }));
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -56,8 +55,7 @@ describe("usePosts", () => {
     const c = mockClient([
       { data: [{ id: "1" }], error: null }, // fetch
       { data: null, error: null }, // select image_url（无图片）
-      { data: null, error: null }, // delete
-      { data: [], error: null }, // re-fetch
+      { data: null, error: null }, // delete（乐观更新，无需再 fetch）
     ]);
     const { result } = renderHook(() => usePosts({ client: c as never }));
     await waitFor(() => expect(result.current.loading).toBe(false));

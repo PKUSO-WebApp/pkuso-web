@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthGate } from "@/components/auth-gate";
@@ -19,6 +19,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "乐团管理助手",
   description: "面向乐团的移动端管理助手",
+};
+
+// iOS 键盘弹起时收缩视口高度：h-[100dvh] 不含软键盘，默认 resizes-visual 会遮挡
+// 全屏编辑底部操作栏，改 resizes-content 让页面随键盘压缩、底部栏始终可见
+export const viewport: Viewport = {
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({

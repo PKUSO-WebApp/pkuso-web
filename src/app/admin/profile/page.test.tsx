@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import ProfilePage from "./page";
 import { supabase } from "@/lib/supabase";
 import { getFreshAccessToken } from "@/lib/auth-token";
+import { EMAIL_SIGNATURE_MAX_LENGTH } from "@/lib/email-signature";
 import type { InvitationCodeRow } from "@/types/database";
 
 vi.mock("@/lib/supabase", () => ({
@@ -995,5 +996,336 @@ describe("邀请码管理", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     // 提交状态已复位，保存按钮可再次点击
     expect(screen.getByRole("button", { name: /^保存$/ })).not.toBeDisabled();
+  });
+});
+
+// ---- Issue #125：签名编辑体验优化（rows=9 + 全屏编辑）----
+
+describe("邮件签名全屏编辑", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  const SIGNATURE_PLACEHOLDER = "如：北京大学交响乐团管理团队";
+
+  /** 模拟 /api/admin/settings：GET 返回 initialValue，PUT 返回成功 */
+  const mockSettingsFetch = (initialValue = "我的签名") =>
+    vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ key: "email_signature", value: "已保存" }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ key: "email_signature", value: initialValue }),
+      });
+    });
+
+  /** 打开签名 Modal 并等待首次加载完成 */
+  const openSigModal = async (fetchMock: Mock) => {
+    vi.stubGlobal("fetch", fetchMock);
+    const utils = render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /邮件签名设置/ }));
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(SIGNATURE_PLACEHOLDER)).toBeInTheDocument();
+    });
+    return utils;
+  };
+
+  /** 全屏覆盖层（Modal 仍打开，DOM 中共两个 dialog） */
+  const getFullscreenOverlay = () => screen.getByRole("dialog", { name: "编辑邮件签名" });
+
+  it("常规态：签名 textarea rows=9", async () => {
+    await openSigModal(mockSettingsFetch());
+
+    expect(screen.getByPlaceholderText(SIGNATURE_PLACEHOLDER)).toHaveAttribute("rows", "9");
+  });
+
+  it("点「全屏」：覆盖层出现，textarea 值与弹窗草稿一致（共用 state）", async () => {
+    await openSigModal(mockSettingsFetch("草稿A"));
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+
+    const overlay = getFullscreenOverlay();
+    // 覆盖层与弹窗的 textarea 共用 sigValue，草稿未动
+    expect(within(overlay).getByPlaceholderText(SIGNATURE_PLACEHOLDER)).toHaveValue("草稿A");
+    // Modal 保持打开（两个 dialog），弹窗 textarea 仍在
+    expect(screen.getAllByRole("dialog")).toHaveLength(2);
+    expect(screen.getAllByPlaceholderText(SIGNATURE_PLACEHOLDER)).toHaveLength(2);
+  });
+
+  it("全屏中编辑后返回：草稿保留在弹窗", async () => {
+    await openSigModal(mockSettingsFetch("草稿A"));
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+    const overlay = getFullscreenOverlay();
+
+    const overlayTextarea = within(overlay).getByPlaceholderText(SIGNATURE_PLACEHOLDER);
+    fireEvent.change(overlayTextarea, { target: { value: "草稿B" } });
+
+    fireEvent.click(within(overlay).getByRole("button", { name: /^返回$/ }));
+
+    // 覆盖层关闭，弹窗内草稿保留
+    expect(screen.queryByRole("dialog", { name: "编辑邮件签名" })).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText(SIGNATURE_PLACEHOLDER)).toHaveValue("草稿B");
+  });
+
+  it("全屏点「保存」：调用 PUT，成功后关闭全屏回到弹窗并显示「签名已保存」", async () => {
+    const fetchMock = mockSettingsFetch("我的签名");
+    await openSigModal(fetchMock);
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+    const overlay = getFullscreenOverlay();
+    fireEvent.click(within(overlay).getByRole("button", { name: /^保存$/ }));
+
+    await waitFor(() => {
+      // 保存走 PUT /api/admin/settings
+      const putCall = fetchMock.mock.calls.find(
+        ([, init]) => (init as RequestInit | undefined)?.method === "PUT",
+      );
+      expect(putCall).toBeDefined();
+    });
+
+    await waitFor(() => {
+      // 成功：关闭全屏回到弹窗，弹窗显示"签名已保存"
+      expect(screen.queryByRole("dialog", { name: "编辑邮件签名" })).not.toBeInTheDocument();
+      expect(screen.getByText("签名已保存")).toBeInTheDocument();
+    });
+  });
+
+  it("保存中：全屏关闭/返回/保存按钮禁用", async () => {
+    await openSigModal(mockSettingsFetch());
+
+    // 让保存挂起（getFreshAccessToken 不 resolve），保持 sigSubmitting=true
+    const pendingToken = new Promise<never>(() => {});
+    (getFreshAccessToken as Mock).mockImplementationOnce(() => pendingToken);
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+    const overlay = getFullscreenOverlay();
+    fireEvent.click(within(overlay).getByRole("button", { name: /^保存$/ }));
+
+    await waitFor(() => {
+      expect(within(overlay).getByRole("button", { name: /保存中…/ })).toBeDisabled();
+    });
+    expect(within(overlay).getByLabelText("关闭全屏编辑")).toBeDisabled();
+    expect(within(overlay).getByRole("button", { name: /^返回$/ })).toBeDisabled();
+  });
+
+  it("保存开始后焦点移入覆盖层根，根上按 Tab 被 preventDefault（焦点不逃逸出覆盖层）", async () => {
+    await openSigModal(mockSettingsFetch());
+
+    // 让保存挂起（getFreshAccessToken 不 resolve），保持 sigSubmitting=true
+    const pendingToken = new Promise<never>(() => {});
+    (getFreshAccessToken as Mock).mockImplementationOnce(() => pendingToken);
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+    const overlay = getFullscreenOverlay();
+    fireEvent.click(within(overlay).getByRole("button", { name: /^保存$/ }));
+
+    await waitFor(() => {
+      expect(within(overlay).getByRole("button", { name: /保存中…/ })).toBeDisabled();
+    });
+
+    // 关键前提：保存开始后（覆盖层内全部按钮 disabled），焦点被主动移入覆盖层根。
+    // 真实浏览器中 disabled 持焦会把 activeElement 移到 body（HTML focus fixup；
+    // jsdom 不模拟），之后 Tab 的 keydown target 是 body、不冒泡到覆盖层，焦点循环
+    // 收不到事件 → preventDefault 不生效；实现侧把焦点主动移到覆盖层根（tabIndex=-1），
+    // 保证后续 keydown 一定从覆盖层内（根节点或其后代）冒泡
+    expect(document.activeElement).toBe(overlay);
+
+    // 保存中覆盖层内全部按钮 disabled：无可聚焦元素（触发空列表拦截分支）
+    expect(getOverlayFocusables(overlay)).toHaveLength(0);
+
+    // 覆盖层根上按 Tab：必须被拦截（preventDefault），
+    // 否则浏览器默认 Tab 会让焦点逃逸到覆盖层外（如「退出登录」），Enter 误触直接登出丢草稿
+    const preventDefaulted = fireEvent.keyDown(overlay, { key: "Tab" }) === false;
+    expect(preventDefaulted).toBe(true);
+    // 焦点未逃逸出覆盖层：仍停留在覆盖层根（元素恢复可用后焦点循环自然恢复）
+    expect(document.activeElement).toBe(overlay);
+  });
+
+  it("全屏打开时锁定背景滚动，关闭后恢复", async () => {
+    await openSigModal(mockSettingsFetch());
+    expect(document.body.style.overflow).toBe("");
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+    expect(document.body.style.overflow).toBe("hidden");
+
+    fireEvent.click(within(getFullscreenOverlay()).getByRole("button", { name: /^返回$/ }));
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  it("组件卸载时恢复背景滚动", async () => {
+    const { unmount } = await openSigModal(mockSettingsFetch());
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+    expect(document.body.style.overflow).toBe("hidden");
+
+    unmount();
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  // ---- Issue #129 回归（对抗审查 S1）：全屏打开时底层 Modal 必须 inert 隔离 ----
+
+  it("全屏打开时底层 Modal 被 inert 隔离（Tab 无法逃逸误触「关闭」丢草稿）", async () => {
+    await openSigModal(mockSettingsFetch());
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+    const overlay = getFullscreenOverlay();
+    const modalDialog = screen.getAllByRole("dialog").find((d) => d !== overlay);
+    expect(modalDialog).toBeDefined();
+    // 底层弹窗容器带 inert：不可聚焦、不可点击，Tab 无法逃逸
+    expect(modalDialog!.parentElement).toHaveAttribute("inert");
+  });
+
+  it("关闭全屏后底层 Modal 解除 inert 隔离", async () => {
+    await openSigModal(mockSettingsFetch());
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+    const overlay = getFullscreenOverlay();
+
+    fireEvent.click(within(overlay).getByRole("button", { name: /^返回$/ }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "编辑邮件签名" })).not.toBeInTheDocument();
+    });
+    // 覆盖层关闭后，弹窗恢复可交互（不再 inert）
+    expect(screen.getByRole("dialog").parentElement).not.toHaveAttribute("inert");
+  });
+
+  it("关闭全屏后焦点归还给弹窗「全屏」按钮", async () => {
+    await openSigModal(mockSettingsFetch());
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+    const overlay = getFullscreenOverlay();
+    fireEvent.click(within(overlay).getByRole("button", { name: /^返回$/ }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /全屏$/ })).toHaveFocus();
+    });
+  });
+
+  // ---- Issue #129 回归：保存失败留在全屏 + maxLength ----
+
+  it("全屏保存失败：留在全屏并显示错误提示", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          json: async () => ({ error: "保存失败：服务器错误" }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ key: "email_signature", value: "草稿A" }),
+      });
+    });
+    await openSigModal(fetchMock as Mock);
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+    const overlay = getFullscreenOverlay();
+    fireEvent.click(within(overlay).getByRole("button", { name: /^保存$/ }));
+
+    await waitFor(() => {
+      // 保存失败：仍停留在全屏覆盖层，错误提示可见
+      expect(getFullscreenOverlay()).toBeInTheDocument();
+      expect(within(getFullscreenOverlay()).getByText("保存失败：服务器错误")).toBeInTheDocument();
+    });
+  });
+
+  it("覆盖层 textarea 限制 maxLength=500", async () => {
+    await openSigModal(mockSettingsFetch());
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+    const overlay = getFullscreenOverlay();
+
+    expect(within(overlay).getByPlaceholderText(SIGNATURE_PLACEHOLDER)).toHaveAttribute(
+      "maxlength",
+      String(EMAIL_SIGNATURE_MAX_LENGTH),
+    );
+  });
+
+  // ---- 对抗复验：全屏覆盖层焦点循环（focus trap）----
+  // 按 DOM 顺序收集覆盖层内可聚焦元素：✕ 关闭 → textarea → 返回 → 保存
+
+  /** 收集覆盖层内当前可聚焦元素（与实现侧 handleFullscreenKeyDown 的四重过滤规则一致：
+      disabled / aria-hidden="true" / tabIndex<0（含覆盖层根 tabIndex=-1）/ 位于 [inert] 内） */
+  const getOverlayFocusables = (overlay: HTMLElement) =>
+    Array.from(overlay.querySelectorAll<HTMLElement>("button, textarea, [tabindex]")).filter(
+      (el) => {
+        if (el.hasAttribute("disabled")) return false;
+        if (el.getAttribute("aria-hidden") === "true") return false;
+        if (el.tabIndex < 0) return false;
+        if (el.closest("[inert]")) return false;
+        return true;
+      },
+    );
+
+  it("全屏中 Tab：末元素（保存）按 Tab 循环回首元素（✕ 关闭），焦点不逃逸到页面", async () => {
+    await openSigModal(mockSettingsFetch());
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+    const overlay = getFullscreenOverlay();
+
+    const focusables = getOverlayFocusables(overlay);
+    expect(focusables.length).toBeGreaterThanOrEqual(4);
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+
+    last.focus();
+    expect(last).toHaveFocus();
+
+    // fireEvent 返回 dispatchEvent 结果：handler 调用 preventDefault 时为 false
+    const preventDefaulted = fireEvent.keyDown(last, { key: "Tab" }) === false;
+    expect(preventDefaulted).toBe(true);
+    // 焦点循环回首元素，末元素不再持有焦点
+    expect(first).toHaveFocus();
+    expect(document.activeElement).not.toBe(last);
+  });
+
+  it("全屏中 Shift+Tab：首元素（✕ 关闭）按 Shift+Tab 循环到末元素（保存）", async () => {
+    await openSigModal(mockSettingsFetch());
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+    const overlay = getFullscreenOverlay();
+
+    const focusables = getOverlayFocusables(overlay);
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+
+    first.focus();
+    expect(first).toHaveFocus();
+
+    const preventDefaulted = fireEvent.keyDown(first, { key: "Tab", shiftKey: true }) === false;
+    expect(preventDefaulted).toBe(true);
+    expect(last).toHaveFocus();
+  });
+
+  it("全屏中在中间元素（textarea）按 Tab 不触发循环（preventDefault 不被调用）", async () => {
+    await openSigModal(mockSettingsFetch());
+
+    fireEvent.click(screen.getByRole("button", { name: /全屏$/ }));
+    const overlay = getFullscreenOverlay();
+
+    // 中间元素：覆盖层 textarea（唯一可输入控件）
+    const middle = within(overlay).getByPlaceholderText(SIGNATURE_PLACEHOLDER);
+    middle.focus();
+    expect(middle).toHaveFocus();
+
+    const preventDefaulted = fireEvent.keyDown(middle, { key: "Tab" }) === false;
+    expect(preventDefaulted).toBe(false);
+    // 焦点不被循环逻辑改动，交由浏览器默认 Tab 顺序
+    expect(middle).toHaveFocus();
   });
 });

@@ -67,6 +67,87 @@ export default function ProfilePage() {
   const [sigValue, setSigValue] = React.useState("");
   const [sigError, setSigError] = React.useState<string | null>(null);
   const [sigSuccess, setSigSuccess] = React.useState(false);
+  const [isSigFullscreen, setIsSigFullscreen] = React.useState(false);
+
+  // 全屏编辑时锁定背景滚动（清理时恢复；组件卸载时 cleanup 同样恢复）
+  React.useEffect(() => {
+    if (!isSigFullscreen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isSigFullscreen]);
+
+  // 全屏入口按钮 ref：全屏关闭后把焦点归还给它，避免焦点停在已卸载的覆盖层上
+  const fullscreenToggleRef = React.useRef<HTMLButtonElement>(null);
+
+  // 全屏关闭（或组件卸载）时归还焦点到「⤢ 全屏」按钮；
+  // 先捕获节点再用于 cleanup：cleanup 执行时 ref 可能已变化，且卸载时 focus 天然 no-op
+  React.useEffect(() => {
+    if (!isSigFullscreen) return;
+    const toggleBtn = fullscreenToggleRef.current;
+    return () => {
+      toggleBtn?.focus();
+    };
+  }, [isSigFullscreen]);
+
+  // 全屏覆盖层根节点 ref：焦点循环（focus trap）据此实时查询容器内可聚焦元素
+  const fullscreenRef = React.useRef<HTMLDivElement>(null);
+
+  /**
+   * 全屏覆盖层焦点循环：Tab/Shift+Tab 永远停留在覆盖层内，
+   * 防止焦点逃逸到页面其他按钮（如「退出登录」），误触回车直接登出丢失草稿。
+   * 注意：必须用 e.key === "Tab" 精确匹配（Tab 的 key 是 "Tab"，不是 keyCode）
+   */
+  const handleFullscreenKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Tab") return;
+    const container = fullscreenRef.current;
+    if (!container) return;
+    // 每次按键实时查询容器内可聚焦元素（querySelectorAll 以容器为作用域），
+    // 保证 disabled/显隐变化后顺序仍正确；disabled、aria-hidden、inert、
+    // tabindex="-1"（仅可编程聚焦，不参与 Tab 顺序）的元素均排除
+    const focusables = Array.from(
+      container.querySelectorAll<HTMLElement>("button, textarea, [tabindex]"),
+    ).filter((el) => {
+      if (el.hasAttribute("disabled")) return false;
+      if (el.getAttribute("aria-hidden") === "true") return false;
+      if (el.tabIndex < 0) return false;
+      if (el.closest("[inert]")) return false;
+      return true;
+    });
+    if (focusables.length === 0) {
+      // 覆盖层内无可聚焦元素（如保存中全部按钮 disabled）：
+      // 同样必须拦截 Tab，否则焦点逃逸到覆盖层外（如「退出登录」），Enter 误触直接登出丢草稿。
+      // 真实浏览器中 disabled 持焦会把 activeElement 移到 body（focus fixup），之后 keydown
+      // target 是 body、不会冒泡到这里——handleSaveSignature 进入提交时已主动把焦点移入
+      // 覆盖层根（tabIndex=-1），保证此处的 keydown 一定来自覆盖层内（根节点或其后代），
+      // preventDefault 真实生效。焦点停留在原地，元素恢复可用后焦点循环自然恢复
+      e.preventDefault();
+      return;
+    }
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    // 边界判定：焦点是否落在可聚焦列表内。
+    // 不在列表内的元素（容器内 disabled/aria-hidden 等被过滤的元素、以及容器外元素）
+    // 一律视为边界——否则点击「保存」后按钮 disabled 且焦点仍停在上面时，
+    // 浏览器默认 Tab 会让焦点逃逸到覆盖层外（如「退出登录」），Enter 误触直接登出丢草稿
+    const active = document.activeElement as HTMLElement | null;
+    const onFocusable = active !== null && focusables.includes(active);
+    if (e.shiftKey) {
+      // Shift+Tab：焦点不在可聚焦列表内、或在首元素时循环到末元素
+      if (!onFocusable || active === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      // Tab：焦点不在可聚焦列表内、或在末元素时循环回首元素
+      if (!onFocusable || active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  };
 
   const handleLogout = () => {
     logout();
@@ -210,15 +291,36 @@ export default function ProfilePage() {
 
   const handleOpenSigModal = () => {
     setIsSigModalOpen(true);
+    setIsSigFullscreen(false);
     setSigSuccess(false);
     void fetchSignature();
   };
 
-  /** 保存邮件签名：ref 同步阻断 + state 异步兜底，防止重复提交 */
-  const handleSaveSignature = async () => {
-    if (sigSubmittingRef.current || sigSubmitting) return;
+  /** 关闭签名 Modal：若全屏编辑开着，一并关闭，避免覆盖层残留 */
+  const handleCloseSigModal = () => {
+    if (sigSubmitting) return;
+    setIsSigModalOpen(false);
+    setIsSigFullscreen(false);
+  };
+
+  /** 全屏编辑中的保存：成功后关闭全屏回到弹窗（弹窗显示"签名已保存"） */
+  const handleSaveFromFullscreen = async () => {
+    const ok = await handleSaveSignature();
+    if (ok) setIsSigFullscreen(false);
+  };
+
+  /** 保存邮件签名：ref 同步阻断 + state 异步兜底，防止重复提交；成功返回 true */
+  const handleSaveSignature = async (): Promise<boolean> => {
+    if (sigSubmittingRef.current || sigSubmitting) return false;
     sigSubmittingRef.current = true;
     setSigSubmitting(true);
+    // 保存开始后覆盖层内全部按钮将 disabled。真实浏览器中 disabled 持焦会把 activeElement
+    // 移到 body（HTML focus fixup；jsdom 不模拟），之后 Tab 的 keydown target 是 body、
+    // 不冒泡经过覆盖层 → handleFullscreenKeyDown 收不到 → 空列表分支的 preventDefault
+    // 不生效 → 焦点逃逸到页面按钮（如「管理邀请码」）。
+    // 因此主动把焦点移入覆盖层根（tabIndex=-1，可编程聚焦但不进 Tab 顺序），
+    // 之后 keydown 从覆盖层内冒泡，空列表分支的 preventDefault 真实生效
+    if (isSigFullscreen) fullscreenRef.current?.focus();
     setSigError(null);
     setSigSuccess(false);
     try {
@@ -226,7 +328,7 @@ export default function ProfilePage() {
       if (!token) {
         // token 获取失败（登录过期），不发请求，提示重新登录
         setSigError("登录状态异常，请重新登录");
-        return;
+        return false;
       }
       const trimmed = sigValue.trim();
       const res = await fetch("/api/admin/settings", {
@@ -241,8 +343,10 @@ export default function ProfilePage() {
       if (!res.ok) throw new Error(result.error || "保存失败，请重试");
       setSigValue(trimmed);
       setSigSuccess(true);
+      return true;
     } catch (err) {
       setSigError(err instanceof Error ? err.message : "保存失败，请重试");
+      return false;
     } finally {
       sigSubmittingRef.current = false;
       setSigSubmitting(false);
@@ -358,79 +462,165 @@ export default function ProfilePage() {
         </form>
       </Modal>
 
-      {/* 邮件签名设置 Modal */}
-      <Modal
-        open={isSigModalOpen}
-        onClose={() => {
-          if (!sigSubmitting) setIsSigModalOpen(false);
-        }}
-        title="邮件签名设置"
-        position="bottom"
-        closeOnOverlay={!sigSubmitting}
-      >
-        <div className="mt-4 space-y-3 pb-safe">
-          <p className="text-xs text-text-muted">排练通知邮件底部的落款签名</p>
+      {/* 邮件签名设置 Modal（全屏编辑打开时 inert 隔离：Tab/点击无法逃逸到弹窗，防止误触「关闭」丢草稿） */}
+      <div inert={isSigFullscreen}>
+        <Modal
+          open={isSigModalOpen}
+          onClose={handleCloseSigModal}
+          title="邮件签名设置"
+          position="bottom"
+          closeOnOverlay={!sigSubmitting}
+        >
+          <div className="mt-4 space-y-3 pb-safe">
+            <p className="text-xs text-text-muted">排练通知邮件底部的落款签名</p>
 
-          {sigLoading ? (
-            <p className="py-6 text-center text-xs text-text-muted">加载中…</p>
-          ) : sigError && sigValue === "" ? (
-            <div className="py-4 text-center">
-              <p className="text-xs text-danger">加载失败：{sigError}</p>
+            {sigLoading ? (
+              <p className="py-6 text-center text-xs text-text-muted">加载中…</p>
+            ) : sigError && sigValue === "" ? (
+              <div className="py-4 text-center">
+                <p className="text-xs text-danger">加载失败：{sigError}</p>
+                <button
+                  type="button"
+                  onClick={() => void fetchSignature()}
+                  className="mt-3 rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted"
+                >
+                  重试
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="relative">
+                  {/* 不用 .input（其固定 height 会让 rows 失效），显式类与输入框样式保持一致 */}
+                  <textarea
+                    value={sigValue}
+                    onChange={(e) => {
+                      setSigValue(e.target.value);
+                      setSigSuccess(false);
+                    }}
+                    rows={9}
+                    maxLength={EMAIL_SIGNATURE_MAX_LENGTH}
+                    disabled={sigSubmitting}
+                    className="w-full resize-none rounded-xl border border-border bg-muted px-3 py-3 pr-16 text-xs leading-[1.6] text-text outline-none focus:border-text-muted"
+                    placeholder="如：北京大学交响乐团管理团队"
+                  />
+                  {/* 全屏编辑入口：不动 sigValue，草稿自然保留 */}
+                  <button
+                    type="button"
+                    ref={fullscreenToggleRef}
+                    disabled={sigSubmitting}
+                    onClick={() => setIsSigFullscreen(true)}
+                    className="absolute right-2 top-2 rounded-full border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-muted hover:bg-muted disabled:opacity-60"
+                  >
+                    ⤢ 全屏
+                  </button>
+                </div>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-text-muted">多行内容在邮件中会合并为一行显示</p>
+                  <p className="text-xs text-text-muted">
+                    {sigValue.length}/{EMAIL_SIGNATURE_MAX_LENGTH}
+                  </p>
+                </div>
+                {!sigValue.trim() && (
+                  <p className="text-xs text-text-muted">未设置时邮件将使用默认签名</p>
+                )}
+                {sigSuccess && <p className="text-xs text-success">签名已保存</p>}
+                {sigError && <p className="text-xs text-danger">{sigError}</p>}
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={sigSubmitting}
+                    onClick={handleCloseSigModal}
+                    className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted disabled:opacity-60"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    disabled={sigSubmitting}
+                    onClick={() => void handleSaveSignature()}
+                    className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+                  >
+                    {sigSubmitting ? "保存中…" : "保存"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </Modal>
+      </div>
+
+      {/* 邮件签名全屏编辑覆盖层（页内独立，不动共享 Modal；z-index 高于 Modal 的 --z-modal） */}
+      {isSigFullscreen && (
+        <div
+          ref={fullscreenRef}
+          onKeyDown={handleFullscreenKeyDown}
+          // tabIndex=-1：可编程聚焦但不进 Tab 顺序。保存开始时焦点会被主动移入此根节点，
+          // 保证后续 keydown（target 在覆盖层内）能冒泡到 onKeyDown，空列表分支的
+          // preventDefault 真实生效（详见 handleSaveSignature / handleFullscreenKeyDown 注释）
+          tabIndex={-1}
+          className="fixed inset-0 flex h-[100dvh] flex-col overscroll-contain bg-page-bg"
+          style={{ zIndex: "var(--z-overlay)" }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="编辑邮件签名"
+        >
+          {/* 顶部栏 */}
+          <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+            <h2 className="text-base font-semibold text-text">编辑邮件签名</h2>
+            <button
+              type="button"
+              aria-label="关闭全屏编辑"
+              disabled={sigSubmitting}
+              onClick={() => setIsSigFullscreen(false)}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-text-muted hover:bg-border disabled:opacity-60"
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* 中间：textarea 铺满（text-base 防 iOS 聚焦缩放） */}
+          <div className="flex min-h-0 flex-1 flex-col">
+            <textarea
+              autoFocus
+              value={sigValue}
+              onChange={(e) => {
+                setSigValue(e.target.value);
+                setSigSuccess(false);
+              }}
+              maxLength={EMAIL_SIGNATURE_MAX_LENGTH}
+              disabled={sigSubmitting}
+              className="w-full min-h-0 flex-1 resize-none overscroll-contain rounded-xl border border-border bg-muted px-4 py-3 text-base leading-[1.6] text-text outline-none focus:border-text-muted"
+              placeholder="如：北京大学交响乐团管理团队"
+            />
+            {sigError && <p className="shrink-0 px-4 pb-2 text-xs text-danger">{sigError}</p>}
+          </div>
+
+          {/* 底部栏 */}
+          <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border px-4 py-3 pb-safe">
+            <p className="text-xs text-text-muted">
+              {sigValue.length}/{EMAIL_SIGNATURE_MAX_LENGTH}
+            </p>
+            <div className="flex shrink-0 gap-2">
               <button
                 type="button"
-                onClick={() => void fetchSignature()}
-                className="mt-3 rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted"
+                disabled={sigSubmitting}
+                onClick={() => setIsSigFullscreen(false)}
+                className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted disabled:opacity-60"
               >
-                重试
+                返回
+              </button>
+              <button
+                type="button"
+                disabled={sigSubmitting}
+                onClick={() => void handleSaveFromFullscreen()}
+                className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+              >
+                {sigSubmitting ? "保存中…" : "保存"}
               </button>
             </div>
-          ) : (
-            <>
-              <textarea
-                value={sigValue}
-                onChange={(e) => {
-                  setSigValue(e.target.value);
-                  setSigSuccess(false);
-                }}
-                rows={3}
-                maxLength={EMAIL_SIGNATURE_MAX_LENGTH}
-                disabled={sigSubmitting}
-                className="input resize-none p-3 leading-[1.6]"
-                placeholder="如：北京大学交响乐团管理团队"
-              />
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-text-muted">多行内容在邮件中会合并为一行显示</p>
-                <p className="text-xs text-text-muted">
-                  {sigValue.length}/{EMAIL_SIGNATURE_MAX_LENGTH}
-                </p>
-              </div>
-              {!sigValue.trim() && (
-                <p className="text-xs text-text-muted">未设置时邮件将使用默认签名</p>
-              )}
-              {sigSuccess && <p className="text-xs text-success">签名已保存</p>}
-              {sigError && <p className="text-xs text-danger">{sigError}</p>}
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  disabled={sigSubmitting}
-                  onClick={() => setIsSigModalOpen(false)}
-                  className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted disabled:opacity-60"
-                >
-                  取消
-                </button>
-                <button
-                  type="button"
-                  disabled={sigSubmitting}
-                  onClick={() => void handleSaveSignature()}
-                  className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
-                >
-                  {sigSubmitting ? "保存中…" : "保存"}
-                </button>
-              </div>
-            </>
-          )}
+          </div>
         </div>
-      </Modal>
+      )}
 
       {/* 生成邀请码 Modal */}
       <Modal

@@ -130,7 +130,7 @@ export async function fetchEmailSignature(
   }
 }
 
-/** 组装排练通知邮件 HTML（签名拼在「请各位团员准时出席！」之后，经 e() 转义） */
+/** 组装排练通知邮件 HTML（签名拼在「请各位团员准时出席！」之后，先 e() 转义防注入，再将 \n/\r\n 转为 <br/> 保留换行） */
 export function buildRehearsalHtml(params: {
   title: string;
   dateStr: string;
@@ -138,12 +138,14 @@ export function buildRehearsalHtml(params: {
   signature: string;
 }) {
   const { title, dateStr, location, signature } = params;
+  // 先转义再 nl2br：e() 保证用户内容不可注入；<br/> 是我们自己生成的标签，不来自用户输入
+  const signatureHtml = e(signature).replace(/\r\n|\n/g, "<br/>");
   return `
     <h2>排练通知</h2>
     <p><strong>曲目：</strong>${e(title)}</p>
     <p><strong>时间：</strong>${e(dateStr)}</p>
     <p><strong>地点：</strong>${e(location)}</p>
     <p>请各位团员准时出席！</p>
-    <p style="margin-top:24px;color:#666;">——<br/>${e(signature)}</p>
+    <p style="margin-top:24px;color:#666;">——<br/>${signatureHtml}</p>
   `;
 }

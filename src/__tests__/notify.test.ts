@@ -123,6 +123,29 @@ describe("buildRehearsalHtml() — 邮件 HTML 组装", () => {
     expect(html).toContain("&lt;b&gt;签名&lt;/b&gt;");
     expect(html).not.toContain("<b>签名</b>");
   });
+
+  it("多行签名（\\n 与 \\r\\n 混合）→ 换行全部转为 <br/>，原始换行不残留", () => {
+    const html = buildRehearsalHtml({
+      ...base,
+      signature: "交响乐团理事会\n官方网站：pkuso.org\r\n联系电话：123456",
+    });
+    expect(html).toContain("交响乐团理事会<br/>官方网站：pkuso.org<br/>联系电话：123456");
+    expect(html).not.toContain("交响乐团理事会\n官方网站");
+    expect(html).not.toContain("pkuso.org\r\n联系电话");
+  });
+
+  it("先转义后 nl2br：签名中的标签被转义，换行仍正常转换（无注入路径）", () => {
+    const html = buildRehearsalHtml({ ...base, signature: "<b>理事会</b>\n第二行" });
+    expect(html).toContain("&lt;b&gt;理事会&lt;/b&gt;<br/>第二行");
+    expect(html).not.toContain("<b>理事会</b>");
+    expect(html).not.toContain("<b>理事会</b>\n第二行");
+  });
+
+  it("单行签名行为不变（不产生 <br/>）", () => {
+    const html = buildRehearsalHtml({ ...base, signature: "交响乐团理事会" });
+    expect(html).toContain("交响乐团理事会");
+    expect(html).not.toContain("交响乐团理事会<br/>");
+  });
 });
 
 // ============================================================

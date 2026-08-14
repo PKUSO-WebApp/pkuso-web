@@ -515,7 +515,7 @@ export default function ProfilePage() {
                   </button>
                 </div>
                 <div className="flex items-center justify-between">
-                  <p className="text-xs text-text-muted">多行内容在邮件中会合并为一行显示</p>
+                  <p className="text-xs text-text-muted">支持多行换行</p>
                   <p className="text-xs text-text-muted">
                     {sigValue.length}/{EMAIL_SIGNATURE_MAX_LENGTH}
                   </p>

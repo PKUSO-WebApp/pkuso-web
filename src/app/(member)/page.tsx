@@ -13,6 +13,7 @@ import { CodeVerifyModal } from "./schedule/components/code-verify-modal";
 import type { RehearsalRow } from "@/types/database";
 import { parseLocalISO, formatLocalISO, formatDateTimeInChina } from "@/lib/date-utils";
 import { judgeAttendanceStatus, canSignIn } from "@/lib/attendance-utils";
+import { isRehearsalWithinNextWeek } from "@/lib/rehearsal-utils";
 
 /** 已签到状态：出席或迟到算作已签到 */
 function hasSignedStatus(status?: string): boolean {
@@ -26,6 +27,8 @@ export default function Home() {
   const { map: attendanceMap, fetchMyAttendances, upsert } = useAttendance();
   const [scheduleTab, setScheduleTab] = React.useState<"full" | "section">("full");
   const [showAnnouncementDetail, setShowAnnouncementDetail] = React.useState(false);
+  // 分钟级时钟 tick：跨天停留页面时，定时刷新"今天"边界，驱动列表过滤与签到按钮状态更新
+  const [nowTick, setNowTick] = React.useState(() => Date.now());
 
   // 欢迎语：显示 5 秒后淡出（500ms transition），淡出完成后不再渲染
   const [welcomeVisible, setWelcomeVisible] = React.useState(true);
@@ -42,6 +45,12 @@ export default function Home() {
     };
   }, [user]);
 
+  // 每分钟更新一次 nowTick；依赖数组为空，interval 只在挂载时创建一次
+  React.useEffect(() => {
+    const timer = window.setInterval(() => setNowTick(Date.now()), 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   // 签到码
   const [codeRehearsal, setCodeRehearsal] = React.useState<RehearsalRow | null>(null);
   const [codeInput, setCodeInput] = React.useState("");
@@ -57,8 +66,30 @@ export default function Home() {
 
   const list = React.useMemo(() => {
     if (!rehearsals) return [];
-    return rehearsals.filter((r) => (r.type === "full" ? "full" : "section") === scheduleTab);
-  }, [rehearsals, scheduleTab]);
+    // 显式传入 nowTick 时刻，避免过滤函数内部取 new Date() 导致跨天后列表不刷新
+    const now = new Date(nowTick);
+    return (
+      rehearsals
+        .filter(
+          (r) =>
+            (r.type === "full" ? "full" : "section") === scheduleTab &&
+            // 仅显示未来一周内（含今天）的排练，已过去或超过一周的隐藏
+            isRehearsalWithinNextWeek(r.start_time, now),
+        )
+        // 过滤后按开始时间升序排列（最近的排练优先）。
+        // useRehearsals 返回降序（admin 端共用该 hook，不能改），这里仅对首页展示重新排序；
+        // start_time 为 "YYYY-MM-DDTHH:mm:ss" 零填充格式，字典序与时间序一致，直接字符串比较；
+        // 无 start_time（含空串）的排练排最后
+        .sort((a, b) => {
+          if (!a.start_time && !b.start_time) return 0;
+          if (!a.start_time) return 1; // a 无开始时间，排最后
+          if (!b.start_time) return -1; // b 无开始时间，排最后
+          if (a.start_time < b.start_time) return -1;
+          if (a.start_time > b.start_time) return 1;
+          return 0;
+        })
+    );
+  }, [rehearsals, scheduleTab, nowTick]);
 
   const handleSignIn = async (rehearsal: RehearsalRow) => {
     if (!user || !rehearsals) return;

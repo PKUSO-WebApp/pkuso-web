@@ -345,20 +345,9 @@ export default function CommunityPage() {
         />
       )}
 
-      {/* 图片放大查看浮层 */}
+      {/* 图片放大查看浮层（blob 化：手机端长按保存更可靠，Issue #133） */}
       {zoomImageUrl && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setZoomImageUrl(null)}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={zoomImageUrl}
-            alt="图片放大查看"
-            className="max-h-[90vh] max-w-full rounded-2xl object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
+        <ZoomImageOverlay url={zoomImageUrl} onClose={() => setZoomImageUrl(null)} />
       )}
 
       {publishOpen && (
@@ -373,6 +362,60 @@ export default function CommunityPage() {
           onSubmit={handleSubmit}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * 图片放大查看浮层。
+ * 打开时把跨域原图 fetch 成同源 blob（URL.createObjectURL），
+ * iOS/安卓/微信内置浏览器对 blob 图片长按保存最可靠。
+ */
+function ZoomImageOverlay({ url, onClose }: { url: string; onClose: () => void }) {
+  const [src, setSrc] = React.useState<string>(url);
+
+  React.useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+
+    // 打开瞬间先用原 URL 展示，随后异步替换为 blob URL
+    void (async () => {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`图片加载失败 HTTP ${res.status}`);
+        const blob = await res.blob();
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+      } catch {
+        // fetch 失败（网络/CORS 等）回退原 URL；
+        // Supabase 公共桶默认返回 CORS * 头，跨域 img 展示不受影响
+        if (!cancelled) setSrc(url);
+      }
+    })();
+
+    return () => {
+      // 竞态守卫：URL 变化或组件卸载时丢弃旧请求结果，并回收 blob URL
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [url]);
+
+  return (
+    <div
+      data-testid="zoom-overlay"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+      onClick={onClose}
+    >
+      <div className="flex flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt="图片放大查看"
+          className="max-h-[90vh] max-w-full rounded-2xl object-contain"
+        />
+        <p className="text-xs text-text-muted">长按图片即可保存到相册</p>
+      </div>
     </div>
   );
 }
@@ -434,13 +477,16 @@ function DetailModal({
               className="rounded-2xl border border-border max-w-full h-auto max-h-64 object-contain cursor-pointer hover:opacity-90"
               onClick={() => onZoomImage(post.image_url!)}
             />
-            <button
-              type="button"
-              onClick={() => onSaveQr(post.image_url!)}
-              className="rounded-full bg-muted px-3 py-1.5 text-label font-medium text-text hover:bg-border"
-            >
-              保存图片
-            </button>
+            {/* 暂时隐藏：手机端长按放大视图可直接保存；保留按钮代码，后续若需一键下载（a[download]）再启用 */}
+            {false && (
+              <button
+                type="button"
+                onClick={() => onSaveQr(post.image_url!)}
+                className="rounded-full bg-muted px-3 py-1.5 text-label font-medium text-text hover:bg-border"
+              >
+                保存图片
+              </button>
+            )}
           </div>
         )}
         {post.contact_info && (

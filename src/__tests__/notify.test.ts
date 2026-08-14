@@ -6,6 +6,7 @@ import {
   buildRehearsalHtml,
 } from "@/app/api/notify/route";
 import { EMAIL_SIGNATURE_KEY, DEFAULT_EMAIL_SIGNATURE } from "@/lib/email-signature";
+import { deleteTestUser, sweepTestUsers } from "./e2e-utils";
 
 // ============================================================
 // Mailpit 配置常量（本地 Docker / CI service container）
@@ -245,23 +246,30 @@ describe("POST /api/notify 端到端", () => {
     const { createClient } = await import("@supabase/supabase-js");
     const sb = createClient(supabaseUrl, serviceRoleKey);
 
+    // 0. 预清扫历史残留测试账号（创建临时用户前执行，保证环境干净）
+    await sweepTestUsers(sb);
+
     // 1. 创建临时 admin
     const testEmail = `e2e-${Date.now()}@pkuso.test`;
     const testPassword = `pw-${Date.now()}`;
 
-    const { data: newUser, error: createErr } = await sb.auth.admin.createUser({
+    const { data: newUser } = await sb.auth.admin.createUser({
       email: testEmail,
       password: testPassword,
       email_confirm: true,
     } as never);
-    if (createErr || !newUser?.user?.id) {
+    // error 与 id 可能同时存在（半失败）：只要拿到 id 就继续进入后续清理路径，
+    // 避免"有 error 就 return"把已创建的用户留在库里成为孤儿；
+    // 没拿到 id 则直接放弃——此时无论有无 error，都没有需要清理的用户。
+    if (!newUser?.user?.id) {
       console.log("⚠️ 无法创建测试用户，跳过");
       return;
     }
+    const userId = newUser.user.id;
 
     // 2. upsert admin profile
     await sb.from("profiles").upsert({
-      id: newUser.user.id,
+      id: userId,
       email: testEmail,
       full_name: "E2E Test",
       status: "approved",
@@ -275,8 +283,8 @@ describe("POST /api/notify 端到端", () => {
     });
     if (!session?.session?.access_token) {
       console.log("⚠️ 无法登录测试用户，跳过");
-      await sb.from("profiles").delete().eq("id", newUser.user.id);
-      await sb.auth.admin.deleteUser(newUser.user.id);
+      // 清理失败即抛错：不允许静默孤儿（Issue #129）
+      await deleteTestUser(sb, userId);
       return;
     }
     const token = session.session.access_token;
@@ -345,14 +353,14 @@ describe("POST /api/notify 端到端", () => {
         throw err;
       }
     } finally {
-      // 7. 清理
+      // 7. 清理（失败即抛错：不允许静默孤儿，Issue #129）。
+      //    若 try 内断言已失败，清理错误会覆盖断言错误——测试同样失败，可接受。
       delete process.env.SMTP_USER;
       delete process.env.SMTP_PASS;
       delete process.env.SMTP_HOST;
       delete process.env.SMTP_PORT;
 
-      await sb.from("profiles").delete().eq("id", newUser.user.id);
-      await sb.auth.admin.deleteUser(newUser.user.id);
+      await deleteTestUser(sb, userId);
       console.log(`🧹 已清理测试用户 ${testEmail}`);
     }
   });

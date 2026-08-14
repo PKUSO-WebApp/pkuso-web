@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { GET, PUT } from "@/app/api/admin/settings/route";
 import { EMAIL_SIGNATURE_KEY } from "@/lib/email-signature";
 import type { Database } from "@/types/database.types";
+import { deleteTestUser, sweepTestUsers } from "@/__tests__/e2e-utils";
 
 // ============================================================
 // GET/PUT /api/admin/settings 端到端测试（需 Supabase service role）
@@ -43,6 +44,9 @@ describe("GET/PUT /api/admin/settings", () => {
   // 必须在 beforeAll 备份、afterAll 恢复，绝不触碰/丢失真实签名数据。
   let originalSignature: string | null = null; // 原值（null = 未设置，无行）
   let signatureWasSet = false; // 原值是否已设置（决定恢复时写回还是删除）
+  // 备份是否已完成（决定 afterAll 是否恢复签名）：备份前失败说明签名未被改写，
+  // 不能仅凭 signatureWasSet 初始 false 走"删除"分支——那会误删真实签名行
+  let signatureBackedUp = false;
 
   beforeAll(async () => {
     if (!envReady()) {
@@ -63,24 +67,28 @@ describe("GET/PUT /api/admin/settings", () => {
       );
       const stamp = Date.now();
 
-      // 0. 先备份生产签名原值（在任何改写前执行；afterAll 据此恢复）
+      // 0. 预清扫历史残留测试账号（创建临时用户前执行，保证环境干净）
+      await sweepTestUsers(dbSb);
+
+      // 1. 先备份生产签名原值（在任何改写前执行；afterAll 据此恢复）
       const orig = await dbSb
         .from("app_settings")
         .select("value")
         .eq("key", EMAIL_SIGNATURE_KEY)
         .maybeSingle();
       if (orig.error) throw new Error(`读取签名原值失败：${orig.error.message}`);
+      signatureBackedUp = true;
       signatureWasSet = orig.data !== null;
       originalSignature = orig.data?.value ?? null;
 
-      // 1. 创建临时 admin
+      // 2. 创建临时 admin
       const adminEmail = `settings-admin-${stamp}@pkuso.test`;
       const admin = await authSb.auth.admin.createUser({
         email: adminEmail,
         password: `pw-admin-${stamp}`,
         email_confirm: true,
       } as never);
-      if (admin.error || !admin.data?.user?.id) throw new Error("无法创建 admin 测试用户");
+      if (!admin.data?.user?.id) throw new Error("无法创建 admin 测试用户");
       adminUserId = admin.data.user.id;
       await dbSb.from("profiles").upsert({
         id: adminUserId,
@@ -90,14 +98,14 @@ describe("GET/PUT /api/admin/settings", () => {
         role: "admin",
       } as never);
 
-      // 2. 创建临时 member（用于 403 用例）
+      // 3. 创建临时 member（用于 403 用例）
       const memberEmail = `settings-member-${stamp}@pkuso.test`;
       const member = await authSb.auth.admin.createUser({
         email: memberEmail,
         password: `pw-member-${stamp}`,
         email_confirm: true,
       } as never);
-      if (member.error || !member.data?.user?.id) throw new Error("无法创建 member 测试用户");
+      if (!member.data?.user?.id) throw new Error("无法创建 member 测试用户");
       memberUserId = member.data.user.id;
       await dbSb.from("profiles").upsert({
         id: memberUserId,
@@ -107,7 +115,7 @@ describe("GET/PUT /api/admin/settings", () => {
         role: "member",
       } as never);
 
-      // 3. 登录拿 token（仅用于构造 Authorization 头，数据操作一律走 dbSb）
+      // 4. 登录拿 token（仅用于构造 Authorization 头，数据操作一律走 dbSb）
       const adminSession = await authSb.auth.signInWithPassword({
         email: adminEmail,
         password: `pw-admin-${stamp}`,
@@ -129,37 +137,47 @@ describe("GET/PUT /api/admin/settings", () => {
   }, 90000);
 
   afterAll(async () => {
-    if (!ready) return;
+    // 签名恢复与用户清理均与 ready 标志解耦：beforeAll 中途失败
+    // （如只创建成功一个用户）时，已创建的用户也必须被清理，不留孤儿。
     // 恢复生产签名原值：有则写回原值，无则删除。
     // 取代旧的"无条件删除"——旧实现每次 CI 都会清空 admin 设置的真实签名（S1 严重项）。
-    try {
-      if (signatureWasSet) {
-        await dbSb.from("app_settings").upsert({
-          key: EMAIL_SIGNATURE_KEY,
-          value: originalSignature ?? "",
-          updated_at: new Date().toISOString(),
-        });
-      } else {
-        await dbSb.from("app_settings").delete().eq("key", EMAIL_SIGNATURE_KEY);
+    // 仅在备份成功后恢复（签名未被改写时恢复无害，但备份前失败时
+    // signatureWasSet 仍为初始 false，走删除分支会误删真实签名行，故必须看备份标志）。
+    if (signatureBackedUp) {
+      try {
+        if (signatureWasSet) {
+          await dbSb.from("app_settings").upsert({
+            key: EMAIL_SIGNATURE_KEY,
+            value: originalSignature ?? "",
+            updated_at: new Date().toISOString(),
+          });
+        } else {
+          await dbSb.from("app_settings").delete().eq("key", EMAIL_SIGNATURE_KEY);
+        }
+      } catch {
+        // 恢复失败不影响其他用例结果（网络波动时避免误报）
       }
-    } catch {
-      // 恢复失败不影响其他用例结果（网络波动时避免误报）
     }
+    // 用户清理：不再 try/catch 吞错——清理失败必须让测试失败，
+    // 否则孤儿账号会在共享库积压（Issue #129）。
+    // 两个用户都尝试清理，最后统一抛出聚合错误，避免第一个失败阻断第二个。
+    const cleanupErrors: string[] = [];
     if (adminUserId) {
       try {
-        await dbSb.from("profiles").delete().eq("id", adminUserId);
-        await authSb.auth.admin.deleteUser(adminUserId);
-      } catch {
-        // 忽略清理错误
+        await deleteTestUser(dbSb, adminUserId);
+      } catch (err) {
+        cleanupErrors.push(`admin: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     if (memberUserId) {
       try {
-        await dbSb.from("profiles").delete().eq("id", memberUserId);
-        await authSb.auth.admin.deleteUser(memberUserId);
-      } catch {
-        // 忽略清理错误
+        await deleteTestUser(dbSb, memberUserId);
+      } catch (err) {
+        cleanupErrors.push(`member: ${err instanceof Error ? err.message : String(err)}`);
       }
+    }
+    if (cleanupErrors.length > 0) {
+      throw new Error(`测试用户清理失败: ${cleanupErrors.join("; ")}`);
     }
   }, 60000);
 

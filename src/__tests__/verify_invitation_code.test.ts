@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { deleteTestUser, sweepTestUsers } from "./e2e-utils";
 
 // ============================================================
 // DB 集成测试：verify_and_use_invitation_code 的 CTE 去重（Issue #94 问题2）
@@ -31,16 +32,22 @@ describe("verify_and_use_invitation_code CTE 去重（DB 集成测试）", () =>
     const { createClient } = await import("@supabase/supabase-js");
     const sb = createClient(supabaseUrl, serviceRoleKey);
 
+    // 0. 预清扫历史残留测试账号（创建临时用户前执行，保证环境干净）
+    await sweepTestUsers(sb);
+
     // 1. 创建临时 auth user（用于 p_user_id）
     //    email_confirm: true 让用户立即可用；created_at 默认 NOW() 满足 10 分钟内校验
     const testEmail = `inv-${Date.now()}@pkuso.test`;
     const testPassword = `pw-${Date.now()}`;
-    const { data: newUser, error: createErr } = await sb.auth.admin.createUser({
+    const { data: newUser } = await sb.auth.admin.createUser({
       email: testEmail,
       password: testPassword,
       email_confirm: true,
     } as never);
-    if (createErr || !newUser?.user?.id) {
+    // error 与 id 可能同时存在（半失败）：只要拿到 id 就继续进入后续清理路径，
+    // 避免"有 error 就 return"把已创建的用户留在库里成为孤儿；
+    // 没拿到 id 则直接放弃——此时无论有无 error，都没有需要清理的用户。
+    if (!newUser?.user?.id) {
       console.log("⚠️ 无法创建测试用户，跳过 DB 集成测试");
       return;
     }
@@ -61,11 +68,12 @@ describe("verify_and_use_invitation_code CTE 去重（DB 集成测试）", () =>
       .single();
     if (insertErr || !inserted?.id) {
       console.log("⚠️ 无法创建测试邀请码，跳过 DB 集成测试");
-      await sb.auth.admin.deleteUser(userId);
+      await deleteTestUser(sb, userId);
       return;
     }
     const codeId = inserted.id;
 
+    const cleanupErrors: string[] = [];
     try {
       // 3. 第一次调用：CTE 命中（used_by 为 NULL，去重条件成立），消耗成功
       const { data: firstData, error: firstErr } = await sb.rpc("verify_and_use_invitation_code", {
@@ -103,10 +111,21 @@ describe("verify_and_use_invitation_code CTE 去重（DB 集成测试）", () =>
 
       console.log(`✅ CTE 去重测试通过：邀请码 ${code} 在 user ${userId} 下仅消耗一次`);
     } finally {
-      // 6. 清理临时数据（必须执行，不污染开发库）
-      await sb.from("invitation_codes").delete().eq("id", codeId);
-      await sb.auth.admin.deleteUser(userId);
+      // 6. 清理临时数据（必须执行，不污染开发库）。
+      //    清理错误不直接在 finally 抛——那会掩盖 try 内断言失败的真实原因；
+      //    改为收集错误，在 try 之后统一断言（见下方）：
+      //    - 断言先失败 → 断言错误直接向上抛出，测试失败（清理错误成为次要信息，可接受）
+      //    - 断言全过但清理失败 → 末尾断言命中，测试失败（不允许静默孤儿，Issue #129）
+      const { error: codeDelErr } = await sb.from("invitation_codes").delete().eq("id", codeId);
+      if (codeDelErr) cleanupErrors.push(`邀请码: ${codeDelErr.message}`);
+      try {
+        await deleteTestUser(sb, userId);
+      } catch (err) {
+        cleanupErrors.push(`测试用户: ${err instanceof Error ? err.message : String(err)}`);
+      }
       console.log(`🧹 已清理测试邀请码 ${code} 和测试用户 ${testEmail}`);
     }
+    // 清理失败 = 测试失败（不允许静默孤儿，Issue #129）
+    expect(cleanupErrors).toHaveLength(0);
   }, 60000);
 });

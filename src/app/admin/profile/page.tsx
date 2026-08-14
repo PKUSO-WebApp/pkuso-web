@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useUser } from "@/context/user-context";
 import { LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { getFreshAccessToken } from "@/lib/auth-token";
 import { EMAIL_SIGNATURE_MAX_LENGTH } from "@/lib/email-signature";
 import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
@@ -183,13 +184,16 @@ export default function ProfilePage() {
     setSigLoading(true);
     setSigError(null);
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const token = await getFreshAccessToken();
+      // 序号不匹配说明期间已触发新请求（如关闭后重开），丢弃过期响应
+      if (sigFetchSeqRef.current !== seq) return;
+      if (!token) {
+        // token 获取失败（登录过期），不发请求，提示重新登录
+        setSigError("登录状态异常，请重新登录");
+        return;
+      }
       const res = await fetch("/api/admin/settings", {
-        headers: {
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
+        headers: { Authorization: `Bearer ${token}` },
       });
       const result = await res.json().catch(() => ({}));
       // 序号不匹配说明期间已触发新请求（如关闭后重开），丢弃过期响应
@@ -218,15 +222,18 @@ export default function ProfilePage() {
     setSigError(null);
     setSigSuccess(false);
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const token = await getFreshAccessToken();
+      if (!token) {
+        // token 获取失败（登录过期），不发请求，提示重新登录
+        setSigError("登录状态异常，请重新登录");
+        return;
+      }
       const trimmed = sigValue.trim();
       const res = await fetch("/api/admin/settings", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ value: trimmed }),
       });

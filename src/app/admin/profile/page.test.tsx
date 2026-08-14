@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vite
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import ProfilePage from "./page";
 import { supabase } from "@/lib/supabase";
+import { getFreshAccessToken } from "@/lib/auth-token";
 import type { InvitationCodeRow } from "@/types/database";
 
 vi.mock("@/lib/supabase", () => ({
@@ -21,12 +22,18 @@ vi.mock("@/lib/supabase", () => ({
       updateUser: vi.fn().mockResolvedValue({ error: null }),
       signOut: vi.fn().mockResolvedValue({ error: null }),
       getUser: vi.fn().mockResolvedValue({ data: { user: { id: "test-admin-id" } }, error: null }),
-      // 邮件签名读取/保存通过 getSession 拿 token（fetchSignature / handleSaveSignature 使用）
+      // 邮件签名读取/保存的 token 通过 getFreshAccessToken 获取（fetchSignature / handleSaveSignature 使用）
       getSession: vi
         .fn()
         .mockResolvedValue({ data: { session: { access_token: "test-token" } }, error: null }),
     },
   },
+}));
+
+// 签名流程的 token 获取统一走 getFreshAccessToken（默认返回有效 token，
+// 需要模拟登录过期时在具体用例中改为 mockResolvedValueOnce(null)）
+vi.mock("@/lib/auth-token", () => ({
+  getFreshAccessToken: vi.fn().mockResolvedValue("test-token"),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -957,5 +964,36 @@ describe("邀请码管理", () => {
     await waitFor(() => {
       expect(screen.getByPlaceholderText("如：北京大学交响乐团管理团队")).toHaveValue("新签名");
     });
+  });
+
+  // ---- Issue #124 回归：token 获取失败（登录过期）时保存不发请求 ----
+
+  it("签名保存：token 为 null 时不发请求并提示重新登录", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ key: "email_signature", value: "我的签名" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /邮件签名设置/ }));
+
+    // 首次加载成功（token 有效），textarea 有值
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("如：北京大学交响乐团管理团队")).toHaveValue("我的签名");
+    });
+
+    // 模拟登录过期：getFreshAccessToken 返回 null
+    (getFreshAccessToken as Mock).mockResolvedValueOnce(null);
+    fireEvent.click(screen.getByRole("button", { name: /^保存$/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("登录状态异常，请重新登录")).toBeInTheDocument();
+    });
+    // 只发出过一次加载请求（GET），保存未发出请求
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // 提交状态已复位，保存按钮可再次点击
+    expect(screen.getByRole("button", { name: /^保存$/ })).not.toBeDisabled();
   });
 });

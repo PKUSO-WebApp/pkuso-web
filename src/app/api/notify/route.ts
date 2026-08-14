@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import { createServerSupabase } from "@/lib/supabase-server";
+import { EMAIL_SIGNATURE_KEY, DEFAULT_EMAIL_SIGNATURE } from "@/lib/email-signature";
 
 export const runtime = "nodejs";
 
@@ -70,16 +71,13 @@ export async function POST(request: Request) {
 
     const emails = (recipients as Array<{ email: string }>).map((r) => r.email);
 
-    // 4. 发送
+    // 4. 读取邮件签名（读取失败时静默降级为默认文案，不阻断发信）
+    const signature = await fetchEmailSignature(supabaseServer);
+
+    // 5. 发送
     const mailer = await resolveTransporter();
     const from = process.env.SMTP_FROM || "onboarding@resend.dev";
-    const html = `
-      <h2>排练通知</h2>
-      <p><strong>曲目：</strong>${e(title)}</p>
-      <p><strong>时间：</strong>${e(dateStr)}</p>
-      <p><strong>地点：</strong>${e(location)}</p>
-      <p>请各位团员准时出席！</p>
-    `;
+    const html = buildRehearsalHtml({ title, dateStr, location, signature });
 
     if (mailer.mode === "smtp") {
       await mailer.transporter.sendMail({ from, to: emails, subject: `[排练通知] ${title}`, html });
@@ -108,4 +106,44 @@ export function e(s: string) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/**
+ * 读取邮件签名。
+ * - 未设置（无行或值为空）时返回默认兜底文案；
+ * - 读取失败（如表异常）时静默降级为默认文案，不阻断发信。
+ */
+export async function fetchEmailSignature(
+  supabaseServer: ReturnType<typeof createServerSupabase>,
+): Promise<string> {
+  try {
+    const { data, error } = await supabaseServer
+      .from("app_settings")
+      .select("value")
+      .eq("key", EMAIL_SIGNATURE_KEY)
+      .maybeSingle();
+    if (error) return DEFAULT_EMAIL_SIGNATURE;
+    const value = data?.value?.trim();
+    return value ? value : DEFAULT_EMAIL_SIGNATURE;
+  } catch {
+    return DEFAULT_EMAIL_SIGNATURE;
+  }
+}
+
+/** 组装排练通知邮件 HTML（签名拼在「请各位团员准时出席！」之后，经 e() 转义） */
+export function buildRehearsalHtml(params: {
+  title: string;
+  dateStr: string;
+  location: string;
+  signature: string;
+}) {
+  const { title, dateStr, location, signature } = params;
+  return `
+    <h2>排练通知</h2>
+    <p><strong>曲目：</strong>${e(title)}</p>
+    <p><strong>时间：</strong>${e(dateStr)}</p>
+    <p><strong>地点：</strong>${e(location)}</p>
+    <p>请各位团员准时出席！</p>
+    <p style="margin-top:24px;color:#666;">——<br/>${e(signature)}</p>
+  `;
 }

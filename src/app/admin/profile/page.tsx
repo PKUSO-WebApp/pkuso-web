@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useUser } from "@/context/user-context";
 import { LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { EMAIL_SIGNATURE_MAX_LENGTH } from "@/lib/email-signature";
 import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
 import { useInvitationCodes } from "@/hooks/useInvitationCodes";
@@ -15,7 +16,6 @@ export default function ProfilePage() {
   const router = useRouter();
   const { user, logout } = useUser();
   const fullName = user?.name ?? "—";
-  const instrument = user?.section ?? "—";
   const email = user?.email ?? "—";
   const initials = fullName !== "—" ? fullName.slice(0, 2) || fullName.slice(0, 1) || "--" : "--";
 
@@ -56,6 +56,16 @@ export default function ProfilePage() {
   const [deleteConfirmCode, setDeleteConfirmCode] = React.useState<string>("");
   const [copiedAll, setCopiedAll] = React.useState(false);
   const [copiedCode, setCopiedCode] = React.useState<string | null>(null);
+
+  // 邮件签名设置
+  const [isSigModalOpen, setIsSigModalOpen] = React.useState(false);
+  const [sigLoading, setSigLoading] = React.useState(false);
+  const [sigSubmitting, setSigSubmitting] = React.useState(false);
+  const sigSubmittingRef = React.useRef(false); // 同步 guard，阻断竞态窗口
+  const sigFetchSeqRef = React.useRef(0); // 请求序号守卫：快速开关 Modal 时丢弃过期响应
+  const [sigValue, setSigValue] = React.useState("");
+  const [sigError, setSigError] = React.useState<string | null>(null);
+  const [sigSuccess, setSigSuccess] = React.useState(false);
 
   const handleLogout = () => {
     logout();
@@ -167,6 +177,71 @@ export default function ProfilePage() {
     }
   };
 
+  /** 读取当前邮件签名（打开 Modal 时调用） */
+  const fetchSignature = async () => {
+    const seq = ++sigFetchSeqRef.current; // 本次请求序号
+    setSigLoading(true);
+    setSigError(null);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const res = await fetch("/api/admin/settings", {
+        headers: {
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+      });
+      const result = await res.json().catch(() => ({}));
+      // 序号不匹配说明期间已触发新请求（如关闭后重开），丢弃过期响应
+      if (sigFetchSeqRef.current !== seq) return;
+      if (!res.ok) throw new Error(result.error || "加载失败");
+      setSigValue(result.value ?? "");
+    } catch (err) {
+      if (sigFetchSeqRef.current !== seq) return;
+      setSigError(err instanceof Error ? err.message : "加载失败，请重试");
+    } finally {
+      if (sigFetchSeqRef.current === seq) setSigLoading(false);
+    }
+  };
+
+  const handleOpenSigModal = () => {
+    setIsSigModalOpen(true);
+    setSigSuccess(false);
+    void fetchSignature();
+  };
+
+  /** 保存邮件签名：ref 同步阻断 + state 异步兜底，防止重复提交 */
+  const handleSaveSignature = async () => {
+    if (sigSubmittingRef.current || sigSubmitting) return;
+    sigSubmittingRef.current = true;
+    setSigSubmitting(true);
+    setSigError(null);
+    setSigSuccess(false);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const trimmed = sigValue.trim();
+      const res = await fetch("/api/admin/settings", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ value: trimmed }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.error || "保存失败，请重试");
+      setSigValue(trimmed);
+      setSigSuccess(true);
+    } catch (err) {
+      setSigError(err instanceof Error ? err.message : "保存失败，请重试");
+    } finally {
+      sigSubmittingRef.current = false;
+      setSigSubmitting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-border-light bg-surface p-4 shadow-[var(--shadow-card)]">
@@ -176,7 +251,6 @@ export default function ProfilePage() {
           </div>
           <div className="min-w-0 flex-1 space-y-1">
             <h1 className="text-lg font-semibold text-text">{fullName}</h1>
-            <p className="text-sm text-text-muted">声部 {instrument}</p>
             <p className="text-xs text-text-muted">邮箱 {email}</p>
           </div>
         </div>
@@ -206,6 +280,15 @@ export default function ProfilePage() {
         className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
       >
         🔒 修改密码
+      </button>
+
+      {/* 邮件签名设置 */}
+      <button
+        type="button"
+        onClick={handleOpenSigModal}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
+      >
+        📧 邮件签名设置
       </button>
 
       <button
@@ -266,6 +349,80 @@ export default function ProfilePage() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* 邮件签名设置 Modal */}
+      <Modal
+        open={isSigModalOpen}
+        onClose={() => {
+          if (!sigSubmitting) setIsSigModalOpen(false);
+        }}
+        title="邮件签名设置"
+        position="bottom"
+        closeOnOverlay={!sigSubmitting}
+      >
+        <div className="mt-4 space-y-3 pb-safe">
+          <p className="text-xs text-text-muted">排练通知邮件底部的落款签名</p>
+
+          {sigLoading ? (
+            <p className="py-6 text-center text-xs text-text-muted">加载中…</p>
+          ) : sigError && sigValue === "" ? (
+            <div className="py-4 text-center">
+              <p className="text-xs text-danger">加载失败：{sigError}</p>
+              <button
+                type="button"
+                onClick={() => void fetchSignature()}
+                className="mt-3 rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted"
+              >
+                重试
+              </button>
+            </div>
+          ) : (
+            <>
+              <textarea
+                value={sigValue}
+                onChange={(e) => {
+                  setSigValue(e.target.value);
+                  setSigSuccess(false);
+                }}
+                rows={3}
+                maxLength={EMAIL_SIGNATURE_MAX_LENGTH}
+                disabled={sigSubmitting}
+                className="input resize-none p-3 leading-[1.6]"
+                placeholder="如：北京大学交响乐团管理团队"
+              />
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-text-muted">多行内容在邮件中会合并为一行显示</p>
+                <p className="text-xs text-text-muted">
+                  {sigValue.length}/{EMAIL_SIGNATURE_MAX_LENGTH}
+                </p>
+              </div>
+              {!sigValue.trim() && (
+                <p className="text-xs text-text-muted">未设置时邮件将使用默认签名</p>
+              )}
+              {sigSuccess && <p className="text-xs text-success">签名已保存</p>}
+              {sigError && <p className="text-xs text-danger">{sigError}</p>}
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={sigSubmitting}
+                  onClick={() => setIsSigModalOpen(false)}
+                  className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted disabled:opacity-60"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  disabled={sigSubmitting}
+                  onClick={() => void handleSaveSignature()}
+                  className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+                >
+                  {sigSubmitting ? "保存中…" : "保存"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </Modal>
 
       {/* 生成邀请码 Modal */}

@@ -21,6 +21,10 @@ vi.mock("@/lib/supabase", () => ({
       updateUser: vi.fn().mockResolvedValue({ error: null }),
       signOut: vi.fn().mockResolvedValue({ error: null }),
       getUser: vi.fn().mockResolvedValue({ data: { user: { id: "test-admin-id" } }, error: null }),
+      // 邮件签名读取/保存通过 getSession 拿 token（fetchSignature / handleSaveSignature 使用）
+      getSession: vi
+        .fn()
+        .mockResolvedValue({ data: { session: { access_token: "test-token" } }, error: null }),
     },
   },
 }));
@@ -119,6 +123,7 @@ describe("邀请码管理", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   // ---- 原有生成测试 ----
@@ -899,6 +904,58 @@ describe("邀请码管理", () => {
       expect(screen.getByRole("button", { name: "复制" })).toBeInTheDocument();
       // 不应显示"复制全部"按钮
       expect(screen.queryByRole("button", { name: /复制全部/ })).not.toBeInTheDocument();
+    });
+  });
+
+  // ---- 邮件签名 Modal（G2 竞态守卫回归）----
+
+  it("签名 Modal：快速开关时旧响应不覆盖新值（请求序号守卫）", async () => {
+    // 第一次请求挂起（模拟慢网络），第二次请求立即返回
+    let resolveSlow: (value: unknown) => void = () => {};
+    const slowResponse = new Promise((resolve) => {
+      resolveSlow = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => slowResponse)
+      .mockImplementationOnce(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ key: "email_signature", value: "新签名" }),
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ProfilePage />);
+    const openBtn = screen.getByRole("button", { name: /邮件签名设置/ });
+
+    // 第一次打开：慢请求挂起，Modal 显示"加载中…"
+    fireEvent.click(openBtn);
+    // fetch 在 await getSession() 之后才调用（微任务），需等待
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    // 通过 Modal 标题栏"关闭"按钮关闭，再重新打开：触发第二次请求
+    fireEvent.click(screen.getByRole("button", { name: /^关闭$/ }));
+    fireEvent.click(openBtn);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    // 第二次请求先返回：textarea 显示新签名
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("如：北京大学交响乐团管理团队")).toHaveValue("新签名");
+    });
+
+    // 慢请求后到（旧响应）：应被序号守卫丢弃，不覆盖已显示的新签名
+    resolveSlow({
+      ok: true,
+      status: 200,
+      json: async () => ({ key: "email_signature", value: "旧签名" }),
+    });
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("如：北京大学交响乐团管理团队")).toHaveValue("新签名");
     });
   });
 });

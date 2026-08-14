@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { e, resolveTransporter } from "@/app/api/notify/route";
+import {
+  e,
+  resolveTransporter,
+  fetchEmailSignature,
+  buildRehearsalHtml,
+} from "@/app/api/notify/route";
+import { EMAIL_SIGNATURE_KEY, DEFAULT_EMAIL_SIGNATURE } from "@/lib/email-signature";
 
 // ============================================================
 // Mailpit 配置常量（本地 Docker / CI service container）
@@ -35,6 +41,86 @@ describe("e() — HTML 转义", () => {
   });
   it("空字符串不报错", () => {
     expect(e("")).toBe("");
+  });
+});
+
+// ============================================================
+// 1.5 邮件签名读取与降级
+// ============================================================
+describe("fetchEmailSignature() — 签名读取与降级", () => {
+  /** 构造只实现了 from().select().eq().maybeSingle() 链的假客户端 */
+  function fakeClient(result: { data: { value: string } | null; error: Error | null }) {
+    return {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => result,
+          }),
+        }),
+      }),
+    } as never;
+  }
+
+  it("未设置（无行）→ 返回默认文案", async () => {
+    const signature = await fetchEmailSignature(fakeClient({ data: null, error: null }));
+    expect(signature).toBe(DEFAULT_EMAIL_SIGNATURE);
+  });
+
+  it("已设置 → 返回库中签名（自动去首尾空白）", async () => {
+    const signature = await fetchEmailSignature(
+      fakeClient({ data: { value: "  交响乐团理事会  " }, error: null }),
+    );
+    expect(signature).toBe("交响乐团理事会");
+  });
+
+  it("库中值为空串 → 返回默认文案", async () => {
+    const signature = await fetchEmailSignature(fakeClient({ data: { value: "" }, error: null }));
+    expect(signature).toBe(DEFAULT_EMAIL_SIGNATURE);
+  });
+
+  it("读取抛出异常 → 静默降级为默认文案，不阻断发信", async () => {
+    const broken = {
+      from: () => {
+        throw new Error("db down");
+      },
+    } as never;
+    const signature = await fetchEmailSignature(broken);
+    expect(signature).toBe(DEFAULT_EMAIL_SIGNATURE);
+  });
+
+  it("查询返回 error → 静默降级为默认文案", async () => {
+    const signature = await fetchEmailSignature(
+      fakeClient({ data: null, error: new Error("boom") }),
+    );
+    expect(signature).toBe(DEFAULT_EMAIL_SIGNATURE);
+  });
+
+  it("EMAIL_SIGNATURE_KEY 常量与查询 key 一致", () => {
+    expect(EMAIL_SIGNATURE_KEY).toBe("email_signature");
+  });
+});
+
+// ============================================================
+// 1.6 邮件 HTML 组装（含签名落款）
+// ============================================================
+describe("buildRehearsalHtml() — 邮件 HTML 组装", () => {
+  const base = { title: "排练《贝五》", dateStr: "2026-08-14 19:00", location: "新太阳B101" };
+
+  it("签名未设置（默认文案）→ HTML 含默认文案", () => {
+    const html = buildRehearsalHtml({ ...base, signature: DEFAULT_EMAIL_SIGNATURE });
+    expect(html).toContain("请各位团员准时出席！");
+    expect(html).toContain(DEFAULT_EMAIL_SIGNATURE);
+  });
+
+  it("签名已设置 → HTML 含签名内容", () => {
+    const html = buildRehearsalHtml({ ...base, signature: "交响乐团理事会" });
+    expect(html).toContain("交响乐团理事会");
+  });
+
+  it("签名含 HTML 标签 → 被 e() 转义", () => {
+    const html = buildRehearsalHtml({ ...base, signature: "<b>签名</b>" });
+    expect(html).toContain("&lt;b&gt;签名&lt;/b&gt;");
+    expect(html).not.toContain("<b>签名</b>");
   });
 });
 
@@ -245,6 +331,7 @@ describe("POST /api/notify 端到端", () => {
       const latest = await fetchJson(`${MAILPIT_API_BASE}/message/${messages.messages[0].ID}`);
       expect(latest.Subject).toContain("E2E 测试排练");
       expect(latest.HTML).toContain("新太阳B101");
+      expect(latest.HTML).toContain("请各位团员准时出席！");
       console.log("✅ 端到端测试通过，邮件已验证送达 Mailpit");
     } catch (err) {
       if (

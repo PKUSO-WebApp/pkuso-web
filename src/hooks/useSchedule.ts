@@ -108,12 +108,15 @@ export function useSchedule(client: typeof defaultClient = defaultClient) {
       const startDateTime = `${date}T${startTime}:00`;
       const endDateTime = `${date}T${endTime}:00`;
 
-      // 查询当天的预约
+      // 只查人工预约：rehearsal_id 非空的行是排练触发器生成的影子行，
+      // 由下方排练分支统一检查（编辑排练时 neq 排除自身，避免自己和自己冲突；
+      // 若此处混入影子行，编辑排练会误报「该时间段已有其他预约」，且文案不准确）
       const { data: existingSchedules, error: scheduleError } = await client
         .from("schedules")
         .select("*")
         .gte("start_time", startOfDay)
-        .lte("start_time", endOfDay);
+        .lte("start_time", endOfDay)
+        .is("rehearsal_id", null);
 
       if (scheduleError) {
         return "查询预约失败";

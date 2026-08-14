@@ -6,26 +6,46 @@ import { useSchedule } from "../useSchedule";
 
 function mockClient<T>(responses: T[]) {
   let i = 0;
-  const chain = (res: T) => ({
-    eq: () => chain(res),
-    in: () => chain(res),
-    order: () => chain(res),
-    limit: () => chain(res),
-    delete: () => chain(res),
-    gte: () => chain(res),
-    lte: () => chain(res),
-    neq: () => chain(res),
-    // 返回真正的 Promise
-    then: (resolve: (v: T) => void, reject?: (e: Error) => void) =>
-      Promise.resolve(res).then(resolve, reject),
-  });
+  // 记录所有链式查询调用（含参数），供断言查询条件使用
+  const calls: string[] = [];
+  const chain = (res: T) => {
+    const record = (name: string, ...args: unknown[]) => {
+      calls.push(`${name}(${args.map((a) => JSON.stringify(a)).join(", ")})`);
+      return chain(res);
+    };
+    return {
+      eq: (...args: unknown[]) => record("eq", ...args),
+      in: (...args: unknown[]) => record("in", ...args),
+      order: (...args: unknown[]) => record("order", ...args),
+      limit: (...args: unknown[]) => record("limit", ...args),
+      delete: (...args: unknown[]) => record("delete", ...args),
+      gte: (...args: unknown[]) => record("gte", ...args),
+      lte: (...args: unknown[]) => record("lte", ...args),
+      neq: (...args: unknown[]) => record("neq", ...args),
+      is: (...args: unknown[]) => record("is", ...args),
+      // 返回真正的 Promise
+      then: (resolve: (v: T) => void, reject?: (e: Error) => void) =>
+        Promise.resolve(res).then(resolve, reject),
+    };
+  };
   return {
     from: () => ({
       select: () => chain(responses[i++]),
       insert: () => chain(responses[i++]),
-      update: () => ({ eq: () => chain(responses[i++]) }),
-      delete: () => ({ eq: () => chain(responses[i++]) }),
+      update: () => ({
+        eq: (...args: unknown[]) => {
+          calls.push(`eq(${args.map((a) => JSON.stringify(a)).join(", ")})`);
+          return chain(responses[i++]);
+        },
+      }),
+      delete: () => ({
+        eq: (...args: unknown[]) => {
+          calls.push(`eq(${args.map((a) => JSON.stringify(a)).join(", ")})`);
+          return chain(responses[i++]);
+        },
+      }),
     }),
+    __calls: calls,
   };
 }
 
@@ -115,6 +135,7 @@ describe("useSchedule", () => {
           data: [
             {
               id: 1,
+              rehearsal_id: null, // 人工预约（rehearsal_id 为 null）
               start_time: "2024-01-01T14:30:00",
               end_time: "2024-01-01T15:30:00",
             },
@@ -176,6 +197,71 @@ describe("useSchedule", () => {
       expect(conflictResult).toBeNull();
     });
 
+    it("编辑排练时 - 影子预约不误报（schedules 分支过滤 rehearsal_id 非空行）", async () => {
+      // 编辑排练 id=5：触发器为该排练生成的影子预约（rehearsal_id=5，时间与排练相同）在
+      // 数据库层被 .is("rehearsal_id", null) 过滤，所以 mock 的 schedules 查询返回空
+      // （模拟过滤后的结果）；rehearsals 查询通过 .neq("id", 5) 排除自身，同样为空
+      const c = mockClient([
+        { data: [], error: null }, // initial fetch
+        { data: [], error: null }, // schedules query - 影子预约已被 is 过滤
+        { data: [], error: null }, // rehearsals query - 编辑中的排练已被 neq 过滤
+      ]);
+      const { result } = renderHook(() => useSchedule(c as never));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const conflictResult = await act(async () => {
+        return await result.current.checkConflict("2024-01-01", "14:00", "15:00", 5);
+      });
+
+      expect(conflictResult).toBeNull();
+    });
+
+    it("创建人工预约与排练重叠 - 返回排练冲突文案", async () => {
+      // 当天存在排练及其影子预约：影子预约被 .is("rehearsal_id", null) 过滤（mock schedules 为空），
+      // 不会先命中 schedules 分支的「该时间段已有其他预约」；rehearsals 分支命中排练，
+      // 文案准确为「该时间段已有排练安排」
+      const c = mockClient([
+        { data: [], error: null }, // initial fetch
+        { data: [], error: null }, // schedules query - 影子预约已被 is 过滤
+        {
+          data: [
+            {
+              id: 5,
+              start_time: "2024-01-01T14:30:00",
+              end_time: "2024-01-01T15:30:00",
+            },
+          ],
+          error: null,
+        }, // rehearsals query - overlapping
+      ]);
+      const { result } = renderHook(() => useSchedule(c as never));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const conflictResult = await act(async () => {
+        return await result.current.checkConflict("2024-01-01", "14:00", "15:00");
+      });
+
+      expect(conflictResult).toBe("该时间段已有排练安排");
+    });
+
+    it('schedules 查询带 is("rehearsal_id", null) 过滤影子预约', async () => {
+      const c = mockClient([
+        { data: [], error: null }, // initial fetch
+        { data: [], error: null }, // schedules query
+        { data: [], error: null }, // rehearsals query
+      ]);
+      const { result } = renderHook(() => useSchedule(c as never));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await act(async () => {
+        await result.current.checkConflict("2024-01-01", "14:00", "15:00");
+      });
+
+      // 只有 schedules 查询带 is 过滤；rehearsals 查询只有 gte/lte/neq
+      const calls = (c as unknown as { __calls: string[] }).__calls;
+      expect(calls.filter((call) => call.startsWith("is("))).toEqual(['is("rehearsal_id", null)']);
+    });
+
     it("预约查询失败返回错误", async () => {
       const c = mockClient([
         { data: [], error: null }, // initial fetch
@@ -214,6 +300,7 @@ describe("useSchedule", () => {
           data: [
             {
               id: 1,
+              rehearsal_id: null, // 人工预约（rehearsal_id 为 null）
               start_time: "2024-01-01T13:00:00",
               end_time: "2024-01-01T14:00:00",
             },
@@ -239,6 +326,7 @@ describe("useSchedule", () => {
           data: [
             {
               id: 1,
+              rehearsal_id: null, // 人工预约（rehearsal_id 为 null）
               start_time: "2024-01-01T15:00:00",
               end_time: "2024-01-01T16:00:00",
             },

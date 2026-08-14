@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, act } from "@testing-library/react";
 import React from "react";
 import Home from "./page";
 import { UserProvider, useUser } from "@/context/user-context";
@@ -129,6 +129,55 @@ describe("Home 首页组件", () => {
         </UserProvider>,
       );
       expect(screen.getByText("欢迎！")).toBeTruthy();
+    });
+  });
+
+  // ============================================================
+  // 1.5 欢迎语 5 秒自动消失（Issue #110）
+  // ============================================================
+  describe("欢迎语自动消失", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function renderLoggedIn() {
+      return render(
+        <UserProvider>
+          <WithLoggedInUser
+            user={{ id: "test-id", name: "张三", role: "member", section: "小提琴" }}
+          >
+            <Home />
+          </WithLoggedInUser>
+        </UserProvider>,
+      );
+    }
+
+    it("5 秒后进入淡出态（opacity-0），5.5 秒后不再渲染", () => {
+      renderLoggedIn();
+      expect(screen.getByText("欢迎，张三！")).toBeTruthy();
+
+      // 5 秒后：淡出开始，元素仍在但 opacity-0
+      act(() => {
+        vi.advanceTimersByTime(5000);
+      });
+      const welcomeEl = screen.getByText("欢迎，张三！");
+      expect(welcomeEl.closest("div")).toHaveClass("opacity-0");
+
+      // 再过 500ms（transition 完成）：不再渲染
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(screen.queryByText(/欢迎/)).toBeNull();
+    });
+
+    it("组件卸载时清理定时器", () => {
+      const { unmount } = renderLoggedIn();
+      unmount();
+      expect(vi.getTimerCount()).toBe(0);
     });
   });
 

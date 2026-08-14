@@ -17,7 +17,7 @@ function mockClient<T>(responses: T[]) {
   return {
     from: () => ({
       select: () => chain(responses[i++]),
-      update: () => ({ eq: () => chain(responses[i++]) }),
+      update: () => ({ eq: () => ({ select: () => chain(responses[i++]) }) }),
       insert: () => chain(responses[i++]),
     }),
     auth: {
@@ -98,6 +98,75 @@ describe("useProfiles", () => {
       }),
     );
     expect(ok).toBe(true);
+  });
+
+  // ---- update ----
+  it("update 成功时返回 true 并更新本地数据", async () => {
+    const c = mockClient([
+      { data: [{ id: "1", full_name: "张三", status: "approved" }], error: null },
+      { data: [{ id: "1" }], error: null },
+    ]);
+    const { result } = renderHook(() => useProfiles({ status: "approved" }, c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let ok = false;
+    await act(async () => {
+      ok = await result.current.update("1", { phone_number: "13800138000" });
+    });
+    expect(ok).toBe(true);
+    expect(result.current.data[0].phone_number).toBe("13800138000");
+    expect(result.current.error).toBeNull();
+  });
+
+  it("update 被 RLS 拒绝（返回空数组，静默失败）时返回 false 并设置错误", async () => {
+    const c = mockClient([
+      { data: [{ id: "1", full_name: "张三", status: "approved" }], error: null },
+      { data: [], error: null }, // RLS 拒绝：PostgREST 返回 200 + 空数据
+    ]);
+    const { result } = renderHook(() => useProfiles({ status: "approved" }, c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.update("1", { phone_number: "13800138000" });
+    });
+    expect(ok).toBe(false);
+    expect(result.current.error).toBe("无权限或记录不存在");
+    // 本地数据不应被污染（保留旧值）
+    expect(result.current.data[0]).not.toHaveProperty("phone_number", "13800138000");
+  });
+
+  it("update 数据库错误时返回 false 并设置错误信息", async () => {
+    const c = mockClient([
+      { data: [], error: null },
+      { data: null, error: { message: "db error" } },
+    ]);
+    const { result } = renderHook(() => useProfiles(undefined, c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.update("1", { full_name: "李四" });
+    });
+    expect(ok).toBe(false);
+    expect(result.current.error).toBe("db error");
+  });
+
+  // ---- userId: undefined 防御 ----
+  it("userId 明确传 undefined 时不发请求并返回空列表", async () => {
+    // client 被调用即抛错：若发请求测试会失败
+    const c = {
+      from: () => {
+        throw new Error("不应发起请求");
+      },
+      auth: {
+        getSession: () => Promise.resolve({ data: { session: { access_token: "test-token" } } }),
+      },
+    };
+    const { result } = renderHook(() => useProfiles({ userId: undefined }, c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.data).toEqual([]);
+    expect(result.current.error).toBeNull();
   });
 
   it("reject 拒绝并移除", async () => {

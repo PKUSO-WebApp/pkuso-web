@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useUser } from "@/context/user-context";
 import { LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { useProfiles } from "@/hooks/useProfiles";
+import { isValidPhoneNumber } from "@/lib/validation";
 import { Modal } from "@/components/ui/Modal";
 
 export default function ProfilePage() {
@@ -19,6 +21,61 @@ export default function ProfilePage() {
   const [newPwd, setNewPwd] = React.useState("");
   const [confirmPwd, setConfirmPwd] = React.useState("");
   const [isUpdatingPwd, setIsUpdatingPwd] = React.useState(false);
+
+  // 编辑个人信息（联系方式 + 学院）
+  const { data: profileData, update: updateProfile } = useProfiles({ userId: user?.id });
+  const myProfile = profileData[0];
+  const [isEditModalOpen, setIsEditModalOpen] = React.useState(false);
+  const [editPhone, setEditPhone] = React.useState("");
+  const [editCollege, setEditCollege] = React.useState("");
+  const [editError, setEditError] = React.useState<string | null>(null);
+  const [isEditSubmitting, setIsEditSubmitting] = React.useState(false);
+  const editSubmittingRef = React.useRef(false); // 同步 guard，阻断竞态窗口
+
+  // 打开弹窗时用最新 profile 预填
+  const handleOpenEditModal = () => {
+    // myProfile 未加载完成时为 undefined，预填会得到空值，保存会清空数据
+    if (!myProfile) {
+      alert("个人信息加载中，请稍候再试");
+      return;
+    }
+    setEditPhone(myProfile.phone_number ?? "");
+    setEditCollege(myProfile.college ?? "");
+    setEditError(null);
+    setIsEditModalOpen(true);
+  };
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    // 双重 guard 防重复提交：ref 同步阻断 + state 异步兜底
+    if (editSubmittingRef.current || isEditSubmitting) return;
+
+    const phone = editPhone.trim();
+    if (phone && !isValidPhoneNumber(phone)) {
+      setEditError("手机号格式不正确（11 位数字，以 1 开头）");
+      return;
+    }
+
+    editSubmittingRef.current = true;
+    setIsEditSubmitting(true);
+    setEditError(null);
+    try {
+      const ok = await updateProfile(user.id, {
+        phone_number: phone || null,
+        college: editCollege.trim() || null,
+      });
+      if (ok) {
+        setIsEditModalOpen(false);
+        alert("个人信息已更新");
+      } else {
+        setEditError("保存失败，请重试");
+      }
+    } finally {
+      editSubmittingRef.current = false;
+      setIsEditSubmitting(false);
+    }
+  };
 
   const handleLogout = () => {
     logout();
@@ -62,6 +119,14 @@ export default function ProfilePage() {
         className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
       >
         🔒 修改密码
+      </button>
+
+      <button
+        type="button"
+        onClick={handleOpenEditModal}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
+      >
+        📝 编辑个人信息
       </button>
 
       <button
@@ -118,6 +183,64 @@ export default function ProfilePage() {
               className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
             >
               {isUpdatingPwd ? "提交中..." : "确认修改"}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* 编辑个人信息 Modal */}
+      <Modal
+        open={isEditModalOpen}
+        onClose={() => {
+          if (!isEditSubmitting) setIsEditModalOpen(false);
+        }}
+        title="编辑个人信息"
+        position="bottom"
+        closeOnOverlay={!isEditSubmitting}
+      >
+        <form onSubmit={handleEditSubmit} className="mt-4 space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-text-muted">联系方式</label>
+            <input
+              type="text"
+              value={editPhone}
+              onChange={(e) => {
+                setEditPhone(e.target.value);
+                setEditError(null);
+              }}
+              className="input"
+              placeholder="11 位手机号"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-text-muted">学院</label>
+            <input
+              type="text"
+              value={editCollege}
+              onChange={(e) => {
+                setEditCollege(e.target.value);
+                setEditError(null);
+              }}
+              className="input"
+              placeholder="所在学院"
+            />
+          </div>
+          {editError && <p className="text-xs text-danger">{editError}</p>}
+          <div className="mt-2 flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={isEditSubmitting}
+              onClick={() => setIsEditModalOpen(false)}
+              className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted disabled:opacity-60"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              disabled={isEditSubmitting}
+              className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+            >
+              {isEditSubmitting ? "保存中..." : "保存"}
             </button>
           </div>
         </form>

@@ -3,16 +3,10 @@
 import React from "react";
 import { useProfiles } from "@/hooks/useProfiles";
 import { Card } from "@/components/ui/Card";
-import { Toggle } from "@/components/ui/Toggle";
-import { INSTRUMENT_ORDER, OTHER_INSTRUMENT_GROUP } from "@/constants/instruments";
+import { groupProfilesByInstrument } from "@/lib/roster-utils";
+import { filterByName } from "@/lib/name-search";
 import type { ProfileRow } from "@/types/database";
-
-function instrumentGroupKey(instrument: string | null): string {
-  if (!instrument) return OTHER_INSTRUMENT_GROUP;
-  const trimmed = instrument.trim();
-  if (INSTRUMENT_ORDER.includes(trimmed as (typeof INSTRUMENT_ORDER)[number])) return trimmed;
-  return OTHER_INSTRUMENT_GROUP;
-}
+import { MemberDetailModal } from "./components/member-detail-modal";
 
 export default function MembersPage() {
   const {
@@ -28,28 +22,17 @@ export default function MembersPage() {
     [allProfiles],
   );
 
-  const grouped = React.useMemo(() => {
-    const map = new Map<string, ProfileRow[]>();
-    for (const row of rosterRows) {
-      const g = instrumentGroupKey(row.instrument);
-      if (!map.has(g)) map.set(g, []);
-      map.get(g)!.push(row);
-    }
-    for (const [, arr] of map)
-      arr.sort((a, b) =>
-        String(a.full_name ?? "").localeCompare(String(b.full_name ?? ""), "zh-CN"),
-      );
-    const ordered: { group: string; users: ProfileRow[] }[] = [];
-    for (const key of INSTRUMENT_ORDER) {
-      const u = map.get(key);
-      if (u?.length) ordered.push({ group: key, users: u });
-    }
-    const other = map.get(OTHER_INSTRUMENT_GROUP);
-    if (other?.length) ordered.push({ group: OTHER_INSTRUMENT_GROUP, users: other });
-    return ordered;
-  }, [rosterRows]);
+  // 拼音/首字母搜索：输入为空时显示全部
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const filteredRows = React.useMemo(
+    () => filterByName(rosterRows, searchQuery),
+    [rosterRows, searchQuery],
+  );
 
-  const [currentTab, setCurrentTab] = React.useState<"all" | "section">("all");
+  const grouped = React.useMemo(() => groupProfilesByInstrument(filteredRows), [filteredRows]);
+
+  // 详情弹窗：点击花名册成员打开（只读）
+  const [selectedUser, setSelectedUser] = React.useState<ProfileRow | null>(null);
 
   return (
     <div className="space-y-4 pb-safe">
@@ -58,11 +41,12 @@ export default function MembersPage() {
         <p className="mt-1 text-xs text-text-muted">查看乐团最新花名册</p>
       </header>
 
-      <Toggle
-        options={["all", "section"] as const}
-        value={currentTab}
-        onChange={setCurrentTab}
-        getLabel={(opt) => (opt === "all" ? "全团成员" : "声部查看")}
+      <input
+        type="text"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        placeholder="搜索姓名（支持中文/拼音/首字母）"
+        className="input"
       />
 
       <div className="max-h-[480px] overflow-y-auto">
@@ -74,19 +58,8 @@ export default function MembersPage() {
           </Card>
         ) : rosterRows.length === 0 ? (
           <p className="py-8 text-center text-xs text-text-muted">暂无已通过成员</p>
-        ) : currentTab === "all" ? (
-          <div className="space-y-2">
-            {rosterRows.map((u) => (
-              <li key={u.id} className="rounded-xl border border-border bg-card px-3 py-2 text-xs">
-                <p className="font-medium text-text">
-                  {(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}
-                </p>
-                <p className="mt-0.5 text-text-muted">学院：{u.college?.trim() || "—"}</p>
-                <p className="mt-0.5 text-text-muted">邮箱：{u.email ?? "—"}</p>
-                <p className="mt-0.5 text-text-subtle">入团时间：{u.join_date?.trim() || "—"}</p>
-              </li>
-            ))}
-          </div>
+        ) : grouped.length === 0 ? (
+          <p className="py-8 text-center text-xs text-text-muted">未找到匹配的成员</p>
         ) : (
           <div className="space-y-5">
             {grouped.map(({ group, users }) => (
@@ -96,18 +69,26 @@ export default function MembersPage() {
                 </p>
                 <ul className="space-y-2">
                   {users.map((u) => (
-                    <li
-                      key={u.id}
-                      className="rounded-xl border border-border bg-card px-3 py-2 text-xs"
-                    >
-                      <p className="font-medium text-text">
-                        {(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}
-                      </p>
-                      <p className="mt-0.5 text-text-muted">学院：{u.college?.trim() || "—"}</p>
-                      <p className="mt-0.5 text-text-muted">邮箱：{u.email ?? "—"}</p>
-                      <p className="mt-0.5 text-text-subtle">
-                        入团时间：{u.join_date?.trim() || "—"}
-                      </p>
+                    <li key={u.id}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedUser(u)}
+                        className="w-full rounded-xl border border-border bg-card px-3 py-2 text-left text-xs hover:bg-muted"
+                      >
+                        <p className="flex flex-wrap items-center gap-1.5 font-medium text-text">
+                          <span>{(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}</span>
+                          {u.is_section_leader && (
+                            <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-caption text-warning">
+                              🏅 声部长
+                            </span>
+                          )}
+                        </p>
+                        <p className="mt-0.5 text-text-muted">学院：{u.college?.trim() || "—"}</p>
+                        <p className="mt-0.5 text-text-muted">邮箱：{u.email ?? "—"}</p>
+                        <p className="mt-0.5 text-text-subtle">
+                          入团时间：{u.join_date?.trim() || "—"}
+                        </p>
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -116,6 +97,12 @@ export default function MembersPage() {
           </div>
         )}
       </div>
+
+      <MemberDetailModal
+        open={!!selectedUser}
+        user={selectedUser}
+        onClose={() => setSelectedUser(null)}
+      />
     </div>
   );
 }

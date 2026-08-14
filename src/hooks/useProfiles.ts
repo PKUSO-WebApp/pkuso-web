@@ -19,6 +19,20 @@ type ProfileInsert = {
   join_date?: string;
 };
 
+/** 可被编辑的个人资料字段（成员详情弹窗 / 用户编辑个人信息共用） */
+export type ProfileUpdatePayload = Partial<
+  Pick<
+    ProfileRow,
+    | "full_name"
+    | "instrument"
+    | "college"
+    | "email"
+    | "phone_number"
+    | "join_date"
+    | "is_section_leader"
+  >
+>;
+
 export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient = defaultClient) {
   const [data, setData] = React.useState<ProfileRow[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -27,17 +41,33 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
   const savingRef = React.useRef<Map<string, boolean>>(new Map());
   const fetchSeqRef = React.useRef(0);
 
-  // eslint-disable-next-line react-hooks/preserve-manual-memoization -- filter reference stable, use optional chain deps to avoid excessive re-creation
+  // 解构出原始值作为 fetch 依赖，避免 filter 对象引用（每次渲染新建）导致 fetch 频繁重建
+  const status = filter?.status;
+  const ids = filter?.ids;
+  const userId = filter?.userId;
+  // 区分"没传 userId 字段"（如 admin 审批页全量查询）与"传了 undefined"
+  // （如 profile 页 user 未就绪，跳过请求，避免退化为全表 select）
+  const hasExplicitUndefinedUserId = filter != null && "userId" in filter && userId === undefined;
+
   const fetch = React.useCallback(async () => {
     const seq = ++fetchSeqRef.current;
+
+    // 调用方明确传了 userId: undefined（如 profile 页 user 未就绪）：不发请求，返回空列表
+    if (hasExplicitUndefinedUserId) {
+      setLoading(false);
+      setData([]);
+      setError(null);
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
     let query = client.from("profiles").select("*");
 
-    if (filter?.status) query = query.eq("status", filter.status);
-    if (filter?.ids && filter.ids.length > 0) query = query.in("id", filter.ids);
-    if (filter?.userId) query = query.eq("id", filter.userId);
+    if (status) query = query.eq("status", status);
+    if (ids && ids.length > 0) query = query.in("id", ids);
+    if (userId) query = query.eq("id", userId);
 
     const { data: rows, error: dbError } = await query;
 
@@ -50,12 +80,12 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
       return;
     }
 
-    if (filter?.userId) {
+    if (userId) {
       setData(Array.isArray(rows) ? (rows as ProfileRow[]) : rows ? [rows as ProfileRow] : []);
     } else {
       setData((rows as ProfileRow[]) ?? []);
     }
-  }, [client, filter?.status, filter?.ids, filter?.userId]);
+  }, [client, status, ids, userId, hasExplicitUndefinedUserId]);
 
   React.useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -228,5 +258,45 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
     }
   }, [client]);
 
-  return { data, loading, error, saving, fetch, approve, reject, insert, approveAll, rejectAll };
+  /**
+   * 更新个人资料（admin 用 admin UPDATE 策略，用户用自我 UPDATE 策略）。
+   * 成功后直接更新本地 data，避免整页刷新。
+   * 通过 .select("id") 检测实际更新行数：RLS 拒绝时 PostgREST 返回 200 + 空数据
+   * （静默失败），0 行更新视为失败，避免 UI 声称成功但数据未写入。
+   */
+  const update = React.useCallback(
+    async (id: string, payload: ProfileUpdatePayload) => {
+      const { data: rows, error: dbError } = await client
+        .from("profiles")
+        .update(payload as never)
+        .eq("id", id)
+        .select("id");
+      if (dbError) {
+        setError(dbError.message);
+        return false;
+      }
+      if (!rows || rows.length === 0) {
+        setError("无权限或记录不存在");
+        return false;
+      }
+      setData((prev) => prev.map((r) => (r.id === id ? { ...r, ...payload } : r)));
+      setError(null);
+      return true;
+    },
+    [client],
+  );
+
+  return {
+    data,
+    loading,
+    error,
+    saving,
+    fetch,
+    approve,
+    reject,
+    insert,
+    approveAll,
+    rejectAll,
+    update,
+  };
 }

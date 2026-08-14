@@ -162,7 +162,9 @@ export type Database = {
           full_name: string | null
           id: string
           instrument: string | null
+          is_section_leader: boolean
           join_date: string | null
+          phone_number: string | null
           role: Database["public"]["Enums"]["profileRole"] | null
           status: Database["public"]["Enums"]["profileStatus"] | null
         }
@@ -173,7 +175,9 @@ export type Database = {
           full_name?: string | null
           id: string
           instrument?: string | null
+          is_section_leader?: boolean
           join_date?: string | null
+          phone_number?: string | null
           role?: Database["public"]["Enums"]["profileRole"] | null
           status?: Database["public"]["Enums"]["profileStatus"] | null
         }
@@ -184,7 +188,9 @@ export type Database = {
           full_name?: string | null
           id?: string
           instrument?: string | null
+          is_section_leader?: boolean
           join_date?: string | null
+          phone_number?: string | null
           role?: Database["public"]["Enums"]["profileRole"] | null
           status?: Database["public"]["Enums"]["profileStatus"] | null
         }

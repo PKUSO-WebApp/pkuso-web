@@ -27,6 +27,21 @@ export default function Home() {
   const [scheduleTab, setScheduleTab] = React.useState<"full" | "section">("full");
   const [showAnnouncementDetail, setShowAnnouncementDetail] = React.useState(false);
 
+  // 欢迎语：显示 5 秒后淡出（500ms transition），淡出完成后不再渲染
+  const [welcomeVisible, setWelcomeVisible] = React.useState(true);
+  const [welcomeMounted, setWelcomeMounted] = React.useState(true);
+
+  React.useEffect(() => {
+    if (!user) return;
+    const fadeTimer = window.setTimeout(() => setWelcomeVisible(false), 5000);
+    const unmountTimer = window.setTimeout(() => setWelcomeMounted(false), 5500);
+    // 组件卸载时清理定时器，避免内存泄漏与卸载后 setState
+    return () => {
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(unmountTimer);
+    };
+  }, [user]);
+
   // 签到码
   const [codeRehearsal, setCodeRehearsal] = React.useState<RehearsalRow | null>(null);
   const [codeInput, setCodeInput] = React.useState("");
@@ -159,9 +174,13 @@ export default function Home() {
 
   return (
     <div className="min-h-screen pb-safe">
-      {/* 欢迎语 */}
-      {user && (
-        <div className="mb-4">
+      {/* 欢迎语（5 秒后淡出消失） */}
+      {user && welcomeMounted && (
+        <div
+          className={`mb-4 transition-opacity duration-500 ${
+            welcomeVisible ? "opacity-100" : "opacity-0"
+          }`}
+        >
           <p className="text-sm text-text-muted">
             欢迎{user.name?.trim() ? `，${user.name}` : ""}！
           </p>

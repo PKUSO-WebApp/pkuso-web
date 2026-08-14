@@ -6,17 +6,12 @@ import "react-datepicker/dist/react-datepicker.css";
 import { useRehearsals } from "@/hooks/useRehearsals";
 import { useProfiles } from "@/hooks/useProfiles";
 import { Toggle } from "@/components/ui/Toggle";
-import { INSTRUMENT_ORDER, OTHER_INSTRUMENT_GROUP } from "@/constants/instruments";
 import { parseLocalISO } from "@/lib/date-utils";
+import { groupProfilesByInstrument } from "@/lib/roster-utils";
+import { filterByName } from "@/lib/name-search";
 import type { ProfileRow, RehearsalRow } from "@/types/database";
 import * as XLSX from "xlsx";
-
-function instrumentGroupKey(instrument: string | null): string {
-  if (!instrument) return OTHER_INSTRUMENT_GROUP;
-  const trimmed = instrument.trim();
-  if (INSTRUMENT_ORDER.includes(trimmed as (typeof INSTRUMENT_ORDER)[number])) return trimmed;
-  return OTHER_INSTRUMENT_GROUP;
-}
+import { AdminMemberDetailModal } from "./components/member-detail-modal";
 
 type ViewMode = "attendance" | "roster";
 
@@ -28,32 +23,24 @@ export default function MembersPage() {
     data: allProfiles,
     loading: rosterLoading,
     error: rosterError,
+    update: updateProfile,
   } = useProfiles({ status: "approved" });
   const rosterRows = React.useMemo(
     () => allProfiles.filter((r) => (r.role ?? "") !== "admin") as ProfileRow[],
     [allProfiles],
   );
 
-  const grouped = React.useMemo(() => {
-    const map = new Map<string, ProfileRow[]>();
-    for (const row of rosterRows) {
-      const g = instrumentGroupKey(row.instrument);
-      if (!map.has(g)) map.set(g, []);
-      map.get(g)!.push(row);
-    }
-    for (const [, arr] of map)
-      arr.sort((a, b) =>
-        String(a.full_name ?? "").localeCompare(String(b.full_name ?? ""), "zh-CN"),
-      );
-    const ordered: { group: string; users: ProfileRow[] }[] = [];
-    for (const key of INSTRUMENT_ORDER) {
-      const u = map.get(key);
-      if (u?.length) ordered.push({ group: key, users: u });
-    }
-    const other = map.get(OTHER_INSTRUMENT_GROUP);
-    if (other?.length) ordered.push({ group: OTHER_INSTRUMENT_GROUP, users: other });
-    return ordered;
-  }, [rosterRows]);
+  // 拼音/首字母搜索：输入为空时显示全部
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const filteredRows = React.useMemo(
+    () => filterByName(rosterRows, searchQuery),
+    [rosterRows, searchQuery],
+  );
+
+  const grouped = React.useMemo(() => groupProfilesByInstrument(filteredRows), [filteredRows]);
+
+  // 成员详情弹窗：点击花名册成员打开（可编辑）
+  const [selectedUser, setSelectedUser] = React.useState<ProfileRow | null>(null);
 
   // 考勤查看
   const { data: allRehearsals } = useRehearsals();
@@ -252,41 +239,67 @@ export default function MembersPage() {
       )}
 
       {currentView === "roster" && (
-        <div className="max-h-[480px] space-y-5 overflow-y-auto">
-          {rosterLoading ? (
-            <p className="py-8 text-center text-xs text-text-subtle">加载中…</p>
-          ) : rosterError ? (
-            <p className="rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">{rosterError}</p>
-          ) : grouped.length === 0 ? (
-            <p className="py-8 text-center text-xs text-text-muted">暂无已通过成员</p>
-          ) : (
-            grouped.map(({ group, users }) => (
-              <div key={group}>
-                <p className="mb-2 text-label font-medium uppercase tracking-wide text-text-muted">
-                  {group}
-                </p>
-                <ul className="space-y-2">
-                  {users.map((u) => (
-                    <li
-                      key={u.id}
-                      className="rounded-xl border border-border bg-card px-3 py-2 text-xs"
-                    >
-                      <p className="font-medium text-text">
-                        {(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}
-                      </p>
-                      <p className="mt-0.5 text-text-muted">学院：{u.college?.trim() || "—"}</p>
-                      <p className="mt-0.5 text-text-muted">邮箱：{u.email ?? "—"}</p>
-                      <p className="mt-0.5 text-text-subtle">
-                        入团时间：{u.join_date?.trim() || "—"}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))
-          )}
+        <div className="space-y-3">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="搜索姓名（支持中文/拼音/首字母）"
+            className="input"
+          />
+          <div className="max-h-[440px] space-y-5 overflow-y-auto">
+            {rosterLoading ? (
+              <p className="py-8 text-center text-xs text-text-subtle">加载中…</p>
+            ) : rosterError ? (
+              <p className="rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">{rosterError}</p>
+            ) : rosterRows.length === 0 ? (
+              <p className="py-8 text-center text-xs text-text-muted">暂无已通过成员</p>
+            ) : grouped.length === 0 ? (
+              <p className="py-8 text-center text-xs text-text-muted">未找到匹配的成员</p>
+            ) : (
+              grouped.map(({ group, users }) => (
+                <div key={group}>
+                  <p className="mb-2 text-label font-medium uppercase tracking-wide text-text-muted">
+                    {group}
+                  </p>
+                  <ul className="space-y-2">
+                    {users.map((u) => (
+                      <li key={u.id}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedUser(u)}
+                          className="w-full rounded-xl border border-border bg-card px-3 py-2 text-left text-xs hover:bg-muted"
+                        >
+                          <p className="flex flex-wrap items-center gap-1.5 font-medium text-text">
+                            <span>{(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}</span>
+                            {u.is_section_leader && (
+                              <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-caption text-warning">
+                                🏅 声部长
+                              </span>
+                            )}
+                          </p>
+                          <p className="mt-0.5 text-text-muted">学院：{u.college?.trim() || "—"}</p>
+                          <p className="mt-0.5 text-text-muted">邮箱：{u.email ?? "—"}</p>
+                          <p className="mt-0.5 text-text-subtle">
+                            入团时间：{u.join_date?.trim() || "—"}
+                          </p>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
+
+      <AdminMemberDetailModal
+        open={!!selectedUser}
+        user={selectedUser}
+        onClose={() => setSelectedUser(null)}
+        onSave={updateProfile}
+      />
     </div>
   );
 }

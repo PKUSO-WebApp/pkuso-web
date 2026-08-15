@@ -89,6 +89,13 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     cleanup();
   });
 
+  it("无申请：表单模式，原因输入框高度翻倍（rows=8，Issue #148）", async () => {
+    renderModal();
+    await waitFor(() => expect(screen.getByRole("button", { name: "提交申请" })).toBeTruthy());
+    const ta = screen.getByLabelText(/请假原因/) as HTMLTextAreaElement;
+    expect(ta.rows).toBe(8);
+  });
+
   it("无申请：表单模式，空原因提交被拦截，create 不调用", async () => {
     renderModal();
     // 等待 fetchMine 完成进入表单模式

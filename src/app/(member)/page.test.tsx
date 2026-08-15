@@ -844,8 +844,9 @@ describe("Home 首页组件", () => {
       render(<Home />, { wrapper: UserProvider });
 
       expect(screen.getByText("已结束")).toBeTruthy();
-      // 已结束卡片同时渲染「补请假」按钮，用 chip 的图标前缀区分请假 chip（Issue #142）
+      // 已请假（excused）不可再补请假（Issue #148）：仅渲染请假 chip，无「补请假」按钮
       expect(screen.getByText(/⭕\s*请假/)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
     });
 
     it("未签到但管理员显式设为请假（排练进行中）：显示请假 chip，不提供签到按钮", () => {

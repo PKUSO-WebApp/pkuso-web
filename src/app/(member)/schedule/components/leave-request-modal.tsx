@@ -490,7 +490,7 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
                 setReason(e.target.value);
                 setError(null);
               }}
-              rows={4}
+              rows={8}
               className="input w-full resize-none p-3 leading-[1.5]"
               placeholder="请说明请假/补请假原因…"
               maxLength={500}

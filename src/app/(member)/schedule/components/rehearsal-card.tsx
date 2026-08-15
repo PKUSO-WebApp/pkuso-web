@@ -108,18 +108,35 @@ export function RehearsalCard({
       <span className="rounded-full bg-muted px-3 py-1 text-label text-text-subtle">已结束</span>
     ) : null;
 
-  const renderStatusChip = (status: string) => (
-    <span
-      className={`rounded-full px-3 py-1 text-label ${
-        STATUS_CHIP_CLASS[status] ?? "bg-muted text-text-subtle"
-      }`}
-    >
-      {STATUS_ICON[status] ?? ""} {STATUS_LABEL[status] ?? status}
-    </span>
-  );
+  // 请假/补请假按钮展示条件：已结束或未开始（进行中不显示）、考勤数据已就绪、页面提供回调；
+  // 已请假（excused）不可再补请假（Issue #148）
+  const canLeave =
+    !attendanceLoading &&
+    onLeaveRequest &&
+    blockReason !== null &&
+    attendance?.status !== "excused";
 
-  // 请假/补请假按钮展示条件：已结束或未开始（进行中不显示）、考勤数据已就绪、页面提供回调
-  const canLeave = !attendanceLoading && onLeaveRequest && blockReason !== null;
+  // 是否存在有效（未撤回）请假申请：有则按钮文案变「编辑申请」、行内显示审批状态 chip（Issue #148）
+  const hasLeaveRequest =
+    leaveRequest?.status === "pending" ||
+    leaveRequest?.status === "approved" ||
+    leaveRequest?.status === "rejected";
+
+  const renderStatusChip = (status: string) => {
+    const chipClass = `rounded-full px-3 py-1 text-label ${
+      STATUS_CHIP_CLASS[status] ?? "bg-muted text-text-subtle"
+    }`;
+    const content = `${STATUS_ICON[status] ?? ""} ${STATUS_LABEL[status] ?? status}`;
+    // 缺勤 chip 可点击打开请假弹窗（已结束/未开始场景；样式保持 chip 外观，Issue #148）
+    if (status === "absent" && canLeave) {
+      return (
+        <button type="button" onClick={onLeaveRequest} className={`${chipClass} cursor-pointer`}>
+          {content}
+        </button>
+      );
+    }
+    return <span className={chipClass}>{content}</span>;
+  };
 
   return (
     <Card>
@@ -158,8 +175,8 @@ export function RehearsalCard({
             </span>
           ) : statusChip ? (
             <>
-              {endedLabel}
               {renderStatusChip(statusChip)}
+              {endedLabel}
             </>
           ) : blockReason ? (
             <span className="rounded-full bg-muted px-3 py-1 text-label text-text-subtle">
@@ -179,17 +196,11 @@ export function RehearsalCard({
         </div>
       </div>
 
-      {/* 请假/补请假入口（已结束/未开始；进行中不显示）+ 申请状态小字（Issue #142） */}
+      {/* 请假/补请假入口（已结束/未开始；进行中不显示）：审批状态 chip 在左、按钮在右；
+          有申请时按钮变「编辑申请」（无申请时打开 = 新申请，Issue #148） */}
       {canLeave && (
         <div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
-          <button
-            type="button"
-            onClick={onLeaveRequest}
-            className="inline-flex items-center justify-center rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium text-text shadow-sm"
-          >
-            {blockReason === "ended" ? "补请假" : "请假"}
-          </button>
-          {leaveRequest && (
+          {leaveRequest && hasLeaveRequest && (
             <span
               className={`rounded-full px-2.5 py-1 text-label ${
                 LEAVE_STATUS_CHIP[leaveRequest.status as LeaveStatus] ?? "bg-muted text-text-subtle"
@@ -198,6 +209,13 @@ export function RehearsalCard({
               {LEAVE_STATUS_LABEL[leaveRequest.status as LeaveStatus] ?? leaveRequest.status}
             </span>
           )}
+          <button
+            type="button"
+            onClick={onLeaveRequest}
+            className="inline-flex items-center justify-center rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium text-text shadow-sm"
+          >
+            {hasLeaveRequest ? "编辑申请" : blockReason === "ended" ? "补请假" : "请假"}
+          </button>
         </div>
       )}
     </Card>

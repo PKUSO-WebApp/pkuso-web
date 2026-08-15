@@ -1,8 +1,8 @@
 import { Card } from "@/components/ui/Card";
-import { formatRehearsalRange } from "./utils";
+import { formatRehearsalRange } from "@/lib/date-utils";
 import { canSignIn, hasSignedIn } from "@/lib/attendance-utils";
 import { parseLocalISO } from "@/lib/date-utils";
-import type { RehearsalRow } from "@/types/database";
+import type { LeaveStatus, RehearsalRow } from "@/types/database";
 
 /** 出勤状态文案（与考勤名单/请假面板一致） */
 const STATUS_LABEL: Record<string, string> = {
@@ -28,6 +28,22 @@ const STATUS_CHIP_CLASS: Record<string, string> = {
   excused: "bg-warning-bg text-warning",
 };
 
+/** 请假申请状态文案（与请假面板一致，Issue #142） */
+const LEAVE_STATUS_LABEL: Record<LeaveStatus, string> = {
+  pending: "待审批",
+  approved: "已通过",
+  rejected: "已驳回",
+  withdrawn: "已撤回",
+};
+
+/** 请假申请状态 chip 语义色（与请假面板一致） */
+const LEAVE_STATUS_CHIP: Record<LeaveStatus, string> = {
+  pending: "bg-warning-bg text-warning",
+  approved: "bg-success-bg text-success",
+  rejected: "bg-danger-bg text-danger",
+  withdrawn: "bg-muted text-text-subtle",
+};
+
 type AttendanceInfo = {
   status: string;
   sign_in_time: string | null;
@@ -42,9 +58,21 @@ type Props = {
   onSignIn?: () => void;
   /** 编辑过（updated_at > created_at），在标题下方展示「更新」提示 */
   isUpdated?: boolean;
+  /** 点击请假/补请假按钮（已结束/未开始时显示；进行中不显示） */
+  onLeaveRequest?: () => void;
+  /** 该排练当前有效（未撤回）的请假申请；无则 null（Issue #142） */
+  leaveRequest?: { status: string } | null;
 };
 
-export function RehearsalCard({ item, attendance, attendanceLoading, onSignIn, isUpdated }: Props) {
+export function RehearsalCard({
+  item,
+  attendance,
+  attendanceLoading,
+  onSignIn,
+  isUpdated,
+  onLeaveRequest,
+  leaveRequest,
+}: Props) {
   // 签到窗口判断：提前超过 30 分钟未开始、或排练已结束，均不可签到
   let blockReason: "not-started" | "ended" | null = null;
   if (item.start_time) {
@@ -89,6 +117,9 @@ export function RehearsalCard({ item, attendance, attendanceLoading, onSignIn, i
       {STATUS_ICON[status] ?? ""} {STATUS_LABEL[status] ?? status}
     </span>
   );
+
+  // 请假/补请假按钮展示条件：已结束或未开始（进行中不显示）、考勤数据已就绪、页面提供回调
+  const canLeave = !attendanceLoading && onLeaveRequest && blockReason !== null;
 
   return (
     <Card>
@@ -147,6 +178,28 @@ export function RehearsalCard({ item, attendance, attendanceLoading, onSignIn, i
           )}
         </div>
       </div>
+
+      {/* 请假/补请假入口（已结束/未开始；进行中不显示）+ 申请状态小字（Issue #142） */}
+      {canLeave && (
+        <div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
+          <button
+            type="button"
+            onClick={onLeaveRequest}
+            className="inline-flex items-center justify-center rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium text-text shadow-sm"
+          >
+            {blockReason === "ended" ? "补请假" : "请假"}
+          </button>
+          {leaveRequest && (
+            <span
+              className={`rounded-full px-2.5 py-1 text-label ${
+                LEAVE_STATUS_CHIP[leaveRequest.status as LeaveStatus] ?? "bg-muted text-text-subtle"
+              }`}
+            >
+              {LEAVE_STATUS_LABEL[leaveRequest.status as LeaveStatus] ?? leaveRequest.status}
+            </span>
+          )}
+        </div>
+      )}
     </Card>
   );
 }

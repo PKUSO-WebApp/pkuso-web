@@ -107,6 +107,51 @@ export function formatDateTime(dateStr: string | null): string {
 }
 
 /**
+ * 格式化排练时间段为 "X月X日 星期X HH:mm - HH:mm" 格式
+ * 供 member/admin 两端共用（原位于 member 端私有 utils，迁移至此消除跨端 import）
+ *
+ * @param startValue - 开始时间 ISO 字符串（如 "YYYY-MM-DDTHH:mm:ss"）
+ * @param endValue - 结束时间 ISO 字符串或 null
+ * @returns 格式化后的时间段文案；结束时间为空时仅返回开始时间
+ */
+export function formatRehearsalRange(startValue: string, endValue: string | null) {
+  const start = parseLocalISO(startValue);
+  if (Number.isNaN(start.getTime())) return startValue;
+  const end = endValue ? parseLocalISO(endValue) : null;
+
+  const weekdayFormatter = new Intl.DateTimeFormat("zh-CN", { weekday: "short" });
+  const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  const weekday = weekdayFormatter.format(start);
+  const month = start.getMonth() + 1;
+  const day = start.getDate();
+  const startTime = timeFormatter.format(start);
+  const datePart = `${month}月${day}日 ${weekday}`;
+
+  if (!end || Number.isNaN(end.getTime())) return `${datePart} ${startTime}`;
+  const endTimeFormatted = timeFormatter.format(end);
+  return `${datePart} ${startTime} - ${endTimeFormatted}`;
+}
+
+/**
+ * 判断排练是否已过期（结束时间（或开始时间）+ 12 小时后仍早于当前时间）
+ * 供 member/admin 两端共用（原位于 member 端私有 utils，迁移至此消除跨端 import）
+ *
+ * @param startTime - 开始时间 ISO 字符串
+ * @param endTime - 结束时间 ISO 字符串或 null
+ * @returns 是否已过期；时间解析失败时返回 false
+ */
+export function isRehearsalExpired(startTime: string, endTime: string | null) {
+  const base = endTime ? parseLocalISO(endTime) : parseLocalISO(startTime);
+  if (Number.isNaN(base.getTime())) return false;
+  return Date.now() > base.getTime() + 12 * 60 * 60 * 1000;
+}
+
+/**
  * 将 UTC 时间字符串转换为中国时区显示
  * 检测以下 UTC 格式：
  * - 以 Z 结尾：如 "2024-07-31T14:30:00Z"

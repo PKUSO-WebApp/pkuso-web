@@ -1,42 +1,8 @@
 import { NextResponse } from "next/server";
-import { createServerSupabase } from "@/lib/supabase-server";
 import { EMAIL_SIGNATURE_KEY, EMAIL_SIGNATURE_MAX_LENGTH } from "@/lib/email-signature";
+import { verifyAdmin } from "@/lib/verify-admin";
 
 export const runtime = "nodejs";
-
-/**
- * Bearer token 鉴权 + admin 角色校验（复用 /api/notify 的验证模式）。
- * 成功返回 service role 客户端，失败返回结构化错误响应。
- */
-async function verifyAdmin(
-  request: Request,
-): Promise<
-  | { ok: true; supabaseServer: ReturnType<typeof createServerSupabase> }
-  | { ok: false; response: NextResponse }
-> {
-  const supabaseServer = createServerSupabase();
-  const authHeader = request.headers.get("authorization");
-  const token = authHeader?.replace("Bearer ", "") ?? "";
-  if (!token)
-    return { ok: false, response: NextResponse.json({ error: "未授权" }, { status: 401 }) };
-
-  const {
-    data: { user },
-    error: authError,
-  } = await supabaseServer.auth.getUser(token);
-  if (authError || !user)
-    return { ok: false, response: NextResponse.json({ error: "未授权" }, { status: 401 }) };
-
-  const { data: profile } = await supabaseServer
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  if (profile?.role !== "admin")
-    return { ok: false, response: NextResponse.json({ error: "权限不足" }, { status: 403 }) };
-
-  return { ok: true, supabaseServer };
-}
 
 /** 读取邮件签名设置；未设置（无行）时 value 为 null */
 export async function GET(request: Request) {

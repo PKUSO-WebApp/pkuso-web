@@ -5,6 +5,7 @@ import { Modal } from "@/components/ui/Modal";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
 import { AnnouncementListModal } from "./components/announcement-list-modal";
+import { LeaveManagement } from "./components/leave-management";
 import { formatDateTimeInChina } from "@/lib/date-utils";
 
 export default function AdminPage() {
@@ -216,6 +217,9 @@ export default function AdminPage() {
           </div>
         )}
       </section>
+
+      {/* 请假审批（Issue #142） */}
+      <LeaveManagement />
 
       {/* 发布公告 */}
       <section className="rounded-2xl border border-border bg-card p-4">

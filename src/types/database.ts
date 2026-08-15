@@ -17,12 +17,14 @@ export type PostRow = PublicSchema["Tables"]["posts"]["Row"];
 export type ScheduleRow = PublicSchema["Tables"]["schedules"]["Row"];
 export type ScheduleGroupRow = PublicSchema["Tables"]["schedule_groups"]["Row"];
 export type InvitationCodeRow = PublicSchema["Tables"]["invitation_codes"]["Row"];
+export type LeaveRequestRow = PublicSchema["Tables"]["leave_requests"]["Row"];
 
 // ---- 枚举类型(从 database.types.ts Enums 派生) ----
 export type ProfileStatus = PublicSchema["Enums"]["profileStatus"];
 export type ProfileRole = PublicSchema["Enums"]["profileRole"];
 export type PostType = PublicSchema["Enums"]["postType"];
 export type AttendanceStatus = PublicSchema["Enums"]["attendanceStatus"];
+export type LeaveStatus = PublicSchema["Enums"]["leaveStatus"];
 
 // ---- Join 扩展(Supabase join 返回的嵌套对象不在生成 schema 中) ----
 export type PostRowWithAuthor = PostRow & {
@@ -30,4 +32,14 @@ export type PostRowWithAuthor = PostRow & {
 };
 export type AttendanceRowWithUser = AttendanceRow & {
   profiles?: { full_name?: string | null; instrument?: string | null } | null;
+};
+export type LeaveRequestWithDetails = LeaveRequestRow & {
+  profiles?: { full_name?: string | null; instrument?: string | null } | null;
+  rehearsals?: {
+    repertoire?: string | null;
+    title?: string | null;
+    start_time?: string | null;
+    end_time?: string | null;
+    location?: string | null;
+  } | null;
 };

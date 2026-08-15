@@ -122,6 +122,60 @@ export type Database = {
         }
         Relationships: []
       }
+      leave_requests: {
+        Row: {
+          attachment_url: string | null
+          created_at: string
+          id: string
+          reason: string
+          rehearsal_id: number
+          reject_reason: string | null
+          status: Database["public"]["Enums"]["leaveStatus"]
+          target_status: Database["public"]["Enums"]["attendanceStatus"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          attachment_url?: string | null
+          created_at?: string
+          id?: string
+          reason: string
+          rehearsal_id: number
+          reject_reason?: string | null
+          status?: Database["public"]["Enums"]["leaveStatus"]
+          target_status?: Database["public"]["Enums"]["attendanceStatus"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          attachment_url?: string | null
+          created_at?: string
+          id?: string
+          reason?: string
+          rehearsal_id?: number
+          reject_reason?: string | null
+          status?: Database["public"]["Enums"]["leaveStatus"]
+          target_status?: Database["public"]["Enums"]["attendanceStatus"]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "leave_requests_rehearsal_id_fkey"
+            columns: ["rehearsal_id"]
+            isOneToOne: false
+            referencedRelation: "rehearsals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "leave_requests_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       posts: {
         Row: {
           author_id: string
@@ -423,6 +477,7 @@ export type Database = {
     }
     Enums: {
       attendanceStatus: "present" | "late" | "absent" | "excused"
+      leaveStatus: "pending" | "approved" | "rejected" | "withdrawn"
       postType: "ensemble" | "gathering"
       profileRole: "member" | "admin"
       profileStatus: "pending" | "approved" | "rejected"
@@ -554,6 +609,7 @@ export const Constants = {
   public: {
     Enums: {
       attendanceStatus: ["present", "late", "absent", "excused"],
+      leaveStatus: ["pending", "approved", "rejected", "withdrawn"],
       postType: ["ensemble", "gathering"],
       profileRole: ["member", "admin"],
       profileStatus: ["pending", "approved", "rejected"],

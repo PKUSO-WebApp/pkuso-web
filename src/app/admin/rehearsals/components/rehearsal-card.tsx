@@ -1,5 +1,5 @@
 import { Card } from "@/components/ui/Card";
-import { formatRehearsalRange, isRehearsalExpired } from "@/app/(member)/schedule/components/utils";
+import { formatRehearsalRange, isRehearsalExpired } from "@/lib/date-utils";
 import type { RehearsalRow } from "@/types/database";
 
 type Props = {

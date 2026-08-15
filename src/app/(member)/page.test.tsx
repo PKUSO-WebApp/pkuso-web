@@ -32,6 +32,24 @@ vi.mock("@/hooks/useAnnouncements", () => ({
   }),
 }));
 
+// mock useLeaveRequests（Issue #142）：避免触发真实 Supabase 网络请求；
+// 测试中默认无申请，卡片不显示请假状态小字
+vi.mock("@/hooks/useLeaveRequests", () => ({
+  useLeaveRequests: vi.fn().mockReturnValue({
+    data: [],
+    loading: false,
+    error: null,
+    saving: false,
+    fetchMine: vi.fn().mockResolvedValue([]),
+    create: vi.fn().mockResolvedValue(true),
+    updateReason: vi.fn().mockResolvedValue(true),
+    reapply: vi.fn().mockResolvedValue(true),
+    withdraw: vi.fn().mockResolvedValue(true),
+    uploadAttachment: vi.fn(),
+    getSignedUrl: vi.fn(),
+  }),
+}));
+
 // Toggle mock 支持点击切换（供分排直签等需要切换 tab 的用例使用）
 vi.mock("@/components/ui/Toggle", () => ({
   Toggle: vi.fn(
@@ -826,7 +844,8 @@ describe("Home 首页组件", () => {
       render(<Home />, { wrapper: UserProvider });
 
       expect(screen.getByText("已结束")).toBeTruthy();
-      expect(screen.getByText(/请假/)).toBeTruthy();
+      // 已结束卡片同时渲染「补请假」按钮，用 chip 的图标前缀区分请假 chip（Issue #142）
+      expect(screen.getByText(/⭕\s*请假/)).toBeTruthy();
     });
 
     it("未签到但管理员显式设为请假（排练进行中）：显示请假 chip，不提供签到按钮", () => {

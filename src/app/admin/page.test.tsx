@@ -45,8 +45,14 @@ vi.mock("@/hooks/useAnnouncements", () => ({
   useAnnouncements: vi.fn(),
 }));
 
+// ---- Mock useLeaveAdmin hook（请假审批区块，Issue #142）----
+vi.mock("@/hooks/useLeaveAdmin", () => ({
+  useLeaveAdmin: vi.fn(),
+}));
+
 import { useProfiles } from "@/hooks/useProfiles";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
+import { useLeaveAdmin } from "@/hooks/useLeaveAdmin";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { Modal } from "@/components/ui/Modal";
 
@@ -93,11 +99,26 @@ const mockAnnouncements = (overrides: Record<string, unknown> = {}) => {
   (useAnnouncements as unknown as Mock).mockReturnValue({ ...defaultReturn, ...overrides });
 };
 
+const mockLeaveAdmin = (overrides: Record<string, unknown> = {}) => {
+  const defaultReturn = {
+    requests: [],
+    loading: false,
+    error: null,
+    processing: false,
+    fetch: vi.fn(),
+    approve: vi.fn().mockResolvedValue(true),
+    reject: vi.fn().mockResolvedValue(true),
+    getSignedUrl: vi.fn().mockResolvedValue(null),
+  };
+  (useLeaveAdmin as unknown as Mock).mockReturnValue({ ...defaultReturn, ...overrides });
+};
+
 describe("AdminPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockProfiles();
     mockAnnouncements();
+    mockLeaveAdmin();
   });
 
   it("注册时间使用 formatDateTimeInChina 显示（时区转换）", () => {

@@ -4,13 +4,15 @@ import React from "react";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
 import { useRehearsals } from "@/hooks/useRehearsals";
 import { useAttendance } from "@/hooks/useAttendance";
+import { useLeaveRequests } from "@/hooks/useLeaveRequests";
 import { useUser } from "@/context/user-context";
 import { Toggle } from "@/components/ui/Toggle";
 import { Card } from "@/components/ui/Card";
 import { Modal } from "@/components/ui/Modal";
 import { RehearsalCard } from "./schedule/components/rehearsal-card";
 import { CodeVerifyModal } from "./schedule/components/code-verify-modal";
-import type { RehearsalRow } from "@/types/database";
+import { LeaveRequestModal } from "./schedule/components/leave-request-modal";
+import type { LeaveRequestRow, RehearsalRow } from "@/types/database";
 import { parseLocalISO, formatLocalISO, formatDateTimeInChina } from "@/lib/date-utils";
 import { judgeAttendanceStatus, canSignIn, hasSignedIn } from "@/lib/attendance-utils";
 import { isRehearsalWithinNextWeek } from "@/lib/rehearsal-utils";
@@ -32,6 +34,9 @@ export default function Home() {
   } = useAttendance();
   const [scheduleTab, setScheduleTab] = React.useState<"full" | "section">("full");
   const [showAnnouncementDetail, setShowAnnouncementDetail] = React.useState(false);
+  // 请假/补请假（Issue #142）：打开面板的排练 + 我的申请列表
+  const { data: leaveRequests, fetchMine: fetchLeaveMine } = useLeaveRequests();
+  const [leaveRehearsal, setLeaveRehearsal] = React.useState<RehearsalRow | null>(null);
   // 分钟级时钟 tick：跨天停留页面时，定时刷新"今天"边界，驱动列表过滤与签到按钮状态更新
   const [nowTick, setNowTick] = React.useState(() => Date.now());
 
@@ -71,6 +76,22 @@ export default function Home() {
     const ids = rehearsals.map((r) => r.id);
     void fetchMyAttendances(user.id, ids);
   }, [user?.id, rehearsals, fetchMyAttendances]);
+
+  // 加载我的请假申请（RLS 限本人，无需 user_id 过滤）
+  React.useEffect(() => {
+    if (!user?.id) return;
+    void fetchLeaveMine();
+  }, [user?.id, fetchLeaveMine]);
+
+  // 每场排练最近的未撤回申请（fetchMine 已按 created_at 倒序，首个命中即最新）
+  const leaveRequestMap = React.useMemo(() => {
+    const m: Record<number, LeaveRequestRow> = {};
+    for (const r of leaveRequests as LeaveRequestRow[]) {
+      if (r.status === "withdrawn") continue;
+      if (!(r.rehearsal_id in m)) m[r.rehearsal_id] = r;
+    }
+    return m;
+  }, [leaveRequests]);
 
   const list = React.useMemo(() => {
     if (!rehearsals) return [];
@@ -297,6 +318,9 @@ export default function Home() {
               // 更新标识持续到排练结束：已结束后不再显示（Issue #140）
               isUpdated={isRehearsalUpdated(r) && !isRehearsalEnded(r, new Date(nowTick))}
               onSignIn={() => handleSignIn(r)}
+              // 请假/补请假入口与申请状态（Issue #142）
+              leaveRequest={leaveRequestMap[r.id] ?? null}
+              onLeaveRequest={() => setLeaveRehearsal(r)}
             />
           ))
         )}
@@ -332,6 +356,23 @@ export default function Home() {
         onConfirm={handleCodeConfirm}
         onClose={() => {
           if (!codeSubmitting) setCodeRehearsal(null);
+        }}
+      />
+
+      {/* 请假/补请假面板（Issue #142）：保存成功后刷新卡片状态 */}
+      <LeaveRequestModal
+        open={!!leaveRehearsal}
+        rehearsal={leaveRehearsal}
+        onClose={() => setLeaveRehearsal(null)}
+        onSaved={() => {
+          void fetchLeaveMine();
+          // 撤回已通过申请会联动还原考勤为缺勤（未签到时），同步刷新卡片状态 chip
+          if (user?.id && rehearsals) {
+            void fetchMyAttendances(
+              user.id,
+              rehearsals.map((r) => r.id),
+            );
+          }
         }}
       />
     </div>

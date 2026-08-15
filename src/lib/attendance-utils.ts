@@ -31,3 +31,13 @@ export function judgeAttendanceStatus(signInAt: Date, start: Date, end: Date): A
   if (signInAt.getTime() <= end.getTime()) return "late";
   return "absent";
 }
+
+/**
+ * 签到锁定判定（Issue #141）：sign_in_time 非空即视为已签到（锁定）。
+ * 用户一次签到后出勤状态在用户侧固定，不可再签到/修改——
+ * 即使管理员随后把状态改为缺席/请假（sign_in_time 仍在，锁定依旧生效），
+ * 规避「缺席签到 → 管理员取消 → 用户再签到」的循环。
+ */
+export function hasSignedIn(signInTime: string | null | undefined): boolean {
+  return signInTime != null && signInTime !== "";
+}

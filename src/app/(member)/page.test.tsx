@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, act } from "@testing-library/react";
+import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
 import React from "react";
 import Home from "./page";
 import { UserProvider, useUser } from "@/context/user-context";
@@ -32,11 +32,27 @@ vi.mock("@/hooks/useAnnouncements", () => ({
   }),
 }));
 
+// Toggle mock 支持点击切换（供分排直签等需要切换 tab 的用例使用）
 vi.mock("@/components/ui/Toggle", () => ({
-  Toggle: vi.fn(() => <div data-testid="toggle">Toggle</div>),
+  Toggle: vi.fn(
+    (props: {
+      options: readonly string[];
+      value: "full" | "section";
+      onChange: (value: "full" | "section") => void;
+      getLabel?: (option: "full" | "section") => string;
+    }) => (
+      <div
+        data-testid="toggle"
+        onClick={() => props.onChange(props.value === "full" ? "section" : "full")}
+      >
+        {props.getLabel ? props.getLabel(props.value) : "Toggle"}
+      </div>
+    ),
+  ),
 }));
 
-// mock useAttendance，避免传入排练数据后触发真实 Supabase 网络请求
+// mock useAttendance，避免传入排练数据后触发真实 Supabase 网络请求；
+// map 可注入，用于测试签到锁定与出勤状态显示（Issue #141）
 vi.mock("@/hooks/useAttendance", () => ({
   useAttendance: vi.fn().mockReturnValue({
     map: {},
@@ -61,7 +77,22 @@ vi.mock("@/components/ui/Card", () => ({
 
 // 导入 mock 的 hooks
 import { useRehearsals } from "@/hooks/useRehearsals";
+import { useAttendance } from "@/hooks/useAttendance";
 const mockUseRehearsals = vi.mocked(useRehearsals);
+const mockUseAttendance = vi.mocked(useAttendance);
+
+/** useAttendance mock 默认返回值（map 为空：无任何考勤记录） */
+const defaultAttendanceMock = {
+  map: {},
+  list: [],
+  loading: false,
+  fetchMyAttendances: vi.fn(),
+  fetchByRehearsal: vi.fn(),
+  upsert: vi.fn(),
+  updateStatus: vi.fn(),
+  batchInsert: vi.fn(),
+  fetchStats: vi.fn(),
+};
 
 // 辅助组件：在 UserProvider 内自动登录
 function WithLoggedInUser({
@@ -634,6 +665,342 @@ describe("Home 首页组件", () => {
       const { unmount } = renderWithRehearsals([]);
       unmount();
       expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+
+  // ============================================================
+  // 5.7 签到锁定与出勤状态显示（Issue #141）
+  // ============================================================
+  describe("签到锁定与出勤状态显示", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      // 固定系统时间 2026-08-15 21:00：当天 20:00-22:00 排练为"进行中"，上午排练已结束
+      vi.setSystemTime(new Date(2026, 7, 15, 21, 0, 0));
+      // 默认无考勤记录；每个用例按需覆盖 map
+      mockUseAttendance.mockReturnValue({ ...defaultAttendanceMock });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** 构造指定 startISO 的排练行（fake timers 已固定系统时间，硬编码日期安全；opts.signInCode 可设置签到码） */
+    function makeRehearsalAt(
+      id: number,
+      startISO: string,
+      repertoire: string,
+      opts?: { signInCode?: string | null },
+    ): RehearsalRow {
+      const end = new Date(parseLocalISO(startISO).getTime() + 2 * 60 * 60 * 1000);
+      return {
+        id,
+        repertoire,
+        type: "full",
+        start_time: startISO,
+        end_time: formatLocalISO(end),
+        location: "排练厅",
+        title: null,
+        date: null,
+        time: null,
+        sign_in_code: opts?.signInCode ?? null,
+        target_section: null,
+        created_at: null,
+        updated_at: "2026-08-14T00:00:00.000Z",
+      };
+    }
+
+    function renderWithAttendance(
+      map: Record<number, { status: string; sign_in_time: string | null }>,
+    ) {
+      mockUseRehearsals.mockReturnValue({
+        data: [makeRehearsalAt(1, "2026-08-15T20:00:00", "今晚排练")],
+        loading: false,
+        error: null,
+        saving: false,
+        fetch: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      });
+      mockUseAttendance.mockReturnValue({ ...defaultAttendanceMock, map });
+      render(<Home />, { wrapper: UserProvider });
+    }
+
+    it("签到后管理员改状态为缺席（sign_in_time 非空 + status=absent）：显示缺勤 chip，无签到按钮，不可再签到", () => {
+      renderWithAttendance({
+        1: { status: "absent", sign_in_time: "2026-08-15T20:05:00" },
+      });
+
+      expect(screen.getByText(/缺勤/)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+    });
+
+    it("签到后状态为出席：显示出席 chip，无签到按钮", () => {
+      renderWithAttendance({
+        1: { status: "present", sign_in_time: "2026-08-15T20:05:00" },
+      });
+
+      expect(screen.getByText(/出席/)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+    });
+
+    it("签到后状态为迟到：显示迟到 chip", () => {
+      renderWithAttendance({
+        1: { status: "late", sign_in_time: "2026-08-15T20:20:00" },
+      });
+
+      expect(screen.getByText(/迟到/)).toBeTruthy();
+    });
+
+    it("未签到（无考勤记录）且排练进行中：显示签到按钮", () => {
+      renderWithAttendance({});
+
+      expect(screen.getByRole("button", { name: "签到" })).toBeTruthy();
+    });
+
+    it("未签到（管理员预生成的默认缺席记录，sign_in_time 为 null）且排练进行中：仍可签到", () => {
+      // admin 创建排练时批量预生成 status=absent、sign_in_time=null 的记录，不构成锁定
+      renderWithAttendance({
+        1: { status: "absent", sign_in_time: null },
+      });
+
+      expect(screen.getByRole("button", { name: "签到" })).toBeTruthy();
+      expect(screen.queryByText(/缺勤/)).toBeNull();
+    });
+
+    it("排练已结束 + 已签到（出席）：显示已结束标签与出席 chip", () => {
+      mockUseRehearsals.mockReturnValue({
+        data: [makeRehearsalAt(1, "2026-08-15T08:00:00", "上午排练")],
+        loading: false,
+        error: null,
+        saving: false,
+        fetch: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      });
+      mockUseAttendance.mockReturnValue({
+        ...defaultAttendanceMock,
+        map: { 1: { status: "present", sign_in_time: "2026-08-15T07:55:00" } },
+      });
+      render(<Home />, { wrapper: UserProvider });
+
+      expect(screen.getByText("已结束")).toBeTruthy();
+      expect(screen.getByText(/出席/)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+    });
+
+    it("排练已结束 + 未签到（无考勤记录）：显示已结束标签与缺勤 chip", () => {
+      mockUseRehearsals.mockReturnValue({
+        data: [makeRehearsalAt(1, "2026-08-15T08:00:00", "上午排练")],
+        loading: false,
+        error: null,
+        saving: false,
+        fetch: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      });
+      mockUseAttendance.mockReturnValue({ ...defaultAttendanceMock });
+      render(<Home />, { wrapper: UserProvider });
+
+      expect(screen.getByText("已结束")).toBeTruthy();
+      expect(screen.getByText(/缺勤/)).toBeTruthy();
+    });
+
+    it("排练已结束 + 管理员设为请假（未签到）：显示已结束标签与请假 chip", () => {
+      mockUseRehearsals.mockReturnValue({
+        data: [makeRehearsalAt(1, "2026-08-15T08:00:00", "上午排练")],
+        loading: false,
+        error: null,
+        saving: false,
+        fetch: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      });
+      mockUseAttendance.mockReturnValue({
+        ...defaultAttendanceMock,
+        map: { 1: { status: "excused", sign_in_time: null } },
+      });
+      render(<Home />, { wrapper: UserProvider });
+
+      expect(screen.getByText("已结束")).toBeTruthy();
+      expect(screen.getByText(/请假/)).toBeTruthy();
+    });
+
+    it("未签到但管理员显式设为请假（排练进行中）：显示请假 chip，不提供签到按钮", () => {
+      renderWithAttendance({
+        1: { status: "excused", sign_in_time: null },
+      });
+
+      expect(screen.getByText(/请假/)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+    });
+  });
+
+  // ============================================================
+  // 5.8 签到防重复提交 + 首屏考勤加载（Issue #141 对抗返工）
+  // ============================================================
+  describe("签到防重复提交与首屏考勤加载", () => {
+    beforeEach(() => {
+      // 固定系统时间 2026-08-15 21:00：当天 20:00-22:00 排练恒为"进行中"（签到窗口判定与真实运行时刻无关）
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 7, 15, 21, 0, 0));
+      // jsdom 的 alert 未实现，spy 并吞掉
+      vi.spyOn(window, "alert").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    });
+
+    /** 构造指定 startISO 的排练行（fake timers 已固定系统时间，硬编码日期安全；opts.signInCode 可设置签到码） */
+    function makeRehearsalAt(
+      id: number,
+      startISO: string,
+      repertoire: string,
+      opts?: { signInCode?: string | null },
+    ): RehearsalRow {
+      const end = new Date(parseLocalISO(startISO).getTime() + 2 * 60 * 60 * 1000);
+      return {
+        id,
+        repertoire,
+        type: "full",
+        start_time: startISO,
+        end_time: formatLocalISO(end),
+        location: "排练厅",
+        title: null,
+        date: null,
+        time: null,
+        sign_in_code: opts?.signInCode ?? null,
+        target_section: null,
+        created_at: null,
+        updated_at: "2026-08-14T00:00:00.000Z",
+      };
+    }
+
+    it("签到码弹窗内连按 Enter（form submit 两次）只提交一次", async () => {
+      mockUseRehearsals.mockReturnValue({
+        data: [makeRehearsalAt(1, "2026-08-15T20:00:00", "今晚排练", { signInCode: "8848" })],
+        loading: false,
+        error: null,
+        saving: false,
+        fetch: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      });
+      const upsert = vi.fn().mockResolvedValue(null);
+      mockUseAttendance.mockReturnValue({ ...defaultAttendanceMock, upsert });
+      render(
+        <UserProvider>
+          <WithLoggedInUser
+            user={{ id: "test-id", name: "张三", role: "member", section: "小提琴" }}
+          >
+            <Home />
+          </WithLoggedInUser>
+        </UserProvider>,
+      );
+
+      // 打开签到码弹窗并输入正确签到码
+      fireEvent.click(screen.getByRole("button", { name: "签到" }));
+      fireEvent.change(screen.getByPlaceholderText("如：8848"), {
+        target: { value: "8848" },
+      });
+      const form = screen.getByRole("dialog").querySelector("form")!;
+
+      // 连按两次 Enter（form 两次 submit）：同步 ref 阻断第二次提交
+      await act(async () => {
+        fireEvent.submit(form);
+        fireEvent.submit(form);
+      });
+      expect(upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it("分排直签连点签到按钮只提交一次", async () => {
+      mockUseRehearsals.mockReturnValue({
+        data: [
+          {
+            ...makeRehearsalAt(1, "2026-08-15T20:00:00", "今晚分排"),
+            type: "section",
+          },
+        ],
+        loading: false,
+        error: null,
+        saving: false,
+        fetch: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      });
+      const upsert = vi.fn().mockResolvedValue(null);
+      mockUseAttendance.mockReturnValue({ ...defaultAttendanceMock, upsert });
+      render(
+        <UserProvider>
+          <WithLoggedInUser
+            user={{ id: "test-id", name: "张三", role: "member", section: "小提琴" }}
+          >
+            <Home />
+          </WithLoggedInUser>
+        </UserProvider>,
+      );
+
+      // 切到「分排」tab 后分排排练才会展示
+      fireEvent.click(screen.getByTestId("toggle"));
+      const signInBtn = screen.getByRole("button", { name: "签到" });
+      await act(async () => {
+        fireEvent.click(signInBtn);
+        fireEvent.click(signInBtn);
+      });
+      expect(upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it("考勤加载中（首屏）不渲染状态 chip 与签到按钮，显示占位符", () => {
+      mockUseRehearsals.mockReturnValue({
+        data: [
+          // 进行中、无考勤记录：此前会错误显示签到按钮
+          makeRehearsalAt(1, "2026-08-15T20:00:00", "今晚排练"),
+          // 已结束、无考勤记录：此前会错误显示缺勤 chip
+          makeRehearsalAt(2, "2026-08-15T08:00:00", "上午排练"),
+        ],
+        loading: false,
+        error: null,
+        saving: false,
+        fetch: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      });
+      // map 尚未加载完成（初始 loading 为 true / 刷新间隙）
+      mockUseAttendance.mockReturnValue({ ...defaultAttendanceMock, loading: true });
+      render(<Home />, { wrapper: UserProvider });
+
+      // 不渲染签到按钮、不出勤状态 chip、不显示已结束标签
+      expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+      expect(screen.queryByText(/出席|迟到|缺勤|请假/)).toBeNull();
+      expect(screen.queryByText("已结束")).toBeNull();
+      // 两张卡片均以占位符示意加载中
+      expect(screen.getAllByText("…")).toHaveLength(2);
+    });
+
+    it("考勤加载完成后（loading=false）恢复正常渲染", () => {
+      mockUseRehearsals.mockReturnValue({
+        data: [makeRehearsalAt(1, "2026-08-15T20:00:00", "今晚排练")],
+        loading: false,
+        error: null,
+        saving: false,
+        fetch: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      });
+      mockUseAttendance.mockReturnValue({ ...defaultAttendanceMock, loading: false });
+      render(<Home />, { wrapper: UserProvider });
+
+      expect(screen.getByRole("button", { name: "签到" })).toBeTruthy();
+      expect(screen.queryByText("…")).toBeNull();
     });
   });
 });

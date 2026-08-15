@@ -11,16 +11,23 @@ export type AttendanceEntry = {
   sign_in_time?: string | null;
 };
 
+/** 用户侧考勤映射：rehearsal_id → 出勤状态与签到时间（签到锁定判定依据） */
+export type MyAttendanceMap = Record<number, { status: string; sign_in_time: string | null }>;
+
 export function useAttendance(client: typeof defaultClient = defaultClient) {
-  const [map, setMap] = React.useState<Record<number, { status: string }>>({});
+  const [map, setMap] = React.useState<MyAttendanceMap>({});
   const [list, setList] = React.useState<AttendanceRowWithUser[]>([]);
-  const [loading, setLoading] = React.useState(false);
+  // loading 初始为 true：map 尚未就绪。若初始为 false，首屏 map 为空时
+  // 调用方会把「未加载到记录」误判为「无考勤」（闪现缺勤 chip / 错误显示签到按钮），
+  // 初始 true 让调用方在首次 fetch 完成前统一走「加载中」分支（Issue #141 对抗返工）
+  const [loading, setLoading] = React.useState(true);
 
   /** 团员: 加载自己在当前排练池中的考勤 */
   const fetchMyAttendances = React.useCallback(
     async (userId: string, rehearsalIds: number[]) => {
       if (rehearsalIds.length === 0) {
         setMap({});
+        setLoading(false); // 空池：map 已就绪（空），无需加载
         return;
       }
       setLoading(true);
@@ -34,9 +41,14 @@ export function useAttendance(client: typeof defaultClient = defaultClient) {
         setMap({});
         return;
       }
-      const m: Record<number, { status: string }> = {};
-      for (const r of data as { rehearsal_id: number; status: string }[]) {
-        m[r.rehearsal_id] = { status: r.status };
+      // sign_in_time 是签到锁定判定依据（Issue #141），必须随考勤记录一并保存
+      const m: MyAttendanceMap = {};
+      for (const r of data as {
+        rehearsal_id: number;
+        status: string;
+        sign_in_time: string | null;
+      }[]) {
+        m[r.rehearsal_id] = { status: r.status, sign_in_time: r.sign_in_time ?? null };
       }
       setMap(m);
     },

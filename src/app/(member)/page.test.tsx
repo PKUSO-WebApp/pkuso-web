@@ -331,6 +331,7 @@ describe("Home 首页组件", () => {
         sign_in_code: null,
         target_section: null,
         created_at: null,
+        updated_at: "2026-08-14T00:00:00.000Z",
       };
     }
 
@@ -378,9 +379,20 @@ describe("Home 首页组件", () => {
   });
 
   // ============================================================
-  // 5.5 排练列表排序（Issue #110 对抗返工）：过滤后按开始时间升序
+  // 5.5 排练列表排序（Issue #110 对抗返工 + Issue #140 排序规则）
   // ============================================================
   describe("排练列表排序", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      // 固定系统时间：保证"今日排练"（20:00-22:00）恒为进行中，
+      // 排序三态（进行中/未开始/已结束）判定与真实运行时刻无关
+      vi.setSystemTime(new Date(2026, 7, 15, 21, 0, 0));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     /**
      * 构造相对"今天"偏移 dayOffset 天的排练行（本地时区 20:00-22:00）。
      * 与"首页排练时间过滤"的 makeRehearsal 同构：页面按本地日期边界过滤
@@ -410,6 +422,7 @@ describe("Home 首页组件", () => {
         sign_in_code: null,
         target_section: null,
         created_at: null,
+        updated_at: "2026-08-14T00:00:00.000Z",
       };
     }
 
@@ -452,6 +465,83 @@ describe("Home 首页组件", () => {
       const rendered = screen.getAllByText(/(今日|四天后|无时间)排练/).map((el) => el.textContent);
       expect(rendered).toEqual(["今日排练", "四天后排练", "无时间排练"]);
     });
+
+    /**
+     * 构造指定 startISO 的排练行（本地时间字符串；fake timers 已固定系统时间为 2026-08-15 21:00，
+     * 硬编码日期安全；opts 可指定 created_at/updated_at 覆盖"已更新"判定）
+     */
+    function makeRehearsalAt(
+      id: number,
+      startISO: string,
+      repertoire: string,
+      opts?: { created?: string | null; updated?: string | null },
+    ): RehearsalRow {
+      const end = new Date(parseLocalISO(startISO).getTime() + 2 * 60 * 60 * 1000);
+      return {
+        id,
+        repertoire,
+        type: "full",
+        start_time: startISO,
+        end_time: formatLocalISO(end),
+        location: "排练厅",
+        title: null,
+        date: null,
+        time: null,
+        sign_in_code: null,
+        target_section: null,
+        created_at: opts?.created ?? null,
+        updated_at: opts?.updated ?? "2026-08-14T00:00:00.000Z",
+      };
+    }
+
+    it("已结束的排练排在底部，最近结束在前（Issue #140）", () => {
+      // 固定 now = 2026-08-15 21:00：上午排练 10 点结束（11 小时前）、下午排练 16 点结束（5 小时前）、
+      // 明天排练未开始；三者的开始日期都在本周窗口内，全部保留显示
+      renderWithRehearsals([
+        makeRehearsalAt(1, "2026-08-15T08:00:00", "上午排练"),
+        makeRehearsalAt(2, "2026-08-16T20:00:00", "明天排练"),
+        makeRehearsalAt(3, "2026-08-15T14:00:00", "下午排练"),
+      ]);
+
+      const rendered = screen.getAllByText(/(明天|下午|上午)排练/).map((el) => el.textContent);
+      expect(rendered).toEqual(["明天排练", "下午排练", "上午排练"]);
+    });
+
+    it("更新过的排练提到最近一次日程之后，并显示更新标识（Issue #140）", () => {
+      renderWithRehearsals([
+        // 后天排练：编辑过（updated_at > created_at）
+        makeRehearsalAt(1, "2026-08-17T20:00:00", "后天排练", {
+          created: "2026-08-10T00:00:00.000Z",
+          updated: "2026-08-15T12:00:00.000Z",
+        }),
+        makeRehearsalAt(2, "2026-08-16T20:00:00", "明天排练"), // 最近，保持第一位
+        makeRehearsalAt(3, "2026-08-18T20:00:00", "大后天排练"),
+      ]);
+
+      // 明天排练（最近）保持第一位，已更新的后天排练提到其后，大后天排练最后
+      const rendered = screen.getAllByText(/(明天|后天|大后天)排练/).map((el) => el.textContent);
+      expect(rendered).toEqual(["明天排练", "后天排练", "大后天排练"]);
+      // 仅已更新的排练渲染「更新」标识（warning 色系语义 token）
+      expect(screen.getByText("更新排练时间/地点/曲目")).toBeTruthy();
+    });
+
+    it("未编辑过的排练不显示更新标识", () => {
+      renderWithRehearsals([makeRehearsalAt(1, "2026-08-16T20:00:00", "明天排练")]);
+      expect(screen.queryByText("更新排练时间/地点/曲目")).toBeNull();
+    });
+
+    it("已结束且编辑过的排练不显示更新标识（更新标识持续到排练结束，Issue #140）", () => {
+      // 上午排练 08:00-10:00，now 21:00 已结束；尽管编辑过（updated_at > created_at）也不显示 chip
+      renderWithRehearsals([
+        makeRehearsalAt(1, "2026-08-15T08:00:00", "上午排练", {
+          created: "2026-08-10T00:00:00.000Z",
+          updated: "2026-08-15T12:00:00.000Z",
+        }),
+      ]);
+
+      expect(screen.getByText("上午排练")).toBeTruthy();
+      expect(screen.queryByText("更新排练时间/地点/曲目")).toBeNull();
+    });
   });
 
   // ============================================================
@@ -484,6 +574,7 @@ describe("Home 首页组件", () => {
         sign_in_code: null,
         target_section: null,
         created_at: null,
+        updated_at: "2026-08-14T00:00:00.000Z",
       };
     }
 

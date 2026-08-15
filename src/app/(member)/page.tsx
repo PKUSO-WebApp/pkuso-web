@@ -14,6 +14,11 @@ import type { RehearsalRow } from "@/types/database";
 import { parseLocalISO, formatLocalISO, formatDateTimeInChina } from "@/lib/date-utils";
 import { judgeAttendanceStatus, canSignIn } from "@/lib/attendance-utils";
 import { isRehearsalWithinNextWeek } from "@/lib/rehearsal-utils";
+import {
+  isRehearsalUpdated,
+  isRehearsalEnded,
+  sortRehearsalsForMember,
+} from "@/lib/rehearsal-sort";
 
 /** 已签到状态：出席或迟到算作已签到 */
 function hasSignedStatus(status?: string): boolean {
@@ -66,29 +71,18 @@ export default function Home() {
 
   const list = React.useMemo(() => {
     if (!rehearsals) return [];
-    // 显式传入 nowTick 时刻，避免过滤函数内部取 new Date() 导致跨天后列表不刷新
+    // 显式传入 nowTick 时刻，避免过滤/排序函数内部取 new Date() 导致跨天后列表不刷新
     const now = new Date(nowTick);
-    return (
-      rehearsals
-        .filter(
-          (r) =>
-            (r.type === "full" ? "full" : "section") === scheduleTab &&
-            // 仅显示未来一周内（含今天）的排练，已过去或超过一周的隐藏
-            isRehearsalWithinNextWeek(r.start_time, now),
-        )
-        // 过滤后按开始时间升序排列（最近的排练优先）。
-        // useRehearsals 返回降序（admin 端共用该 hook，不能改），这里仅对首页展示重新排序；
-        // start_time 为 "YYYY-MM-DDTHH:mm:ss" 零填充格式，字典序与时间序一致，直接字符串比较；
-        // 无 start_time（含空串）的排练排最后
-        .sort((a, b) => {
-          if (!a.start_time && !b.start_time) return 0;
-          if (!a.start_time) return 1; // a 无开始时间，排最后
-          if (!b.start_time) return -1; // b 无开始时间，排最后
-          if (a.start_time < b.start_time) return -1;
-          if (a.start_time > b.start_time) return 1;
-          return 0;
-        })
+    const filtered = rehearsals.filter(
+      (r) =>
+        (r.type === "full" ? "full" : "section") === scheduleTab &&
+        // 仅显示未来一周内（含今天）的排练，已过去或超过一周的隐藏
+        isRehearsalWithinNextWeek(r.start_time, now),
     );
+    // 过滤后按用户端规则排序（Issue #140）：进行中/未开始近 → 远（进行中最前）、
+    // 已结束组在底部（最近结束在前）、更新过的排在最近一次日程之后（是最近一次则保持首位）。
+    // useRehearsals 返回降序（admin 端共用该 hook，不能改），这里仅对首页展示重新排序
+    return sortRehearsalsForMember(filtered, now);
   }, [rehearsals, scheduleTab, nowTick]);
 
   const handleSignIn = async (rehearsal: RehearsalRow) => {
@@ -269,6 +263,8 @@ export default function Home() {
               key={String(r.id)}
               item={r}
               hasSigned={hasSignedStatus(attendanceMap[r.id]?.status)}
+              // 更新标识持续到排练结束：已结束后不再显示（Issue #140）
+              isUpdated={isRehearsalUpdated(r) && !isRehearsalEnded(r, new Date(nowTick))}
               onSignIn={() => handleSignIn(r)}
             />
           ))

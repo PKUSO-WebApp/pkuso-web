@@ -52,6 +52,8 @@ export function useRehearsals(client: typeof defaultClient = defaultClient) {
   const update = React.useCallback(
     async (id: number, payload: Record<string, unknown>) => {
       setSaving(true);
+      // updated_at 由 DB 触发器统一写入（BEFORE UPDATE ... SET NEW.updated_at = now()），
+      // 与 created_at 同源时钟，避免客户端时钟漂移导致「更新」chip 假阴性
       const { error: dbError } = await client
         .from("rehearsals")
         .update(payload as never)

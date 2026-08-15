@@ -8,9 +8,11 @@ type Props = {
   item: RehearsalRow;
   hasSigned: boolean;
   onSignIn?: () => void;
+  /** 编辑过（updated_at > created_at），在标题下方展示「更新」提示 */
+  isUpdated?: boolean;
 };
 
-export function RehearsalCard({ item, hasSigned, onSignIn }: Props) {
+export function RehearsalCard({ item, hasSigned, onSignIn, isUpdated }: Props) {
   // 签到窗口判断：提前超过 30 分钟未开始、或排练已结束，均不可签到
   let blockReason: "not-started" | "ended" | null = null;
   if (item.start_time) {
@@ -41,6 +43,11 @@ export function RehearsalCard({ item, hasSigned, onSignIn }: Props) {
               ? formatRehearsalRange(item.start_time, item.end_time ?? null)
               : "时间未设置"}
           </h2>
+          {isUpdated && (
+            <span className="inline-block rounded bg-warning-bg/80 px-1.5 py-0.5 text-xs text-warning">
+              更新排练时间/地点/曲目
+            </span>
+          )}
           <p className="text-xs text-text-muted">
             地点：{item.location}
             {item.type === "section" && item.target_section

@@ -118,6 +118,20 @@ export default function AdminPage() {
     void fetchAll();
   };
 
+  // 控制台功能 tab（Issue #150）：入团审批 / 请假审批 / 公告
+  const [activeTab, setActiveTab] = React.useState<"approval" | "leave" | "announcement">(
+    "approval",
+  );
+  // 请假待审批数由 LeaveManagement 内部实时上报（与列表同源，审批后自动递减）
+  const [pendingLeaveCount, setPendingLeaveCount] = React.useState(0);
+
+  // tab 定义：badgeCount > 0 时在标签右上角显示红点徽章（公告无待处理概念，恒为 0）
+  const tabs = [
+    { key: "approval", label: "入团审批", badgeCount: pendingRows.length },
+    { key: "leave", label: "请假审批", badgeCount: pendingLeaveCount },
+    { key: "announcement", label: "公告", badgeCount: 0 },
+  ] as const;
+
   const anySinglePending = approvingId !== null || rejectingId !== null;
   const batchDisabled =
     pendingLoading || pendingSaving || anySinglePending || pendingRows.length === 0;
@@ -126,8 +140,47 @@ export default function AdminPage() {
     <div className="space-y-4">
       <h1 className="text-lg font-semibold text-text">管理员控制台</h1>
 
+      {/* 功能 tab 栏（视觉与 Toggle 一致；自绘以便嵌入右上角红点徽章） */}
+      <div
+        className="flex rounded-full bg-muted p-1 text-xs"
+        role="tablist"
+        aria-label="控制台功能切换"
+      >
+        {tabs.map((t) => {
+          const active = activeTab === t.key;
+          // 待处理数红点：>0 才显示；超过 99 截断为 "99+"，避免徽章过宽
+          const badge =
+            t.badgeCount > 0 ? (t.badgeCount > 99 ? "99+" : String(t.badgeCount)) : null;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setActiveTab(t.key)}
+              className={`relative flex-1 rounded-full px-3 py-1 text-center transition-colors ${
+                active
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-text-muted hover:text-text"
+              }`}
+            >
+              {t.label}
+              {badge && (
+                <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-caption font-medium text-danger-foreground">
+                  {badge}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
       {/* 入团审批 */}
-      <section className="rounded-2xl border border-border bg-card p-4">
+      <section
+        className={`rounded-2xl border border-border bg-card p-4 ${
+          activeTab === "approval" ? "" : "hidden"
+        }`}
+      >
         {pendingError && (
           <div className="mb-3 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
             {pendingError}
@@ -170,7 +223,7 @@ export default function AdminPage() {
         ) : pendingRows.length === 0 ? (
           <p className="py-4 text-center text-xs text-text-muted">暂无待审批用户</p>
         ) : (
-          <div className="h-[200px] space-y-2 overflow-y-auto">
+          <div className="max-h-[200px] space-y-2 overflow-y-auto">
             {pendingRows.map((r) => (
               <div
                 key={r.id}
@@ -218,11 +271,17 @@ export default function AdminPage() {
         )}
       </section>
 
-      {/* 请假审批（Issue #142） */}
-      <LeaveManagement />
+      {/* 请假审批（Issue #142）；全部渲染 + hidden 切换以保留内部状态（hook 数据不随卸载重取） */}
+      <div className={activeTab === "leave" ? "" : "hidden"}>
+        <LeaveManagement onPendingCountChange={setPendingLeaveCount} />
+      </div>
 
       {/* 发布公告 */}
-      <section className="rounded-2xl border border-border bg-card p-4">
+      <section
+        className={`rounded-2xl border border-border bg-card p-4 ${
+          activeTab === "announcement" ? "" : "hidden"
+        }`}
+      >
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-text">发布全团公告</h2>
           <button

@@ -38,7 +38,12 @@ function rehearsalName(r: LeaveRequestWithDetails["rehearsals"]): string {
   return r?.repertoire ?? r?.title ?? "排练";
 }
 
-export function LeaveManagement() {
+type LeaveManagementProps = {
+  /** 待审批数量变化回调（admin 控制台 tab 红点计数用，Issue #150） */
+  onPendingCountChange?: (count: number) => void;
+};
+
+export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps = {}) {
   const {
     requests,
     loading,
@@ -64,6 +69,12 @@ export function LeaveManagement() {
   const processedList = requests.filter((r) => r.status !== "pending");
   const list = tab === "pending" ? pendingList : processedList;
   const detailRequest = requests.find((r) => r.id === detailId) ?? null;
+
+  // 待审批数实时上报给父组件（控制台 tab 红点，Issue #150）；
+  // 审批/驳回成功本地移除后 pendingList 变化会自动再次触发
+  React.useEffect(() => {
+    onPendingCountChange?.(pendingList.length);
+  }, [pendingList.length, onPendingCountChange]);
 
   const allSelected =
     pendingList.length > 0 && pendingList.every((r) => selectedIds.includes(r.id));
@@ -171,7 +182,7 @@ export function LeaveManagement() {
               </label>
             </div>
           )}
-          <div className="h-[240px] space-y-2 overflow-y-auto">
+          <div className="max-h-[240px] space-y-2 overflow-y-auto">
             {list.map((item) => {
               const selected = selectedIds.includes(item.id);
               return (

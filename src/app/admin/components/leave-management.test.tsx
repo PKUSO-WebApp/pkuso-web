@@ -195,4 +195,26 @@ describe("LeaveManagement 请假审批区块（管理端）", () => {
     render(<LeaveManagement />);
     expect(screen.getByText("网络错误")).toBeInTheDocument();
   });
+
+  it("列表高度自适应：max-h 封顶 + overflow-y-auto，无固定高度（Issue #150）", () => {
+    adminMock.requests = [makeRequest({ id: "lr-1" })];
+    const { container } = render(<LeaveManagement />);
+
+    const scrollBox = container.querySelector("div.max-h-\\[240px\\]") as HTMLElement;
+    expect(scrollBox).not.toBeNull();
+    expect(scrollBox.className).toContain("overflow-y-auto");
+    expect(scrollBox.className.split(" ")).not.toContain("h-[240px]");
+  });
+
+  it("待审批数变化时回调 onPendingCountChange（供控制台 tab 红点计数，Issue #150）", () => {
+    adminMock.requests = [
+      makeRequest({ id: "lr-1" }),
+      makeRequest({ id: "lr-2", status: "approved" }),
+    ];
+    const onChange = vi.fn();
+    render(<LeaveManagement onPendingCountChange={onChange} />);
+
+    // 只有 pending 状态计入
+    expect(onChange).toHaveBeenCalledWith(1);
+  });
 });

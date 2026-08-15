@@ -139,6 +139,19 @@ describe("RehearsalCard 请假按钮显示条件（Issue #142）", () => {
     expect(screen.getByRole("button", { name: "编辑申请" })).toBeTruthy();
   });
 
+  it("已取消的申请：视同无申请，不显示状态小字，按钮文案「请假」（可重新提交）", () => {
+    render(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
+        onLeaveRequest={vi.fn()}
+        leaveRequest={{ status: "canceled" }}
+      />,
+    );
+    expect(screen.queryByText("已取消")).toBeNull();
+    expect(screen.getByRole("button", { name: "请假" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "编辑申请" })).toBeNull();
+  });
+
   it("无申请时按钮旁不显示状态小字", () => {
     render(
       <RehearsalCard

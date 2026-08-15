@@ -176,6 +176,19 @@ describe("LeaveManagement 请假审批区块（管理端）", () => {
     expect(screen.queryByRole("button", { name: "批量通过" })).toBeNull();
   });
 
+  it("已处理 tab：成员取消的申请显示「已取消」chip（Issue #149 保留历史）", () => {
+    adminMock.requests = [
+      makeRequest({ id: "lr-1", status: "approved" }),
+      makeRequest({ id: "lr-2", status: "canceled", reason: "临时有事去不了" }),
+    ];
+    render(<LeaveManagement />);
+
+    fireEvent.click(screen.getByRole("button", { name: "已处理" }));
+    expect(screen.getByText("已取消")).toBeInTheDocument();
+    // canceled 行不出现英文枚举值
+    expect(screen.queryByText(/canceled/)).toBeNull();
+  });
+
   it("加载失败显示错误横幅", () => {
     adminMock.requests = [];
     adminMock.error = "网络错误";

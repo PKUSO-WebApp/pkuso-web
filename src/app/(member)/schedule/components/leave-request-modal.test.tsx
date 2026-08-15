@@ -17,6 +17,7 @@ const hookMock = vi.hoisted(() => ({
   updateReason: vi.fn(),
   reapply: vi.fn(),
   withdraw: vi.fn(),
+  cancelRequest: vi.fn(),
   uploadAttachment: vi.fn(),
   getSignedUrl: vi.fn(),
   saving: false,
@@ -82,6 +83,8 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     hookMock.updateReason.mockResolvedValue(true);
     hookMock.reapply.mockResolvedValue(true);
     hookMock.withdraw.mockResolvedValue(true);
+    hookMock.cancelRequest.mockResolvedValue(true);
+    hookMock.uploadAttachment.mockResolvedValue({ url: "u1/123-new.jpg" });
     hookMock.getSignedUrl.mockResolvedValue({ url: "https://x/signed.jpg" });
   });
 
@@ -144,6 +147,7 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
       expect(hookMock.updateReason).toHaveBeenCalledWith("lr-1", {
         reason: "改成新原因",
         attachment_url: null,
+        old_attachment_url: null,
       }),
     );
   });
@@ -218,6 +222,7 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
       expect(hookMock.reapply).toHaveBeenCalledWith("lr-1", {
         reason: "感冒发烧",
         attachment_url: null,
+        old_attachment_url: null,
       }),
     );
   });
@@ -271,5 +276,123 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "提交中…" })).toBeDisabled());
     resolveCreate(true);
     await waitFor(() => expect(screen.queryByRole("button", { name: "提交中…" })).toBeNull());
+  });
+
+  // ---- 编辑模式附件（Issue #149）----
+
+  it("编辑模式：显示当前附件签名 URL 预览 + 更换图片/移除附件入口", async () => {
+    hookMock.fetchMine.mockResolvedValue([
+      makeRequest({ status: "pending", attachment_url: "u1/1-a.jpg" }),
+    ]);
+    renderModal();
+
+    await waitFor(() => expect(screen.getByText("待审批")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "修改申请" }));
+
+    // 编辑模式为旧附件生成签名 URL 预览
+    expect(await screen.findByAltText("当前附件")).toBeInTheDocument();
+    expect(screen.getByText("更换图片")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "移除附件" })).toBeTruthy();
+  });
+
+  it("编辑模式更换图片：上传新附件并携带旧附件路径保存（换图删旧附件）", async () => {
+    hookMock.fetchMine.mockResolvedValue([
+      makeRequest({ status: "pending", attachment_url: "u1/1-a.jpg" }),
+    ]);
+    const { container } = renderModal();
+
+    await waitFor(() => expect(screen.getByText("待审批")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "修改申请" }));
+    await screen.findByAltText("当前附件");
+
+    // 通过「更换图片」的文件输入选新图（编辑模式仅渲染这一个 file input）
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    expect(fileInput).toBeTruthy();
+    fireEvent.change(fileInput, {
+      target: { files: [new File([""], "new.jpg", { type: "image/jpeg" })] },
+    });
+    expect(await screen.findByAltText("附件预览")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    await waitFor(() =>
+      expect(hookMock.updateReason).toHaveBeenCalledWith("lr-1", {
+        reason: "感冒发烧",
+        attachment_url: "u1/123-new.jpg",
+        old_attachment_url: "u1/1-a.jpg",
+      }),
+    );
+  });
+
+  // ---- 取消请假（Issue #149）----
+
+  it("取消请假：编辑模式下方入口 + 内联确认 → cancelRequest → 关闭弹窗并刷新卡片", async () => {
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+    hookMock.fetchMine.mockResolvedValue([makeRequest()]);
+    render(<LeaveRequestModal open rehearsal={rehearsal} onClose={onClose} onSaved={onSaved} />);
+
+    await waitFor(() => expect(screen.getByText("待审批")).toBeInTheDocument());
+    // 只读视图无取消入口，进入编辑模式后出现
+    expect(screen.queryByRole("button", { name: "取消请假" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "修改申请" }));
+    expect(screen.getByRole("button", { name: "取消请假" })).toBeTruthy();
+
+    // 内联确认（项目既有撤回确认同款模式）
+    fireEvent.click(screen.getByRole("button", { name: "取消请假" }));
+    expect(screen.getByText(/确认取消该请假申请/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认取消" }));
+
+    await waitFor(() =>
+      expect(hookMock.cancelRequest).toHaveBeenCalledWith(
+        "lr-1",
+        expect.objectContaining({ id: "lr-1", attachment_url: null }),
+      ),
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSaved).toHaveBeenCalledTimes(1);
+  });
+
+  it("取消请假确认可反悔：点「取消」不调用 cancelRequest", async () => {
+    hookMock.fetchMine.mockResolvedValue([makeRequest()]);
+    renderModal();
+
+    await waitFor(() => expect(screen.getByText("待审批")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "修改申请" }));
+    fireEvent.click(screen.getByRole("button", { name: "取消请假" }));
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+
+    expect(hookMock.cancelRequest).not.toHaveBeenCalled();
+    // 确认块关闭，入口按钮恢复
+    expect(screen.getByRole("button", { name: "取消请假" })).toBeTruthy();
+  });
+
+  it("取消中防重复提交：按钮禁用并显示取消中，cancelRequest 仅调用一次", async () => {
+    let resolveCancel!: (v: boolean) => void;
+    hookMock.cancelRequest.mockReturnValue(
+      new Promise<boolean>((res) => {
+        resolveCancel = res;
+      }),
+    );
+    hookMock.fetchMine.mockResolvedValue([makeRequest()]);
+    renderModal();
+
+    await waitFor(() => expect(screen.getByText("待审批")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "修改申请" }));
+    fireEvent.click(screen.getByRole("button", { name: "取消请假" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认取消" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "取消中…" })).toBeDisabled());
+    expect(hookMock.cancelRequest).toHaveBeenCalledTimes(1);
+    // 完成取消，等待异步流程收尾
+    resolveCancel(true);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "取消中…" })).toBeNull());
+  });
+
+  it("已取消的申请：打开即为表单模式（视同无申请，可重新提交）", async () => {
+    hookMock.fetchMine.mockResolvedValue([makeRequest({ status: "canceled" })]);
+    renderModal();
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "提交申请" })).toBeTruthy());
+    expect(screen.queryByText("已取消")).toBeNull();
   });
 });

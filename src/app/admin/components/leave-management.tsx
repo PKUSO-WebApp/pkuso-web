@@ -22,6 +22,7 @@ const STATUS_LABEL: Record<string, string> = {
   approved: "已通过",
   rejected: "已驳回",
   withdrawn: "已撤回",
+  canceled: "已取消",
 };
 
 const STATUS_CHIP: Record<string, string> = {
@@ -29,6 +30,7 @@ const STATUS_CHIP: Record<string, string> = {
   approved: "bg-success-bg text-success",
   rejected: "bg-danger-bg text-danger",
   withdrawn: "bg-muted text-text-subtle",
+  canceled: "bg-muted text-text-subtle",
 };
 
 /** 排练展示名：repertoire 优先（成员端卡片同源），缺失回退 title */

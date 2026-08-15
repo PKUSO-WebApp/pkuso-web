@@ -83,11 +83,12 @@ export default function Home() {
     void fetchLeaveMine();
   }, [user?.id, fetchLeaveMine]);
 
-  // 每场排练最近的未撤回申请（fetchMine 已按 created_at 倒序，首个命中即最新）
+  // 每场排练最近的「有效」（未撤回/未取消）申请（fetchMine 已按 created_at 倒序，首个命中即最新；
+  // 已取消视同无申请，卡片显示「请假」可重新提交，Issue #149）
   const leaveRequestMap = React.useMemo(() => {
     const m: Record<number, LeaveRequestRow> = {};
     for (const r of leaveRequests as LeaveRequestRow[]) {
-      if (r.status === "withdrawn") continue;
+      if (r.status === "withdrawn" || r.status === "canceled") continue;
       if (!(r.rehearsal_id in m)) m[r.rehearsal_id] = r;
     }
     return m;

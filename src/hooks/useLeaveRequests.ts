@@ -14,6 +14,30 @@ export type LeaveRequestPayload = {
   target_status?: AttendanceStatus;
 };
 
+/** 编辑保存载荷（updateReason / reapply 共用）：old_attachment_url 为更换前的旧附件路径 */
+type EditLeaveRequestPayload = {
+  reason: string;
+  attachment_url?: string | null;
+  old_attachment_url?: string | null;
+};
+
+/**
+ * 从 attachment_url 提取 storage 文件路径（参考 usePosts.remove 的提取方式）。
+ * 兼容两种存储格式：纯路径（本 hook uploadAttachment 保存的格式）与
+ * 完整 URL（含 leave-attachments/ 前缀的编码路径）；文件名含未编码 % 等
+ * 字符导致 decodeURIComponent 抛错时原样返回（raw path 本就无需解码）。
+ */
+function extractAttachmentPath(attachmentUrl: string): string {
+  const marker = "leave-attachments/";
+  const idx = attachmentUrl.indexOf(marker);
+  const encodedPath = idx !== -1 ? attachmentUrl.slice(idx + marker.length) : attachmentUrl;
+  try {
+    return decodeURIComponent(encodedPath);
+  } catch {
+    return encodedPath;
+  }
+}
+
 /**
  * 成员端请假/补请假 hook（Issue #142）。
  * - 数据受 RLS 约束：仅本人可见/操作自己的申请；
@@ -75,32 +99,65 @@ export function useLeaveRequests(client: typeof defaultClient = defaultClient) {
     [client, fetchMine],
   );
 
-  /** 修改申请内容（仅限 pending 行：待审批中可改内容，不可改状态） */
+  /**
+   * 编辑保存后删除被替换的旧附件（仅当换图：旧附件非空、新附件非空且两者不同）。
+   * 删除失败静默容忍——DB 更新已成功，旧文件仅是孤儿存储，不应让保存报错。
+   * 注意：supabase storage.remove 不抛异常，失败经返回的 error 对象表达，需显式检查。
+   */
+  const removeOldAttachment = React.useCallback(
+    async (payload: EditLeaveRequestPayload) => {
+      const oldUrl = payload.old_attachment_url;
+      const newUrl = payload.attachment_url;
+      if (!oldUrl || !newUrl || oldUrl === newUrl) return;
+      const { error: removeError } = await client.storage
+        .from("leave-attachments")
+        .remove([extractAttachmentPath(oldUrl)]);
+      if (removeError) {
+        // 忽略：旧附件删除失败（如已被并发操作删除）不阻断编辑保存
+      }
+    },
+    [client],
+  );
+
+  /** 修改申请内容（仅限 pending 行：待审批中可改内容，不可改状态）。
+   * 编辑换图（old_attachment_url 非空且与新附件不同）时，更新成功后删除旧附件；
+   * 旧附件删除失败不影响保存本身（新附件已上传成功，仅遗留孤儿文件）。
+   * 0 行更新检测：管理员并发审批通过后 status 已非 pending，update 匹配 0 行——
+   * 此时申请已不归成员掌控，不得删除旧附件（附件随审批结果保留），直接报错返回。 */
   const updateReason = React.useCallback(
-    async (id: string, payload: { reason: string; attachment_url?: string | null }) => {
+    async (id: string, payload: EditLeaveRequestPayload) => {
       setSaving(true);
-      const { error: dbError } = await client
+      const { data, error: dbError } = await client
         .from("leave_requests")
         .update({ reason: payload.reason, attachment_url: payload.attachment_url ?? null })
         .eq("id", id)
-        .eq("status", "pending");
+        .eq("status", "pending")
+        .select("id");
       setSaving(false);
       if (dbError) {
         setError(dbError.message);
         return false;
       }
+      if (!data || data.length === 0) {
+        setError("申请已被处理，请刷新后重试");
+        return false;
+      }
+      await removeOldAttachment(payload);
       await fetchMine();
       setError(null);
       return true;
     },
-    [client, fetchMine],
+    [client, fetchMine, removeOldAttachment],
   );
 
-  /** 被驳回后重新申请：更新内容，状态打回 pending、清空驳回原因（仅限 rejected 行） */
+  /** 被驳回后重新申请：更新内容，状态打回 pending、清空驳回原因（仅限 rejected 行）；
+   * 换图时同样删除旧附件（与 updateReason 同语义，见 Issue #149）。
+   * 0 行更新检测：管理员并发处理（重新驳回/审批）后 status 已非 rejected，
+   * update 匹配 0 行时不得删除旧附件，直接报错返回。 */
   const reapply = React.useCallback(
-    async (id: string, payload: { reason: string; attachment_url?: string | null }) => {
+    async (id: string, payload: EditLeaveRequestPayload) => {
       setSaving(true);
-      const { error: dbError } = await client
+      const { data, error: dbError } = await client
         .from("leave_requests")
         .update({
           reason: payload.reason,
@@ -109,17 +166,23 @@ export function useLeaveRequests(client: typeof defaultClient = defaultClient) {
           reject_reason: null,
         })
         .eq("id", id)
-        .eq("status", "rejected");
+        .eq("status", "rejected")
+        .select("id");
       setSaving(false);
       if (dbError) {
         setError(dbError.message);
         return false;
       }
+      if (!data || data.length === 0) {
+        setError("申请已被处理，请刷新后重试");
+        return false;
+      }
+      await removeOldAttachment(payload);
       await fetchMine();
       setError(null);
       return true;
     },
-    [client, fetchMine],
+    [client, fetchMine, removeOldAttachment],
   );
 
   /**
@@ -186,6 +249,50 @@ export function useLeaveRequests(client: typeof defaultClient = defaultClient) {
     [client, fetchMine],
   );
 
+  /**
+   * 取消待审批的申请（状态 → canceled，Issue #149）。
+   * 与 withdraw 不同：pending 申请尚未生效（考勤未改写），取消无需考勤联动；
+   * 取消后卡片视同无申请，成员可重新提交。
+   * 附件处理：若申请带附件，顺带删除私有桶中的附件——删除失败不影响状态取消
+   * （已取消的申请仍可追溯，仅遗留孤儿文件）。
+   * 0 行更新检测：管理员并发审批通过后 status 已非 pending，update 匹配 0 行——
+   * 此时不得删除附件（申请已通过，附件属审批结果一部分），直接报错返回。
+   * @param request - 被取消的申请行（含 attachment_url），由调用方传入当前展示的申请。
+   */
+  const cancelRequest = React.useCallback(
+    async (id: string, request?: Pick<LeaveRequestRow, "attachment_url"> | null) => {
+      setSaving(true);
+      const { data, error: dbError } = await client
+        .from("leave_requests")
+        .update({ status: "canceled" })
+        .eq("id", id)
+        .eq("status", "pending")
+        .select("id");
+      setSaving(false);
+      if (dbError) {
+        setError(dbError.message);
+        return false;
+      }
+      if (!data || data.length === 0) {
+        setError("申请已被处理，请刷新后重试");
+        return false;
+      }
+      // 附件删除失败不影响状态取消（参考 usePosts.remove 的容错语义）
+      if (request?.attachment_url) {
+        const { error: removeError } = await client.storage
+          .from("leave-attachments")
+          .remove([extractAttachmentPath(request.attachment_url)]);
+        if (removeError) {
+          // 忽略：存储删除失败不阻断取消（已取消的申请仍可追溯，仅遗留孤儿文件）
+        }
+      }
+      await fetchMine();
+      setError(null);
+      return true;
+    },
+    [client, fetchMine],
+  );
+
   /** 上传附件到私有桶（路径沿用 usePosts.uploadImage 的 <user_id>/<时间戳>-<文件名> 模式），返回 storage 路径 */
   const uploadAttachment = React.useCallback(
     async (file: File, userId: string) => {
@@ -222,6 +329,7 @@ export function useLeaveRequests(client: typeof defaultClient = defaultClient) {
     updateReason,
     reapply,
     withdraw,
+    cancelRequest,
     uploadAttachment,
     getSignedUrl,
   };

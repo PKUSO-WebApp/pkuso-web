@@ -6,31 +6,41 @@ import { useLeaveRequests } from "../useLeaveRequests";
 
 /**
  * 链式 mock 客户端：依次消费 responses（含挂载时的初始 fetch）。
- * 记录每次 update 的表名与载荷（calls），供断言 withdraw 的考勤还原逻辑。
+ * 记录每次 update 的表名与载荷（calls），供断言 withdraw 的考勤还原逻辑；
+ * 记录 storage.remove 调用（removes），供断言附件删除（Issue #149）。
+ * update 链（eq → eq → select）中仅首个 eq 消费响应，后续链式调用
+ * （eq/select）返回同一 thenable，await 解开为对应响应——兼容有无 select 两种链。
  */
 function mockClient<T>(responses: T[]) {
   const calls: { table: string; op: "update"; payload: unknown }[] = [];
+  const removes: { bucket: string; paths: string[] }[] = [];
   let i = 0;
   const c = (r: T) => ({
     eq: () => c(r),
     order: () => c(r),
     maybeSingle: () => c(r),
+    select: () => c(r),
     then: (resolve: (v: T) => void) => resolve(r),
   });
   return {
     calls,
+    removes,
     from: (table: string) => ({
       select: () => c(responses[i++]),
       insert: () => c(responses[i++]),
       update: (payload: unknown) => {
         calls.push({ table, op: "update", payload });
-        return { eq: () => ({ eq: () => c(responses[i++]) }) };
+        return { eq: () => c(responses[i++]) };
       },
     }),
     storage: {
-      from: () => ({
+      from: (bucket: string) => ({
         upload: () => c(responses[i++]),
         createSignedUrl: () => c(responses[i++]),
+        remove: (paths: string[]) => {
+          removes.push({ bucket, paths });
+          return c(responses[i++]);
+        },
       }),
     },
   };
@@ -38,6 +48,8 @@ function mockClient<T>(responses: T[]) {
 
 const fetchOk = { data: [{ id: "1", rehearsal_id: 1 }], error: null };
 const emptyOk = { data: [], error: null };
+/** update 匹配到行（0 行检测通过）；无 data 字段的 { error: null } 已被 0 行检测拦截 */
+const updateOk = { data: [{ id: "lr-1" }], error: null };
 
 describe("useLeaveRequests", () => {
   it("fetchMine 加载我的申请（含排练 join）", async () => {
@@ -92,7 +104,7 @@ describe("useLeaveRequests", () => {
   });
 
   it("updateReason 更新 pending 申请内容", async () => {
-    const c = mockClient([fetchOk, { error: null }, emptyOk]);
+    const c = mockClient([fetchOk, updateOk, emptyOk]);
     const { result } = renderHook(() => useLeaveRequests(c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -103,7 +115,7 @@ describe("useLeaveRequests", () => {
   });
 
   it("reapply 重新申请：状态回 pending 并清空驳回原因（限 rejected 行）", async () => {
-    const c = mockClient([fetchOk, { error: null }, emptyOk]);
+    const c = mockClient([fetchOk, updateOk, emptyOk]);
     const { result } = renderHook(() => useLeaveRequests(c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -226,6 +238,211 @@ describe("useLeaveRequests", () => {
     );
     expect(ok).toBe(false);
     expect(result.current.error).toBe("撤回成功，但考勤还原失败：还原失败");
+  });
+
+  // ---- cancelRequest（Issue #149）----
+
+  it("cancelRequest 取消 pending 申请（无附件）：状态更新为 canceled，不调用存储删除", async () => {
+    const c = mockClient([fetchOk, updateOk, emptyOk]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() => result.current.cancelRequest("lr-1"));
+    expect(ok).toBe(true);
+    expect(c.calls).toEqual([
+      { table: "leave_requests", op: "update", payload: { status: "canceled" } },
+    ]);
+    expect(c.removes).toEqual([]);
+  });
+
+  it("cancelRequest 带附件：取消成功后删除私有桶附件", async () => {
+    const c = mockClient([
+      fetchOk,
+      updateOk, // 取消申请 update
+      { error: null }, // 附件删除 remove
+      emptyOk, // 取消后 fetchMine
+    ]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() =>
+      result.current.cancelRequest("lr-1", { attachment_url: "u1/1-a.jpg" }),
+    );
+    expect(ok).toBe(true);
+    expect(c.removes).toEqual([{ bucket: "leave-attachments", paths: ["u1/1-a.jpg"] }]);
+  });
+
+  it("cancelRequest 附件删除失败（remove 返回 error）：不影响状态取消", async () => {
+    const c = mockClient([
+      fetchOk,
+      updateOk,
+      { error: { message: "删除失败" } }, // remove 返回错误（容错忽略）
+      emptyOk,
+    ]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() =>
+      result.current.cancelRequest("lr-1", { attachment_url: "u1/1-a.jpg" }),
+    );
+    expect(ok).toBe(true);
+    expect(result.current.error).toBeNull();
+    expect(c.removes).toEqual([{ bucket: "leave-attachments", paths: ["u1/1-a.jpg"] }]);
+  });
+
+  it("cancelRequest 完整 URL 附件：提取 leave-attachments/ 之后解码的路径删除", async () => {
+    const c = mockClient([fetchOk, updateOk, { error: null }, emptyOk]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() =>
+      result.current.cancelRequest("lr-1", {
+        attachment_url: "https://x.supabase.co/storage/v1/object/leave-attachments/u1%2F1-a.jpg",
+      }),
+    );
+    expect(ok).toBe(true);
+    expect(c.removes).toEqual([{ bucket: "leave-attachments", paths: ["u1/1-a.jpg"] }]);
+  });
+
+  it("cancelRequest 更新失败返回 false 并写入 error", async () => {
+    const c = mockClient([fetchOk, { error: { message: "取消失败" } }]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() => result.current.cancelRequest("lr-1"));
+    expect(ok).toBe(false);
+    expect(result.current.error).toBe("取消失败");
+    expect(c.removes).toEqual([]);
+  });
+
+  it("cancelRequest 并发审批后 0 行更新：返回 false、写入 error、附件不被误删", async () => {
+    // 管理员已并发审批通过（status 非 pending），update 匹配 0 行
+    const c = mockClient([fetchOk, { data: [], error: null }]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() =>
+      result.current.cancelRequest("lr-1", { attachment_url: "u1/1-a.jpg" }),
+    );
+    expect(ok).toBe(false);
+    expect(result.current.error).toBe("申请已被处理，请刷新后重试");
+    expect(c.removes).toEqual([]); // 已通过申请的附件不得被删除
+  });
+
+  // ---- 编辑换图删旧附件（Issue #149）----
+
+  it("updateReason 换图：保存成功后删除旧附件（仅删除旧路径）", async () => {
+    const c = mockClient([
+      fetchOk,
+      updateOk, // 更新申请 update
+      { error: null }, // 旧附件删除 remove
+      emptyOk, // 保存后 fetchMine
+    ]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() =>
+      result.current.updateReason("lr-1", {
+        reason: "改原因",
+        attachment_url: "u1/2-b.jpg",
+        old_attachment_url: "u1/1-a.jpg",
+      }),
+    );
+    expect(ok).toBe(true);
+    expect(c.calls[0].payload).toEqual({
+      reason: "改原因",
+      attachment_url: "u1/2-b.jpg",
+    });
+    expect(c.removes).toEqual([{ bucket: "leave-attachments", paths: ["u1/1-a.jpg"] }]);
+  });
+
+  it("updateReason 未换图（新旧相同）：不删除附件", async () => {
+    const c = mockClient([fetchOk, updateOk, emptyOk]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() =>
+      result.current.updateReason("lr-1", {
+        reason: "改原因",
+        attachment_url: "u1/1-a.jpg",
+        old_attachment_url: "u1/1-a.jpg",
+      }),
+    );
+    expect(ok).toBe(true);
+    expect(c.removes).toEqual([]);
+  });
+
+  it("updateReason 仅移除附件（新为 null）：不删除旧附件（换图语义）", async () => {
+    const c = mockClient([fetchOk, updateOk, emptyOk]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() =>
+      result.current.updateReason("lr-1", {
+        reason: "改原因",
+        attachment_url: null,
+        old_attachment_url: "u1/1-a.jpg",
+      }),
+    );
+    expect(ok).toBe(true);
+    expect(c.removes).toEqual([]);
+  });
+
+  it("updateReason 并发审批后 0 行更新：返回 false、写入 error、旧附件不被误删", async () => {
+    // 管理员已并发审批通过（status 非 pending），update 匹配 0 行
+    const c = mockClient([fetchOk, { data: [], error: null }]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() =>
+      result.current.updateReason("lr-1", {
+        reason: "改原因",
+        attachment_url: "u1/2-b.jpg",
+        old_attachment_url: "u1/1-a.jpg",
+      }),
+    );
+    expect(ok).toBe(false);
+    expect(result.current.error).toBe("申请已被处理，请刷新后重试");
+    expect(c.removes).toEqual([]); // 已通过申请的附件不得被删除
+  });
+
+  it("reapply 换图：保存成功后同样删除旧附件（与 updateReason 同语义）", async () => {
+    const c = mockClient([
+      fetchOk,
+      updateOk, // 重新申请 update
+      { error: null }, // 旧附件删除 remove
+      emptyOk,
+    ]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() =>
+      result.current.reapply("lr-1", {
+        reason: "再次申请",
+        attachment_url: "u1/2-b.jpg",
+        old_attachment_url: "u1/1-a.jpg",
+      }),
+    );
+    expect(ok).toBe(true);
+    expect(c.removes).toEqual([{ bucket: "leave-attachments", paths: ["u1/1-a.jpg"] }]);
+  });
+
+  it("reapply 并发处理后 0 行更新：返回 false、写入 error、旧附件不被误删", async () => {
+    // 管理员已并发处理（status 非 rejected），update 匹配 0 行
+    const c = mockClient([fetchOk, { data: [], error: null }]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() =>
+      result.current.reapply("lr-1", {
+        reason: "再次申请",
+        attachment_url: "u1/2-b.jpg",
+        old_attachment_url: "u1/1-a.jpg",
+      }),
+    );
+    expect(ok).toBe(false);
+    expect(result.current.error).toBe("申请已被处理，请刷新后重试");
+    expect(c.removes).toEqual([]); // 已处理申请的附件不得被删除
   });
 
   it("uploadAttachment 上传到私有桶并返回 storage 路径（无公开 URL）", async () => {

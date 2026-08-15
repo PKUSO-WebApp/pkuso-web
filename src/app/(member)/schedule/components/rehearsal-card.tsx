@@ -34,6 +34,7 @@ const LEAVE_STATUS_LABEL: Record<LeaveStatus, string> = {
   approved: "已通过",
   rejected: "已驳回",
   withdrawn: "已撤回",
+  canceled: "已取消",
 };
 
 /** 请假申请状态 chip 语义色（与请假面板一致） */
@@ -42,6 +43,7 @@ const LEAVE_STATUS_CHIP: Record<LeaveStatus, string> = {
   approved: "bg-success-bg text-success",
   rejected: "bg-danger-bg text-danger",
   withdrawn: "bg-muted text-text-subtle",
+  canceled: "bg-muted text-text-subtle",
 };
 
 type AttendanceInfo = {
@@ -116,7 +118,8 @@ export function RehearsalCard({
     blockReason !== null &&
     attendance?.status !== "excused";
 
-  // 是否存在有效（未撤回）请假申请：有则按钮文案变「编辑申请」、行内显示审批状态 chip（Issue #148）
+  // 是否存在有效（未撤回/未取消）请假申请：有则按钮文案变「编辑申请」、行内显示审批状态 chip；
+  // 已取消视同无申请（按钮文案「请假」，可重新提交，Issue #149）
   const hasLeaveRequest =
     leaveRequest?.status === "pending" ||
     leaveRequest?.status === "approved" ||

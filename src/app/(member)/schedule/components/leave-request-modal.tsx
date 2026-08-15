@@ -17,15 +17,17 @@ import type {
  * 成员端请假/补请假弹窗（Issue #142）。
  *
  * 状态机规则（集中注释，前后端一致）：
- * - 无申请 / 已撤回：表单模式，可提交新申请（target_status 固定 excused）；
- * - pending：只读展示 + 「待审批」chip，可「修改」内容（改内容不改状态）；
+ * - 无申请 / 已撤回 / 已取消：表单模式，可提交新申请（target_status 固定 excused）；
+ * - pending：只读展示 + 「待审批」chip，可「修改」内容（改内容不改状态），
+ *   或进入编辑模式「取消请假」（状态 → canceled，取消后视同无申请，可重新提交）；
  * - approved：只读展示 + 「已通过」chip，可「撤回」；撤回后进入新申请模式，
  *   target_status 单选「正常出勤 / 缺勤」（用于调整已生效的考勤记录）；
  * - rejected：只读展示 + 「已驳回」chip + 驳回原因，可「重新申请」（内容预填，
  *   保存后状态回 pending 并清空驳回原因）。
  *
  * 附件：私有桶，保存 storage 路径；查看时经 getSignedUrl 换 60s 临时链接。
- * 防重复提交：同步 ref + state 双重 guard；提交/撤回中禁关闭。
+ * 编辑模式展示当前附件（签名 URL 预览），可「更换图片」（替换后保存时由 hook 删除旧附件）。
+ * 防重复提交：同步 ref + state 双重 guard；提交/撤回/取消中禁关闭。
  */
 
 type Props = {
@@ -43,6 +45,7 @@ const LEAVE_STATUS_LABEL: Record<LeaveStatus, string> = {
   approved: "已通过",
   rejected: "已驳回",
   withdrawn: "已撤回",
+  canceled: "已取消",
 };
 
 const LEAVE_STATUS_CHIP: Record<LeaveStatus, string> = {
@@ -50,6 +53,7 @@ const LEAVE_STATUS_CHIP: Record<LeaveStatus, string> = {
   approved: "bg-success-bg text-success",
   rejected: "bg-danger-bg text-danger",
   withdrawn: "bg-muted text-text-subtle",
+  canceled: "bg-muted text-text-subtle",
 };
 
 const TARGET_STATUS_OPTIONS: { value: AttendanceStatus; label: string }[] = [
@@ -65,6 +69,7 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
     updateReason,
     reapply,
     withdraw,
+    cancelRequest,
     uploadAttachment,
     getSignedUrl,
     saving,
@@ -90,6 +95,8 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
   const [keepOldAttachment, setKeepOldAttachment] = React.useState(false);
   /** 查看模式的附件签名 URL（当前申请） */
   const [viewAttachmentUrl, setViewAttachmentUrl] = React.useState<string | null>(null);
+  /** 编辑模式未换图时展示的旧附件签名 URL */
+  const [editAttachmentUrl, setEditAttachmentUrl] = React.useState<string | null>(null);
   const [attachmentLoading, setAttachmentLoading] = React.useState(false);
 
   // ---- 操作状态 ----
@@ -98,6 +105,10 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
   const [isWithdrawing, setIsWithdrawing] = React.useState(false);
   const withdrawingRef = React.useRef(false);
   const [confirmWithdraw, setConfirmWithdraw] = React.useState(false);
+  /** 取消请假（pending 编辑模式）：确认内联块 + 防重复提交 guard */
+  const [confirmCancel, setConfirmCancel] = React.useState(false);
+  const [isCanceling, setIsCanceling] = React.useState(false);
+  const cancelingRef = React.useRef(false);
   const [zoomImageUrl, setZoomImageUrl] = React.useState<string | null>(null);
 
   // 打开时加载该排练我的申请（fetchMine 按 created_at 倒序，首个命中即最近一条）
@@ -111,9 +122,12 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
     void (async () => {
       const rows = await fetchMine();
       if (cancelled) return;
+      // 有效申请：未撤回且未取消（已取消视同无申请，表单模式可重新提交，Issue #149）
       const found =
-        (rows ?? []).find((r) => r.rehearsal_id === rehearsal.id && r.status !== "withdrawn") ??
-        null;
+        (rows ?? []).find(
+          (r) =>
+            r.rehearsal_id === rehearsal.id && r.status !== "withdrawn" && r.status !== "canceled",
+        ) ?? null;
       if (!cancelled) {
         setCurrent(found);
         setMode(found ? "view" : "form");
@@ -125,7 +139,9 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
         setAttachmentPreviewUrl(null);
         setKeepOldAttachment(false);
         setViewAttachmentUrl(null);
+        setEditAttachmentUrl(null);
         setConfirmWithdraw(false);
+        setConfirmCancel(false);
         setLoading(false);
       }
     })();
@@ -155,9 +171,30 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
     };
   }, [open, mode, current?.id, current?.attachment_url, getSignedUrl]);
 
+  // 编辑模式未换图时：为旧附件生成 60s 签名 URL 预览（切换编辑/换图时丢弃）
+  React.useEffect(() => {
+    if (!open || mode !== "form" || !editing?.attachment_url || !keepOldAttachment) {
+      // 退出编辑/更换图片时清空旧附件签名 URL（避免展示上一份附件）
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setEditAttachmentUrl(null);
+      return;
+    }
+    let cancelled = false;
+    setAttachmentLoading(true);
+    void (async () => {
+      const res = await getSignedUrl(editing.attachment_url!);
+      if (cancelled) return;
+      setEditAttachmentUrl(res.url ?? null);
+      setAttachmentLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, mode, editing?.id, editing?.attachment_url, keepOldAttachment, getSignedUrl]);
+
   const handleClose = () => {
-    // 提交/撤回中禁关闭（防重复操作与数据中途丢失）
-    if (isSubmitting || isWithdrawing) return;
+    // 提交/撤回/取消中禁关闭（防重复操作与数据中途丢失）
+    if (isSubmitting || isWithdrawing || isCanceling) return;
     if (attachmentPreviewUrl) URL.revokeObjectURL(attachmentPreviewUrl);
     onClose();
   };
@@ -191,6 +228,8 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
     setKeepOldAttachment(!!current.attachment_url);
     setAttachmentFile(null);
     setAttachmentPreviewUrl(null);
+    setEditAttachmentUrl(null);
+    setConfirmCancel(false);
     setError(null);
     setMode("form");
   };
@@ -233,14 +272,17 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
 
       let ok: boolean;
       if (editing) {
-        // 编辑已有申请：rejected → 重新申请（状态回 pending 并清驳回原因）；pending → 改内容
+        // 编辑已有申请：rejected → 重新申请（状态回 pending 并清驳回原因）；pending → 改内容。
+        // 换图时携带旧附件路径，由 hook 在保存成功后删除旧附件（Issue #149）
+        const editPayload = {
+          reason: trimmed,
+          attachment_url: attachmentUrl,
+          old_attachment_url: current?.attachment_url ?? null,
+        };
         ok =
           editing.status === "rejected"
-            ? await reapply(editing.id, { reason: trimmed, attachment_url: attachmentUrl })
-            : await updateReason(editing.id, {
-                reason: trimmed,
-                attachment_url: attachmentUrl,
-              });
+            ? await reapply(editing.id, editPayload)
+            : await updateReason(editing.id, editPayload);
       } else {
         // 新申请：撤回已通过申请后需显式选择目标状态，否则固定请假（excused）
         ok = await create({
@@ -253,11 +295,14 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
       }
       if (!ok) return; // hook 已写入 error
 
-      // 保存成功后重新定位最新申请（管理端可能已审批，直接展示最新状态）
+      // 保存成功后重新定位最新申请（管理端可能已审批，直接展示最新状态；
+      // 已撤回/已取消视同无申请，与打开时过滤一致，Issue #149）
       const rows = await fetchMine();
       const found =
-        (rows ?? []).find((r) => r.rehearsal_id === rehearsal.id && r.status !== "withdrawn") ??
-        null;
+        (rows ?? []).find(
+          (r) =>
+            r.rehearsal_id === rehearsal.id && r.status !== "withdrawn" && r.status !== "canceled",
+        ) ?? null;
       if (attachmentPreviewUrl) URL.revokeObjectURL(attachmentPreviewUrl);
       setCurrent(found);
       setMode(found ? "view" : "form");
@@ -269,6 +314,8 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
       setAttachmentPreviewUrl(null);
       setKeepOldAttachment(false);
       setViewAttachmentUrl(null);
+      setEditAttachmentUrl(null);
+      setConfirmCancel(false);
       setError(null);
       onSaved();
     } finally {
@@ -299,6 +346,7 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
       setAttachmentPreviewUrl(null);
       setKeepOldAttachment(false);
       setViewAttachmentUrl(null);
+      setEditAttachmentUrl(null);
       setError(null);
       onSaved();
     } finally {
@@ -307,7 +355,29 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
     }
   };
 
-  const busy = isSubmitting || isWithdrawing || saving;
+  /** 取消请假（仅 pending 编辑模式）：状态 → canceled 后关闭弹窗，父级刷新卡片 */
+  const handleCancelRequest = async () => {
+    // 双重防重复提交：同步 ref 阻断连点，state 异步兜底（禁用按钮）
+    if (cancelingRef.current || isCanceling || !editing) return;
+    cancelingRef.current = true;
+    setIsCanceling(true);
+    setError(null);
+    try {
+      // 传入被取消的申请行：hook 顺带删除附件（失败不影响取消）
+      const ok = await cancelRequest(editing.id, editing);
+      if (!ok) return;
+      // 取消成功：视同无申请，关闭弹窗并通知父级刷新卡片（可重新提交申请）
+      if (attachmentPreviewUrl) URL.revokeObjectURL(attachmentPreviewUrl);
+      setConfirmCancel(false);
+      onClose();
+      onSaved();
+    } finally {
+      cancelingRef.current = false;
+      setIsCanceling(false);
+    }
+  };
+
+  const busy = isSubmitting || isWithdrawing || isCanceling || saving;
 
   return (
     <Modal
@@ -517,15 +587,38 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
                 </button>
               </div>
             ) : keepOldAttachment ? (
-              <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface px-3 py-2">
-                <p className="min-w-0 truncate text-xs text-text-muted">已上传附件（未更换）</p>
-                <button
-                  type="button"
-                  onClick={handleClearAttachment}
-                  className="shrink-0 rounded-full border border-border bg-surface px-3 py-1 text-xs text-text-muted hover:bg-muted"
-                >
-                  移除
-                </button>
+              /* 编辑模式未换图：展示旧附件签名 URL 预览，可更换图片（替换）或移除 */
+              <div className="space-y-2">
+                {attachmentLoading ? (
+                  <p className="text-xs text-text-subtle">加载中…</p>
+                ) : editAttachmentUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={editAttachmentUrl}
+                    alt="当前附件"
+                    className="max-h-40 rounded-xl border border-border object-contain"
+                  />
+                ) : (
+                  <p className="text-xs text-danger">附件加载失败</p>
+                )}
+                <div className="flex gap-2">
+                  <label className="flex flex-1 cursor-pointer items-center justify-center rounded-xl border border-dashed border-border bg-surface px-3 py-2 text-sm text-text-muted hover:bg-muted">
+                    更换图片
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleFileChange}
+                      className="hidden"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleClearAttachment}
+                    className="flex-1 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text-muted hover:bg-muted"
+                  >
+                    移除附件
+                  </button>
+                </div>
               </div>
             ) : (
               <label className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-border bg-surface px-3 py-4 text-sm text-text-muted hover:bg-muted">
@@ -551,6 +644,7 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
                   if (attachmentPreviewUrl) URL.revokeObjectURL(attachmentPreviewUrl);
                   setMode("view");
                   setEditing(null);
+                  setConfirmCancel(false);
                   setError(null);
                 }}
                 className="flex-1 rounded-xl border border-border bg-surface py-2.5 text-sm font-medium text-text-muted hover:bg-muted disabled:opacity-60"
@@ -572,6 +666,46 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
                     : "提交申请"}
             </button>
           </div>
+
+          {/* 取消请假（仅 pending 编辑模式，Issue #149）：内联确认，取消后视同无申请 */}
+          {editing?.status === "pending" && (
+            <div className="pt-2">
+              {confirmCancel ? (
+                <div className="rounded-xl border border-danger/30 bg-danger/5 p-3">
+                  <p className="mb-3 text-sm text-danger">
+                    确认取消该请假申请？取消后视为无申请，可重新提交申请。
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setConfirmCancel(false)}
+                      className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-muted hover:bg-muted disabled:opacity-60"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={handleCancelRequest}
+                      className="flex-1 rounded-lg bg-danger px-3 py-2 text-sm text-danger-foreground hover:opacity-90 disabled:opacity-60"
+                    >
+                      {isCanceling ? "取消中…" : "确认取消"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setConfirmCancel(true)}
+                  className="w-full rounded-xl border border-danger/30 bg-surface py-2.5 text-sm font-medium text-danger hover:bg-danger/10 disabled:opacity-60"
+                >
+                  取消请假
+                </button>
+              )}
+            </div>
+          )}
         </form>
       )}
 

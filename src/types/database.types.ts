@@ -477,7 +477,12 @@ export type Database = {
     }
     Enums: {
       attendanceStatus: "present" | "late" | "absent" | "excused"
-      leaveStatus: "pending" | "approved" | "rejected" | "withdrawn"
+      leaveStatus:
+        | "pending"
+        | "approved"
+        | "rejected"
+        | "withdrawn"
+        | "canceled"
       postType: "ensemble" | "gathering"
       profileRole: "member" | "admin"
       profileStatus: "pending" | "approved" | "rejected"
@@ -609,7 +614,7 @@ export const Constants = {
   public: {
     Enums: {
       attendanceStatus: ["present", "late", "absent", "excused"],
-      leaveStatus: ["pending", "approved", "rejected", "withdrawn"],
+      leaveStatus: ["pending", "approved", "rejected", "withdrawn", "canceled"],
       postType: ["ensemble", "gathering"],
       profileRole: ["member", "admin"],
       profileStatus: ["pending", "approved", "rejected"],

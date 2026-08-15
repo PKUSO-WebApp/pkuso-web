@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { parseLocalISO } from "@/lib/date-utils";
 import type { RehearsalRow } from "@/types/database";
-import { isRehearsalUpdated, isRehearsalEnded, sortRehearsalsForMember } from "./rehearsal-sort";
+import {
+  isRehearsalUpdated,
+  isRehearsalEnded,
+  sortRehearsalsForMember,
+  sortEndedFullRehearsals,
+} from "./rehearsal-sort";
 
 /** 构造排练行；时间用本地时间 ISO 字符串（parseLocalISO 按本地时区解析，任意时区下一致） */
 function makeRehearsal(
@@ -240,5 +245,66 @@ describe("sortRehearsalsForMember", () => {
 
   it("空数组返回空数组", () => {
     expect(sortRehearsalsForMember([], NOW)).toEqual([]);
+  });
+});
+
+describe("sortEndedFullRehearsals", () => {
+  it("仅保留 type=full 且已结束的排练，分排/进行中/未开始均不出现", () => {
+    const ended = makeRehearsal(1, "2026-08-15T08:00:00", "2026-08-15T10:00:00");
+    const inProgress = makeRehearsal(2, "2026-08-15T20:00:00", "2026-08-15T22:00:00");
+    const upcoming = makeRehearsal(3, "2026-08-16T20:00:00", null);
+    const section = {
+      ...makeRehearsal(4, "2026-08-15T08:00:00", "2026-08-15T10:00:00"),
+      type: "section",
+    } as RehearsalRow;
+
+    const result = sortEndedFullRehearsals([section, upcoming, inProgress, ended], NOW);
+    expect(result.map((r) => r.id)).toEqual([1]);
+  });
+
+  it("now 恰好等于 end 时判定为已结束（与 isRehearsalEnded 一致）", () => {
+    // 排练 20:00-21:00，now 21:00 恰在结束时刻
+    const item = makeRehearsal(1, "2026-08-15T20:00:00", "2026-08-15T21:00:00");
+    expect(sortEndedFullRehearsals([item], NOW).map((r) => r.id)).toEqual([1]);
+  });
+
+  it("end_time 缺失时按 start + 3 小时判定", () => {
+    // 17:00 开始（默认 end 20:00），now 21:00 已结束
+    const gone = makeRehearsal(1, "2026-08-15T17:00:00", null);
+    // 19:00 开始（默认 end 22:00），now 21:00 未结束
+    const ongoing = makeRehearsal(2, "2026-08-15T19:00:00", null);
+
+    const result = sortEndedFullRehearsals([ongoing, gone], NOW);
+    expect(result.map((r) => r.id)).toEqual([1]);
+  });
+
+  it("无有效 start_time 的排练不出现", () => {
+    const noTime = makeRehearsal(1, null, null);
+    expect(sortEndedFullRehearsals([noTime], NOW)).toEqual([]);
+  });
+
+  it("按结束时刻近 → 远排序（最近结束在前）", () => {
+    // A：11 小时前结束；B：5 小时前结束；C：很早前结束
+    const a = makeRehearsal(1, "2026-08-15T08:00:00", "2026-08-15T10:00:00");
+    const b = makeRehearsal(2, "2026-08-15T14:00:00", "2026-08-15T16:00:00");
+    const c = makeRehearsal(3, "2026-07-20T08:00:00", "2026-07-20T10:00:00");
+
+    const result = sortEndedFullRehearsals([a, c, b], NOW);
+    expect(result.map((r) => r.id)).toEqual([2, 1, 3]);
+  });
+
+  it("不限时间窗口：任意历史时刻的已结束合排都保留，且不修改原数组", () => {
+    const old = makeRehearsal(1, "2026-01-01T08:00:00", "2026-01-01T10:00:00");
+    const input = [old];
+
+    const result = sortEndedFullRehearsals(input, NOW);
+    expect(result.map((r) => r.id)).toEqual([1]);
+    // 原数组未被修改（顺序与引用均不变）
+    expect(input).toEqual([old]);
+    expect(input[0]).toBe(old);
+  });
+
+  it("空数组返回空数组", () => {
+    expect(sortEndedFullRehearsals([], NOW)).toEqual([]);
   });
 });

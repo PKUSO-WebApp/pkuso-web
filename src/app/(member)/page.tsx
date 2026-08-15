@@ -20,6 +20,7 @@ import {
   isRehearsalUpdated,
   isRehearsalEnded,
   sortRehearsalsForMember,
+  sortEndedFullRehearsals,
 } from "@/lib/rehearsal-sort";
 
 export default function Home() {
@@ -32,7 +33,7 @@ export default function Home() {
     fetchMyAttendances,
     upsert,
   } = useAttendance();
-  const [scheduleTab, setScheduleTab] = React.useState<"full" | "section">("full");
+  const [scheduleTab, setScheduleTab] = React.useState<"full" | "section" | "history">("full");
   const [showAnnouncementDetail, setShowAnnouncementDetail] = React.useState(false);
   // 请假/补请假（Issue #142）：打开面板的排练 + 我的申请列表
   const { data: leaveRequests, fetchMine: fetchLeaveMine } = useLeaveRequests();
@@ -98,6 +99,10 @@ export default function Home() {
     if (!rehearsals) return [];
     // 显式传入 nowTick 时刻，避免过滤/排序函数内部取 new Date() 导致跨天后列表不刷新
     const now = new Date(nowTick);
+    // 历史合排（Issue #154）：全部已结束的合排，按结束时刻近 → 远，不限一周窗口
+    if (scheduleTab === "history") {
+      return sortEndedFullRehearsals(rehearsals, now);
+    }
     const filtered = rehearsals.filter(
       (r) =>
         (r.type === "full" ? "full" : "section") === scheduleTab &&
@@ -284,16 +289,20 @@ export default function Home() {
       <header className="mb-1">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <h1 className="text-lg font-semibold text-text">本周排练日程</h1>
-            <p className="mt-1 text-xs text-text-muted">查看乐团合排与分排安排</p>
+            <h1 className="text-lg font-semibold text-text">
+              {scheduleTab === "history" ? "历史合排" : "本周排练日程"}
+            </h1>
+            <p className="mt-1 text-xs text-text-muted">
+              {scheduleTab === "history" ? "查看已结束的合排排练" : "查看乐团合排与分排安排"}
+            </p>
           </div>
         </div>
         <div className="mt-2">
           <Toggle
-            options={["full", "section"] as const}
+            options={["full", "section", "history"] as const}
             value={scheduleTab}
             onChange={setScheduleTab}
-            getLabel={(k) => ({ full: "合排", section: "分排" })[k]}
+            getLabel={(k) => ({ full: "合排", section: "分排", history: "历史合排" })[k]}
           />
         </div>
       </header>

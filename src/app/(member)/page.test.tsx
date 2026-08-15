@@ -50,20 +50,27 @@ vi.mock("@/hooks/useLeaveRequests", () => ({
   }),
 }));
 
-// Toggle mock 支持点击切换（供分排直签等需要切换 tab 的用例使用）
+// Toggle mock 按真实组件渲染全部选项按钮（data-testid: toggle-<option>），点击触发对应 onChange；
+// 供分排直签（切「分排」）、历史合排（Issue #154）等需要切换 tab 的用例使用
 vi.mock("@/components/ui/Toggle", () => ({
   Toggle: vi.fn(
     (props: {
-      options: readonly string[];
-      value: "full" | "section";
-      onChange: (value: "full" | "section") => void;
-      getLabel?: (option: "full" | "section") => string;
+      options: readonly ("full" | "section" | "history")[];
+      value: "full" | "section" | "history";
+      onChange: (value: "full" | "section" | "history") => void;
+      getLabel?: (option: "full" | "section" | "history") => string;
     }) => (
-      <div
-        data-testid="toggle"
-        onClick={() => props.onChange(props.value === "full" ? "section" : "full")}
-      >
-        {props.getLabel ? props.getLabel(props.value) : "Toggle"}
+      <div data-testid="toggle">
+        {props.options.map((opt) => (
+          <button
+            key={opt}
+            type="button"
+            data-testid={`toggle-${opt}`}
+            onClick={() => props.onChange(opt)}
+          >
+            {props.getLabel ? props.getLabel(opt) : opt}
+          </button>
+        ))}
       </div>
     ),
   ),
@@ -422,6 +429,150 @@ describe("Home 首页组件", () => {
 
     it("全部被过滤时显示'暂无安排'", () => {
       renderWithRehearsals([makeRehearsal(1, -10, "旧排练"), makeRehearsal(2, 20, "远期排练")]);
+
+      expect(screen.getByText("暂无安排")).toBeTruthy();
+    });
+  });
+
+  // ============================================================
+  // 5.4.5 历史合排 tab（Issue #154）：仅已结束的合排，按结束时刻近 → 远，不限一周窗口
+  // ============================================================
+  describe("历史合排 tab", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      // 固定系统时间 2026-08-15 21:00（本地）：结束判定与排序与真实运行时刻无关
+      vi.setSystemTime(new Date(2026, 7, 15, 21, 0, 0));
+      // clearAllMocks 不清除 mockReturnValue 实现，显式重置考勤 mock（防上个用例的 map 残留）
+      mockUseAttendance.mockReturnValue({ ...defaultAttendanceMock });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** 构造指定 startISO 的排练行（fake timers 已固定系统时间，硬编码日期安全；opts.endISO 覆盖结束时刻、opts.type 指定类型） */
+    function makeRehearsalAt(
+      id: number,
+      startISO: string,
+      repertoire: string,
+      opts?: { endISO?: string | null; type?: "full" | "section" },
+    ): RehearsalRow {
+      const end =
+        opts?.endISO ??
+        formatLocalISO(new Date(parseLocalISO(startISO).getTime() + 2 * 60 * 60 * 1000));
+      return {
+        id,
+        repertoire,
+        type: opts?.type ?? "full",
+        start_time: startISO,
+        end_time: end,
+        location: "排练厅",
+        title: null,
+        date: null,
+        time: null,
+        sign_in_code: null,
+        target_section: null,
+        created_at: null,
+        updated_at: "2026-08-14T00:00:00.000Z",
+      };
+    }
+
+    function renderWithRehearsals(data: RehearsalRow[]) {
+      mockUseRehearsals.mockReturnValue({
+        data,
+        loading: false,
+        error: null,
+        saving: false,
+        fetch: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      });
+      render(<Home />, { wrapper: UserProvider });
+    }
+
+    it("Toggle 提供「历史合排」选项，点击后切换并更新标题", () => {
+      renderWithRehearsals([]);
+      expect(screen.getByTestId("toggle-history")).toBeTruthy();
+
+      fireEvent.click(screen.getByTestId("toggle-history"));
+      // 标题从「本周排练日程」切换为「历史合排」（heading 唯一匹配，避免与选项按钮文案冲突）
+      expect(screen.getByRole("heading", { name: "历史合排" })).toBeTruthy();
+      expect(screen.queryByText("本周排练日程")).toBeNull();
+    });
+
+    it("仅显示已结束的合排：分排、进行中的合排、未开始的合排不显示", () => {
+      renderWithRehearsals([
+        makeRehearsalAt(1, "2026-08-15T08:00:00", "上午合排"), // 已结束（10:00 结束）
+        makeRehearsalAt(2, "2026-08-15T08:00:00", "上午分排", { type: "section" }), // 已结束但为分排
+        makeRehearsalAt(3, "2026-08-15T20:00:00", "今晚合排"), // 进行中（22:00 结束）
+        makeRehearsalAt(4, "2026-08-16T20:00:00", "明天合排"), // 未开始
+      ]);
+      fireEvent.click(screen.getByTestId("toggle-history"));
+
+      expect(screen.getByText("上午合排")).toBeTruthy();
+      expect(screen.queryByText("上午分排")).toBeNull();
+      expect(screen.queryByText("今晚合排")).toBeNull();
+      expect(screen.queryByText("明天合排")).toBeNull();
+    });
+
+    it("end_time 缺失的已结束合排按 start + 3 小时判定", () => {
+      // 17:00 开始无 end_time（默认 20:00 结束），now 21:00 已结束
+      const rehearsal = makeRehearsalAt(1, "2026-08-15T17:00:00", "默认时长合排");
+      rehearsal.end_time = null;
+      renderWithRehearsals([rehearsal]);
+      fireEvent.click(screen.getByTestId("toggle-history"));
+
+      expect(screen.getByText("默认时长合排")).toBeTruthy();
+    });
+
+    it("按结束时刻近 → 远排序（最近结束在前）", () => {
+      renderWithRehearsals([
+        makeRehearsalAt(1, "2026-08-10T08:00:00", "五天前合排"), // 5 天前结束
+        makeRehearsalAt(2, "2026-08-15T08:00:00", "上午合排"), // 11 小时前结束
+        makeRehearsalAt(3, "2026-08-15T14:00:00", "下午合排"), // 5 小时前结束
+      ]);
+      fireEvent.click(screen.getByTestId("toggle-history"));
+
+      const rendered = screen.getAllByText(/(五天前|上午|下午)合排/).map((el) => el.textContent);
+      expect(rendered).toEqual(["下午合排", "上午合排", "五天前合排"]);
+    });
+
+    it("不限一周窗口：超过一周的已结束合排也显示", () => {
+      renderWithRehearsals([
+        makeRehearsalAt(1, "2026-07-01T08:00:00", "上个月合排"),
+        makeRehearsalAt(2, "2026-06-01T08:00:00", "两个月前合排"),
+      ]);
+      fireEvent.click(screen.getByTestId("toggle-history"));
+
+      expect(screen.getByText("上个月合排")).toBeTruthy();
+      expect(screen.getByText("两个月前合排")).toBeTruthy();
+    });
+
+    it("历史 tab 中已结束卡片照常显示状态与「补请假」入口", () => {
+      renderWithRehearsals([makeRehearsalAt(1, "2026-08-15T08:00:00", "上午合排")]);
+      fireEvent.click(screen.getByTestId("toggle-history"));
+
+      expect(screen.getByText("已结束")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "补请假" })).toBeTruthy();
+    });
+
+    it("分排 tab 窗口过滤不受影响：已过去/超期的分排仍隐藏（回归）", () => {
+      renderWithRehearsals([
+        makeRehearsalAt(1, "2026-08-16T20:00:00", "未来分排", { type: "section" }),
+        makeRehearsalAt(2, "2026-08-14T20:00:00", "已过去分排", { type: "section" }),
+        makeRehearsalAt(3, "2026-08-30T20:00:00", "超期分排", { type: "section" }),
+      ]);
+      fireEvent.click(screen.getByTestId("toggle-section"));
+
+      expect(screen.getByText("未来分排")).toBeTruthy();
+      expect(screen.queryByText("已过去分排")).toBeNull();
+      expect(screen.queryByText("超期分排")).toBeNull();
+    });
+
+    it("无已结束合排时显示'暂无安排'", () => {
+      renderWithRehearsals([makeRehearsalAt(1, "2026-08-15T20:00:00", "今晚合排")]);
+      fireEvent.click(screen.getByTestId("toggle-history"));
 
       expect(screen.getByText("暂无安排")).toBeTruthy();
     });
@@ -968,7 +1119,7 @@ describe("Home 首页组件", () => {
       );
 
       // 切到「分排」tab 后分排排练才会展示
-      fireEvent.click(screen.getByTestId("toggle"));
+      fireEvent.click(screen.getByTestId("toggle-section"));
       const signInBtn = screen.getByRole("button", { name: "签到" });
       await act(async () => {
         fireEvent.click(signInBtn);

@@ -247,7 +247,7 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen pb-safe">
+    <div className="flex h-full min-h-0 flex-col pb-safe">
       {/* 欢迎语（5 秒后淡出消失） */}
       {user && welcomeMounted && (
         <div
@@ -297,7 +297,7 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="space-y-3">
+      <section className="flex-1 min-h-0 space-y-3 overflow-y-auto">
         {rehearsalsLoading ? (
           <p className="py-12 text-center text-xs text-text-muted">加载中…</p>
         ) : rehearsalsError ? (

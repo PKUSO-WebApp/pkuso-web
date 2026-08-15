@@ -94,6 +94,7 @@ src/app/
 
 - **Token 优先**: `src/styles/tokens.css` 为设计令牌单一可信源。所有颜色通过 Tailwind 语义类使用(`bg-primary`/`text-text`/`border-border` 等),**禁止硬编码 `zinc-*`**。16 对语义色覆盖亮/暗双模式。
 - **移动端优先**: 页面宽 `max-w-md`(448px),Modal 默认底部弹出(`position="bottom"`),底部安全区 `pb-safe`。
+- **罗列内容必须可滚动**: 页面是固定视口(AuthGate `h-screen` 列 + 两端 layout `flex-1 overflow-hidden`,页面本身不可滚动)。所有罗列性质的组件(列表/卡片流)必须放在可滚动容器内(`flex-1 min-h-0 overflow-y-auto` 或 `max-h-[Npx] overflow-y-auto`),否则超出视口的内容被裁剪不可达(Issue #146 教训)。
 - **组件复用**: 写新 UI 前先查 `src/components/ui/`(Modal/Toggle/Card)和 `src/app/schedule/components/`(排练相关组件)。Button 暂不统一(20+ 变体,待设计系统定型)。
 - **暗色模式**: `<html data-theme="dark">` 即可全局切换,所有组件应双模式可用。测试时亮/暗都过一遍。
 - **颜色语义表**:

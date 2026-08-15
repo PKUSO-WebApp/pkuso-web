@@ -244,7 +244,7 @@ export default function CommunityPage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="flex h-full min-h-0 flex-col space-y-4">
       <header className="mb-1">
         <div className="flex items-center justify-between gap-2">
           <div>
@@ -271,7 +271,7 @@ export default function CommunityPage() {
         </div>
       </header>
 
-      <section className="space-y-3">
+      <section className="flex-1 min-h-0 space-y-3 overflow-y-auto">
         {loading && posts.length === 0 && (
           <p className="py-6 text-center text-xs text-text-subtle">正在加载…</p>
         )}

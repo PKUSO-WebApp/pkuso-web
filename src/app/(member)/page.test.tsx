@@ -1022,4 +1022,24 @@ describe("Home 首页组件", () => {
       expect(screen.queryByText("…")).toBeNull();
     });
   });
+
+  // ============================================================
+  // 5.9 列表滚动容器（Issue #146）：页面固定视口链路下，排练列表需独立滚动
+  // ============================================================
+  describe("列表滚动容器（Issue #146）", () => {
+    it("页面根容器为 flex 列布局且占满视口高度", () => {
+      const { container } = render(<Home />, { wrapper: UserProvider });
+      const root = container.firstElementChild as HTMLElement;
+      expect(root.className).toContain("flex-col");
+      expect(root.className).toContain("h-full");
+    });
+
+    it("排练列表 section 可独立滚动（flex-1 + overflow-y-auto）", () => {
+      const { container } = render(<Home />, { wrapper: UserProvider });
+      const section = container.querySelector("section") as HTMLElement | null;
+      expect(section).toBeTruthy();
+      expect(section!.className).toContain("flex-1");
+      expect(section!.className).toContain("overflow-y-auto");
+    });
+  });
 });

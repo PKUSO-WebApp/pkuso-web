@@ -213,4 +213,24 @@ describe("CommunityPage 公告板", () => {
       expect(screen.queryByText("保存图片")).toBeNull(); // 按钮被隐藏
     });
   });
+
+  // ============================================================
+  // 3. 列表滚动容器（Issue #146）：页面固定视口链路下，帖子列表需独立滚动
+  // ============================================================
+  describe("列表滚动容器（Issue #146）", () => {
+    it("页面根容器为 flex 列布局且占满视口高度", () => {
+      const { container } = renderPage();
+      const root = container.firstElementChild as HTMLElement;
+      expect(root.className).toContain("flex-col");
+      expect(root.className).toContain("h-full");
+    });
+
+    it("帖子列表 section 可独立滚动（flex-1 + overflow-y-auto）", () => {
+      const { container } = renderPage();
+      const section = container.querySelector("section") as HTMLElement | null;
+      expect(section).toBeTruthy();
+      expect(section!.className).toContain("flex-1");
+      expect(section!.className).toContain("overflow-y-auto");
+    });
+  });
 });

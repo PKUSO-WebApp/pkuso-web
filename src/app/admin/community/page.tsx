@@ -95,7 +95,7 @@ export default function AdminCommunityPage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="flex h-full min-h-0 flex-col space-y-4">
       <header className="mb-2">
         <h1 className="text-lg font-semibold text-text">社区管理</h1>
         <p className="mt-1 text-xs text-text-muted">查看、编辑、锁定重奏与团建公告</p>
@@ -108,7 +108,7 @@ export default function AdminCommunityPage() {
         getLabel={(k) => ({ ensemble: "重奏", gathering: "团建" })[k]}
       />
 
-      <section className="space-y-3">
+      <section className="flex-1 min-h-0 space-y-3 overflow-y-auto">
         {loading && <p className="py-6 text-center text-xs text-text-subtle">加载中…</p>}
         {!loading && list.length === 0 && (
           <p className="py-8 text-center text-xs text-text-muted">暂无「{TYPE_LABEL[view]}」公告</p>

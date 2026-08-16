@@ -105,6 +105,7 @@ export default function AdminSchedulePage() {
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const submittingRef = React.useRef(false); // 同步 guard，阻断竞态窗口
   const [isConfirmModalOpen, setIsConfirmModalOpen] = React.useState(false);
   const [confirmMessage, setConfirmMessage] = React.useState("");
   // 保存待提交的数据，用于确认后提交，避免重复生成
@@ -149,7 +150,9 @@ export default function AdminSchedulePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (isSubmitting) return;
+    // 双重检查：ref 同步阻断，state 异步兜底
+    if (submittingRef.current || isSubmitting) return;
+    submittingRef.current = true;
     setIsSubmitting(true);
 
     try {
@@ -213,6 +216,7 @@ export default function AdminSchedulePage() {
           `${skippedMonths.join("、")}没有${form.monthlyDay}日，将跳过这些月份继续创建预约。是否继续？`,
         );
         setIsConfirmModalOpen(true);
+        submittingRef.current = false; // 暂停本次提交：ref 同步复位，等待确认弹窗继续
         setIsSubmitting(false);
         return;
       }
@@ -220,6 +224,7 @@ export default function AdminSchedulePage() {
       // 直接提交
       await executeSubmit(newPendingData);
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -329,13 +334,17 @@ export default function AdminSchedulePage() {
 
   // 确认跳过月份后继续提交
   const handleConfirmSkip = async () => {
+    // 双重检查：ref 同步阻断，state 异步兜底
+    if (submittingRef.current || isSubmitting) return;
     setIsConfirmModalOpen(false);
+    submittingRef.current = true;
     setIsSubmitting(true);
     try {
       // 直接使用保存的待提交数据，避免重复生成
       if (!pendingData) return;
       await executeSubmit(pendingData);
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };

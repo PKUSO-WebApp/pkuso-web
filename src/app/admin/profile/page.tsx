@@ -50,6 +50,7 @@ export default function ProfilePage() {
   const [genResults, setGenResults] = React.useState<InvitationCodeRow[]>([]);
   const [genError, setGenError] = React.useState<string | null>(null);
   const [isGenSubmitting, setIsGenSubmitting] = React.useState(false);
+  const genSubmittingRef = React.useRef(false); // 同步 guard，阻断竞态窗口
 
   // 管理邀请码 Modal
   const [isManageModalOpen, setIsManageModalOpen] = React.useState(false);
@@ -182,7 +183,8 @@ export default function ProfilePage() {
   };
 
   const handleGenerate = async () => {
-    if (isGenSubmitting) return;
+    // 双重检查：ref 同步阻断，state 异步兜底
+    if (genSubmittingRef.current || isGenSubmitting) return;
 
     // 清除之前的错误
     setGenError(null);
@@ -193,6 +195,7 @@ export default function ProfilePage() {
       return;
     }
 
+    genSubmittingRef.current = true;
     setIsGenSubmitting(true);
     setGenResults([]);
 
@@ -221,6 +224,7 @@ export default function ProfilePage() {
         }
       }
     } finally {
+      genSubmittingRef.current = false;
       setIsGenSubmitting(false);
     }
   };

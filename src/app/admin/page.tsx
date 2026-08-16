@@ -97,16 +97,24 @@ export default function AdminPage() {
     remove,
     update,
   } = useAnnouncements();
+  const publishingRef = React.useRef(false); // 同步 guard，阻断竞态窗口
 
   const handlePublish = async (e: React.FormEvent) => {
     e.preventDefault();
+    // 双重检查：ref 同步阻断，state 异步兜底
+    if (publishingRef.current || publishing) return;
     const text = body.trim();
     if (!text) return alert("请输入公告内容");
-    const ok = await publish(text);
-    if (!ok) alert("发布失败");
-    else {
-      setBody("");
-      alert("公告已发布");
+    publishingRef.current = true;
+    try {
+      const ok = await publish(text);
+      if (!ok) alert("发布失败");
+      else {
+        setBody("");
+        alert("公告已发布");
+      }
+    } finally {
+      publishingRef.current = false;
     }
   };
 

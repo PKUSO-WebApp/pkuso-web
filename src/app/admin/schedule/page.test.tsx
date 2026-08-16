@@ -3,6 +3,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import AdminSchedulePage from "./page";
+import { supabase } from "@/lib/supabase";
 
 // Mock next/navigation
 const mockPush = vi.fn();
@@ -76,10 +77,44 @@ vi.mock("@/lib/supabase", () => ({
   },
 }));
 
-// Mock create-schedule-modal（简化，避免测试复杂化）
+// Mock create-schedule-modal（渲染精简表单：标题/开始/结束时间输入 + 提交按钮，
+// 以便测试表单提交与防重复提交逻辑；其余控件不渲染）
 vi.mock("./components/create-schedule-modal", () => ({
-  CreateScheduleModal: ({ open }: { open: boolean }) =>
-    open ? <div data-testid="create-schedule-modal">创建预约弹窗</div> : null,
+  CreateScheduleModal: ({
+    open,
+    form,
+    onChange,
+    onSubmit,
+    submitting,
+  }: {
+    open: boolean;
+    form: { title: string; startTime: string; endTime: string };
+    onChange: (field: string, value: string) => void;
+    onSubmit: (e: React.FormEvent) => void;
+    submitting: boolean;
+  }) =>
+    open ? (
+      <form data-testid="create-schedule-modal" onSubmit={onSubmit}>
+        <input
+          aria-label="预约标题"
+          value={form.title}
+          onChange={(e) => onChange("title", e.target.value)}
+        />
+        <input
+          aria-label="开始时间"
+          value={form.startTime}
+          onChange={(e) => onChange("startTime", e.target.value)}
+        />
+        <input
+          aria-label="结束时间"
+          value={form.endTime}
+          onChange={(e) => onChange("endTime", e.target.value)}
+        />
+        <button type="submit" disabled={submitting}>
+          提交预约
+        </button>
+      </form>
+    ) : null,
 }));
 
 describe("AdminSchedulePage 组件", () => {
@@ -206,6 +241,31 @@ describe("AdminSchedulePage 组件", () => {
       // 查找页面中的"关闭"按钮或直接调用 setIsModalOpen(false)
       // 由于 mock 限制，这里只验证打开流程
       rerender(<AdminSchedulePage />);
+    });
+
+    it("创建预约防止重复提交（双击只插入一次）", async () => {
+      render(<AdminSchedulePage />);
+      fireEvent.click(screen.getByText("添加预约"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("create-schedule-modal")).toBeInTheDocument();
+      });
+
+      // 填写表单（single 模式默认：标题 + 起止时间）
+      fireEvent.change(screen.getByLabelText("预约标题"), { target: { value: "排练" } });
+      fireEvent.change(screen.getByLabelText("开始时间"), { target: { value: "14:00" } });
+      fireEvent.change(screen.getByLabelText("结束时间"), { target: { value: "16:00" } });
+
+      // 双击提交按钮（无 await 间隔，isSubmitting 尚未更新，仅 ref 同步 guard 生效）
+      const submitBtn = screen.getByRole("button", { name: /提交预约/ });
+      fireEvent.click(submitBtn);
+      fireEvent.click(submitBtn);
+
+      await waitFor(() => {
+        // schedules 的 insert 只执行一次（single 模式不走 schedule_groups）
+        expect(supabase.from).toHaveBeenCalledTimes(1);
+        expect(supabase.from).toHaveBeenCalledWith("schedules");
+      });
     });
   });
 

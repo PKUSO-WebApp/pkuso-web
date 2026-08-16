@@ -270,6 +270,35 @@ describe("AdminPage", () => {
     });
   });
 
+  it("发布公告防止重复提交（双击只发布一次）", async () => {
+    let publishResolve!: (value: boolean) => void;
+    const publishPromise = new Promise<boolean>((resolve) => {
+      publishResolve = resolve;
+    });
+    const publishMock = vi.fn().mockReturnValue(publishPromise);
+    mockAnnouncements({ publish: publishMock });
+
+    render(<AdminPage />);
+
+    // 切到公告 tab，填写公告内容
+    fireEvent.click(screen.getByRole("tab", { name: /^公告$/ }));
+    fireEvent.change(screen.getByPlaceholderText(/输入公告内容/), {
+      target: { value: "测试公告" },
+    });
+
+    // 双击发布按钮（无 await 间隔，state 未更新，仅 ref 同步 guard 生效）
+    const publishBtn = screen.getByRole("button", { name: /^发布$/ });
+    fireEvent.click(publishBtn);
+    fireEvent.click(publishBtn);
+
+    // 解决 Promise
+    publishResolve(true);
+
+    await waitFor(() => {
+      expect(publishMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("tab 切换：aria-selected 随点击变化（Issue #150）", () => {
     render(<AdminPage />);
 

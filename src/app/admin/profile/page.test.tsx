@@ -192,6 +192,38 @@ describe("邀请码管理", () => {
     });
   });
 
+  it("生成邀请码防止重复提交（双击只插入一次）", async () => {
+    const singleMock = vi.fn().mockResolvedValue({
+      data: { id: "code-1", code: "ABCDEFGH", max_uses: 1, used_count: 0 },
+      error: null,
+    });
+    const insertMock = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      single: singleMock,
+    });
+    setupSupabaseMock({
+      fetchData: [],
+      insertData: insertMock,
+    });
+
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /生成邀请码/ }));
+
+    await waitFor(() => {
+      screen.getByRole("button", { name: /^生成$/ });
+    });
+
+    // 双击生成按钮（无 await 间隔，isGenSubmitting 尚未更新，仅 ref 同步 guard 生效）
+    const genBtn = screen.getByRole("button", { name: /^生成$/ });
+    fireEvent.click(genBtn);
+    fireEvent.click(genBtn);
+
+    await waitFor(() => {
+      // invitation_codes 的 insert 只执行一次
+      expect(insertMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("单个生成邀请码 - 生成结果显示在 Modal 内并提供复制按钮", async () => {
     const singleResult = {
       id: "code-2",

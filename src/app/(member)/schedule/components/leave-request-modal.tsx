@@ -18,13 +18,17 @@ import type {
  *
  * 状态机规则（集中注释，前后端一致）：
  * - 无申请 / 已撤回 / 已取消：表单模式，可提交新申请（target_status 固定 excused）；
- * - pending：只读展示 + 「待审批」chip，可「修改」内容（改内容不改状态），
- *   或进入编辑模式「取消请假」（状态 → canceled，取消后视同无申请，可重新提交）；
+ * - pending：只读展示 + 「待审批」chip，底部「编辑申请」进入编辑模式改内容
+ *   （改内容不改状态），或编辑模式内「取消请假」（状态 → canceled，取消后视同
+ *   无申请，可重新提交）；
  * - approved：只读展示 + 「已通过」chip，可「撤回」；撤回不动考勤（Issue #155），
  *   撤回后进入新申请模式，target_status 单选「正常出勤 / 缺勤」（重新提交后，
  *   审批通过时按此记录考勤）；
- * - rejected：只读展示 + 「已驳回」chip + 驳回原因，可「重新申请」（内容预填，
+ * - rejected：只读展示 + 「已驳回」chip + 驳回原因，底部「重新申请」（内容预填，
  *   保存后状态回 pending 并清空驳回原因）。
+ * - 底部操作行（Issue #173 重构）：表单模式「取消」无底色 + 提交有底色；
+ *   只读视图左侧状态展示「已提交」（统一文案），右侧按状态分流
+ *   （编辑申请 / 关闭 / 重新申请）。
  *
  * 附件：私有桶，保存 storage 路径；查看时经 getSignedUrl 换 60s 临时链接。
  * 编辑模式展示当前附件（签名 URL 预览），可「更换图片」（替换后保存时由 hook 删除旧附件）。
@@ -476,17 +480,8 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
             </div>
           )}
 
-          {/* 状态对应操作 */}
-          {current.status === "pending" && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={handleEdit}
-              className="w-full rounded-xl bg-primary py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
-            >
-              修改申请
-            </button>
-          )}
+          {/* 撤回（仅已通过，Issue #155）：保留现有撤销状态机，撤回后进入新申请模式；
+              降级为次级按钮，主操作收敛到底部「状态 + 后续操作」行（Issue #173） */}
           {current.status === "approved" && (
             <button
               type="button"
@@ -497,16 +492,50 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
               撤回申请
             </button>
           )}
-          {current.status === "rejected" && (
+
+          {/* 底部操作行（Issue #173 重构）：左侧状态展示「已提交」（统一文案，替代
+              待审核/已通过/已驳回；具体状态仍由左上角 chip 展示），右侧按申请状态
+              分流后续操作：pending → 编辑申请（保留撤销能力：编辑模式内仍可取消请假）；
+              approved → 关闭；rejected → 重新申请 */}
+          <div className="flex items-center justify-between pt-1">
             <button
               type="button"
-              disabled={busy}
-              onClick={handleEdit}
-              className="w-full rounded-xl bg-primary py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+              disabled
+              className="rounded-full bg-muted px-4 py-1.5 text-label text-text-muted"
             >
-              重新申请
+              已提交
             </button>
-          )}
+            {current.status === "pending" && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={handleEdit}
+                className="rounded-full bg-primary px-4 py-1.5 text-label font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+              >
+                编辑申请
+              </button>
+            )}
+            {current.status === "approved" && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={handleClose}
+                className="rounded-full bg-primary px-4 py-1.5 text-label font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+              >
+                关闭
+              </button>
+            )}
+            {current.status === "rejected" && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={handleEdit}
+                className="rounded-full bg-primary px-4 py-1.5 text-label font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+              >
+                重新申请
+              </button>
+            )}
+          </div>
         </div>
       ) : (
         /* ---------------- 表单模式 ---------------- */
@@ -638,27 +667,22 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
 
           {error && <p className="text-sm text-danger">{error}</p>}
 
-          <div className="flex gap-2 pt-1">
-            {editing && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  if (attachmentPreviewUrl) URL.revokeObjectURL(attachmentPreviewUrl);
-                  setMode("view");
-                  setEditing(null);
-                  setConfirmCancel(false);
-                  setError(null);
-                }}
-                className="flex-1 rounded-xl border border-border bg-surface py-2.5 text-sm font-medium text-text-muted hover:bg-muted disabled:opacity-60"
-              >
-                返回
-              </button>
-            )}
+          {/* 底部操作（Issue #173 重构）：取消移到右下角与提交同级（无底色小按钮），
+              对齐 community 编辑弹窗的取消/保存样式；取消关闭弹窗（含编辑模式，
+              原「返回」按钮随之移除——编辑内容未保存直接关闭） */}
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handleClose}
+              className="rounded-full px-4 py-1.5 text-label text-text-muted disabled:opacity-60"
+            >
+              取消
+            </button>
             <button
               type="submit"
               disabled={busy}
-              className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+              className="rounded-full bg-primary px-4 py-1.5 text-label font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
             >
               {isSubmitting
                 ? "提交中…"

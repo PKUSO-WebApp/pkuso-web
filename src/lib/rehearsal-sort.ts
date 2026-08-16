@@ -85,6 +85,30 @@ export function isRehearsalEnded(item: RehearsalRow, now: Date): boolean {
 }
 
 /**
+ * 今天及未来窗口判定（Issue #173）：start_time 的日期 >= 今天 00:00（本地时区）
+ *
+ * admin 合排/分排 tab 的窗口过滤（替代原日期区间筛选）：不含过去日期的排练。
+ * - start_time 为空或无法解析 → 保留显示（无法判断时间，保守处理，不清空，
+ *   与 isRehearsalWithinNextWeek 风格一致）
+ * - start_time 日期 < 今天 → 已过去的排练，隐藏
+ *
+ * 日期比较使用本地时区日期边界（今天 00:00 起），避免使用 UTC 导致日期偏移。
+ * 判定只看日期不看时刻：当天已结束的排练仍保留（当天任务仍可能被查看）。
+ *
+ * @param item - 排练行
+ * @param now - 当前时间，测试可传入固定时间
+ * @returns 是否应显示在合排/分排 tab
+ */
+export function isRehearsalTodayOrFuture(item: RehearsalRow, now: Date): boolean {
+  if (!item.start_time) return true;
+  const start = parseLocalISO(item.start_time);
+  // parseLocalISO 对无法解析的字符串会退化为 1900 年附近，视为无有效时间，保守保留
+  if (start.getFullYear() < 2000) return true;
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  return start.getTime() >= todayStart.getTime();
+}
+
+/**
  * 解析排练的开始/结束时刻（本地时区）
  *
  * start_time 缺失或无法解析（parseLocalISO 退化到 1900 年附近）时返回 null；

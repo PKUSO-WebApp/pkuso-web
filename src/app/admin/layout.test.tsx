@@ -111,7 +111,7 @@ describe("AdminLayout", () => {
         </AdminLayout>,
       );
       expect(screen.getByTestId("children-content")).toBeInTheDocument();
-      for (const label of ["控制台", "排练", "社区", "日程", "成员", "我的"]) {
+      for (const label of ["控制台", "排练", "社区", "日程", "成员&考勤", "我的"]) {
         expect(screen.getByText(label)).toBeInTheDocument();
       }
     });

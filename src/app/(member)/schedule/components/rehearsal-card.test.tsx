@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, createEvent, cleanup } from "@testing-library/react";
 import { RehearsalCard } from "./rehearsal-card";
 import type { RehearsalRow } from "@/types/database";
 
@@ -26,309 +26,202 @@ function makeRehearsal(overrides: Partial<RehearsalRow> = {}): RehearsalRow {
   };
 }
 
-describe("RehearsalCard 左右分栏布局（Issue #155）", () => {
-  // 固定系统时间 2026-08-15 13:00（本地时区），让「已结束/未开始/进行中」判定与真实运行时刻无关
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 7, 15, 13, 0, 0));
+// 固定系统时间 2026-08-15 13:00（本地时区），让「已结束/未开始/进行中」判定与真实运行时刻无关
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(2026, 7, 15, 13, 0, 0));
+});
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+
+describe("RehearsalCard 卡片可点击与缩略展示（Issue #173）", () => {
+  it("点击整卡触发 onClick 回调（打开详情弹窗）", () => {
+    const onClick = vi.fn();
+    render(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
+        onClick={onClick}
+      />,
+    );
+    // 整卡以 role="button" 承载点击（可访问名 = 卡内全部文本）
+    fireEvent.click(screen.getByRole("button", { name: /排练曲目/ }));
+    expect(onClick).toHaveBeenCalledTimes(1);
   });
 
-  afterEach(() => {
-    cleanup();
-    vi.useRealTimers();
+  it("键盘 Enter 同样触发 onClick（可访问性）", () => {
+    const onClick = vi.fn();
+    render(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
+        onClick={onClick}
+      />,
+    );
+    fireEvent.keyDown(screen.getByRole("button", { name: /排练曲目/ }), { key: "Enter" });
+    expect(onClick).toHaveBeenCalledTimes(1);
   });
 
-  it("右侧栏带分隔线与固定宽（border-l border-border pl-3 flex-shrink-0），不挤爆左栏", () => {
+  it("键盘 Space 同样触发 onClick（可访问性）", () => {
+    const onClick = vi.fn();
+    render(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
+        onClick={onClick}
+      />,
+    );
+    // 整卡 onKeyDown 对 Space 与 Enter 一视同仁（preventDefault + onClick）
+    fireEvent.keyDown(screen.getByRole("button", { name: /排练曲目/ }), { key: " " });
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("曲目过长时用 line-clamp-1 缩略展示（详情弹窗展示完整曲目）", () => {
+    render(
+      <RehearsalCard
+        item={makeRehearsal({
+          start_time: "2026-08-16T10:00:00",
+          end_time: "2026-08-16T12:00:00",
+          repertoire: "很长的曲目名".repeat(20),
+        })}
+        onClick={vi.fn()}
+      />,
+    );
+    const repertoire = screen.getByText(/很长的曲目名/);
+    expect(repertoire.className).toContain("line-clamp-1");
+  });
+
+  it("点击签到按钮触发 onSignIn 且不触发整卡 onClick（阻断冒泡）", () => {
+    const onClick = vi.fn();
+    const onSignIn = vi.fn();
     render(
       <RehearsalCard
         item={makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" })}
-        onSignIn={vi.fn()}
+        onClick={onClick}
+        onSignIn={onSignIn}
       />,
     );
-    // 签到按钮是右侧栏的第一个直接子元素，其父容器即右栏
-    const column = screen.getByRole("button", { name: "签到" }).parentElement!;
-    expect(column.className).toContain("border-l");
-    expect(column.className).toContain("border-border");
-    expect(column.className).toContain("pl-3");
-    expect(column.className).toContain("flex-shrink-0");
-    expect(column.className).toContain("w-32");
+    fireEvent.click(screen.getByRole("button", { name: "签到" }));
+    expect(onSignIn).toHaveBeenCalledTimes(1);
+    expect(onClick).not.toHaveBeenCalled();
   });
 
-  it("右侧顺序：状态 → 申请状态 chip → 操作按钮（DOM 顺序）", () => {
+  it("键盘 Enter 按签到按钮只触发 onSignIn、不误开详情弹窗（keydown 不冒泡，对抗返工）", () => {
+    const onClick = vi.fn();
+    const onSignIn = vi.fn();
     render(
       <RehearsalCard
         item={makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" })}
-        onSignIn={vi.fn()}
-        onLeaveRequest={vi.fn()}
-        leaveRequest={{ status: "pending" }}
+        onClick={onClick}
+        onSignIn={onSignIn}
       />,
     );
-    const overrideBtn = screen.getByRole("button", { name: "覆盖请假" });
-    const chip = screen.getByText("待审批");
-    const editBtn = screen.getByRole("button", { name: "编辑申请" });
-    // 状态（覆盖请假按钮）在 chip 前，chip 在操作按钮前
-    expect(
-      chip.compareDocumentPosition(overrideBtn) & Node.DOCUMENT_POSITION_PRECEDING,
-    ).toBeTruthy();
-    expect(editBtn.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    const btn = screen.getByRole("button", { name: "签到" });
+    // jsdom 合成事件不执行「Enter 激活按钮」的浏览器默认动作（不派发 click），需手动模拟：
+    // 真实浏览器中 keydown 未被 preventDefault 时按钮被激活并派发 click。
+    // 回归点：keydown 若不阻断冒泡，会冒泡到整卡 onKeyDown 被 preventDefault——
+    // 取消激活（签到不触发）且误开详情弹窗（onClick 被调用）
+    const keydown = createEvent.keyDown(btn, { key: "Enter" });
+    fireEvent(btn, keydown);
+    if (!keydown.defaultPrevented) {
+      fireEvent.click(btn);
+    }
+    expect(onSignIn).toHaveBeenCalledTimes(1);
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("键盘 Space 按签到按钮只触发 onSignIn、不误开详情弹窗（keydown 不冒泡，对抗返工）", () => {
+    const onClick = vi.fn();
+    const onSignIn = vi.fn();
+    render(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" })}
+        onClick={onClick}
+        onSignIn={onSignIn}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: "签到" });
+    // jsdom 合成事件不执行「Space 激活按钮」的浏览器默认动作（不派发 click），需手动模拟：
+    // 真实浏览器中 keydown 未被 preventDefault 时按钮被激活并派发 click。
+    // 回归点：keydown 若不阻断冒泡，会冒泡到整卡 onKeyDown 被 preventDefault——
+    // 取消激活（签到不触发）且误开详情弹窗（onClick 被调用）
+    const keydown = createEvent.keyDown(btn, { key: " " });
+    fireEvent(btn, keydown);
+    if (!keydown.defaultPrevented) {
+      fireEvent.click(btn);
+    }
+    expect(onSignIn).toHaveBeenCalledTimes(1);
+    expect(onClick).not.toHaveBeenCalled();
   });
 });
 
-describe("RehearsalCard 操作按钮显示条件矩阵（Issue #155）", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 7, 15, 13, 0, 0));
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.useRealTimers();
-  });
-
-  // ---- 无申请：按时间与出勤分派 ----
-
-  it("未开始的排练：显示「请假」按钮，不显示「补请假」", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
-        onLeaveRequest={vi.fn()}
-      />,
-    );
-    expect(screen.getByRole("button", { name: "请假" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
-    // chip1 位置留空：未开始不再显示「未开始」文字（Issue #171）
-    expect(screen.queryByText("未开始")).toBeNull();
-  });
-
-  it("进行中的排练（结束前）：显示「签到」与「请假」两个按钮", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" })}
-        onSignIn={vi.fn()}
-        onLeaveRequest={vi.fn()}
-      />,
-    );
-    expect(screen.getByRole("button", { name: "签到" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "请假" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
-  });
-
-  it("已结束 + 无考勤记录（默认缺席）：显示「补请假」", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" })}
-        onLeaveRequest={vi.fn()}
-      />,
-    );
-    expect(screen.getByRole("button", { name: "补请假" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "请假" })).toBeNull();
-  });
-
-  it("已结束 + 出勤缺席：显示「补请假」", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" })}
-        attendance={{ status: "absent", sign_in_time: null }}
-        onLeaveRequest={vi.fn()}
-      />,
-    );
-    expect(screen.getByRole("button", { name: "补请假" })).toBeTruthy();
-  });
-
-  it("已结束 + 出席/迟到：不显示请假/补请假（补请假仅缺席，Issue #155）", () => {
-    const { rerender } = render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" })}
-        attendance={{ status: "present", sign_in_time: "2026-08-15T07:55:00" }}
-        onLeaveRequest={vi.fn()}
-      />,
-    );
-    expect(screen.queryByRole("button", { name: "请假" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
-
-    rerender(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" })}
-        attendance={{ status: "late", sign_in_time: "2026-08-15T09:00:00" }}
-        onLeaveRequest={vi.fn()}
-      />,
-    );
-    expect(screen.queryByRole("button", { name: "请假" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
-  });
-
-  it("已结束 + 已请假（excused）：不显示操作按钮，请假 chip 为纯展示（非按钮）", () => {
-    const onLeaveRequest = vi.fn();
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" })}
-        attendance={{ status: "excused", sign_in_time: null }}
-        onLeaveRequest={onLeaveRequest}
-      />,
-    );
-    expect(screen.getByText(/⭕\s*请假/)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /请假/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /补请假/ })).toBeNull();
-  });
-
-  it("缺勤 chip 不再可点击（补请假按钮承担入口，Issue #155）", () => {
-    const onLeaveRequest = vi.fn();
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" })}
-        onLeaveRequest={onLeaveRequest}
-      />,
-    );
-    // 缺勤 chip 是纯展示元素
-    expect(screen.queryByRole("button", { name: /缺勤/ })).toBeNull();
-    expect(screen.getByText(/❌\s*缺勤/)).toBeTruthy();
-    // 入口是「补请假」按钮
-    fireEvent.click(screen.getByRole("button", { name: "补请假" }));
-    expect(onLeaveRequest).toHaveBeenCalledTimes(1);
-  });
-
-  // ---- 有有效申请：按申请状态分派 ----
-
-  it("待审批：显示「待审批」chip + 「编辑申请」按钮（不论时间窗口）", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" })}
-        onLeaveRequest={vi.fn()}
-        leaveRequest={{ status: "pending" }}
-      />,
-    );
-    expect(screen.getByText("待审批")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "编辑申请" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "请假" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
-  });
-
-  it("已通过：显示「已通过」chip，不显示操作按钮（已通过不显示操作按钮，Issue #155）", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
-        onLeaveRequest={vi.fn()}
-        leaveRequest={{ status: "approved" }}
-      />,
-    );
-    expect(screen.getByText("已通过")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "请假" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "编辑申请" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "重新申请" })).toBeNull();
-  });
-
-  it("已驳回：显示「已驳回」chip + 「重新申请」按钮", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
-        onLeaveRequest={vi.fn()}
-        leaveRequest={{ status: "rejected" }}
-      />,
-    );
-    expect(screen.getByText("已驳回")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "重新申请" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "编辑申请" })).toBeNull();
-  });
-
-  it("已签到（锁定）+ 已驳回：无「重新申请」按钮，申请状态 chip 仍展示（返工）", () => {
-    // 此前 !signedIn 只拦无申请分支：已签到 + 已驳回仍显示「重新申请」，点击提交后审批通过会
-    // 覆盖考勤为 excused，造成「已签到但请假」不可恢复矛盾（signedIn 锁定不能重签、approved
-    // 无按钮不能撤回）——返工后已签到统一不显示请假入口
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
-        attendance={{ status: "present", sign_in_time: "2026-08-15T12:05:00" }}
-        onLeaveRequest={vi.fn()}
-        leaveRequest={{ status: "rejected" }}
-      />,
-    );
-    expect(screen.getByText("已驳回")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "重新申请" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "编辑申请" })).toBeNull();
-  });
-
-  it("已签到（锁定）+ 待审批：无「编辑申请」按钮，申请状态 chip 仍展示（返工）", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
-        attendance={{ status: "present", sign_in_time: "2026-08-15T12:05:00" }}
-        onLeaveRequest={vi.fn()}
-        leaveRequest={{ status: "pending" }}
-      />,
-    );
-    expect(screen.getByText("待审批")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "编辑申请" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "重新申请" })).toBeNull();
-  });
-
-  it("已取消的申请：视同无申请，按时间显示「请假」，无状态 chip", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
-        onLeaveRequest={vi.fn()}
-        leaveRequest={{ status: "canceled" }}
-      />,
-    );
-    expect(screen.queryByText("已取消")).toBeNull();
-    expect(screen.getByRole("button", { name: "请假" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "编辑申请" })).toBeNull();
-  });
-
-  // ---- 边界：加载中 / 无回调 ----
-
-  it("考勤加载中：不渲染操作按钮（防首屏闪错）", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
-        attendanceLoading
-        onLeaveRequest={vi.fn()}
-      />,
-    );
-    expect(screen.queryByRole("button", { name: "请假" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
-  });
-
-  it("未传 onLeaveRequest：不渲染操作按钮（其他页面复用卡片不受影响）", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
-      />,
-    );
-    expect(screen.queryByRole("button", { name: "请假" })).toBeNull();
-  });
-
-  it("点击请假按钮触发 onLeaveRequest 回调", () => {
-    const onLeaveRequest = vi.fn();
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
-        onLeaveRequest={onLeaveRequest}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "请假" }));
-    expect(onLeaveRequest).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("RehearsalCard 覆盖请假签到按钮（Issue #155）", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 7, 15, 13, 0, 0));
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.useRealTimers();
-  });
-
+describe("RehearsalCard 签到按钮显示条件（Issue #173）", () => {
   /** 进行中排练（签到窗口内） */
   const ongoing = () =>
     makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" });
 
+  it("进行中 + 无考勤记录：显示「签到」按钮", () => {
+    render(<RehearsalCard item={ongoing()} onSignIn={vi.fn()} onClick={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "签到" })).toBeTruthy();
+  });
+
+  it("进行中 + 默认缺席记录（sign_in_time 为 null）：仍显示「签到」按钮", () => {
+    render(
+      <RehearsalCard
+        item={ongoing()}
+        attendance={{ status: "absent", sign_in_time: null }}
+        onSignIn={vi.fn()}
+        onClick={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "签到" })).toBeTruthy();
+  });
+
+  it("未开始：不显示签到按钮，也不渲染任何 chip（chip1 位置留空）", () => {
+    render(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
+        onSignIn={vi.fn()}
+        onClick={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "覆盖请假" })).toBeNull();
+  });
+
+  it("已结束：不显示签到按钮，也不渲染任何 chip（出勤状态收敛到详情弹窗）", () => {
+    render(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" })}
+        onSignIn={vi.fn()}
+        onClick={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+    expect(screen.queryByText(/缺勤|出席|迟到|请假/)).toBeNull();
+  });
+
+  it("已签到（锁定）：不显示签到按钮（无论时间窗口）", () => {
+    render(
+      <RehearsalCard
+        item={ongoing()}
+        attendance={{ status: "present", sign_in_time: "2026-08-15T12:05:00" }}
+        onSignIn={vi.fn()}
+        onClick={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "覆盖请假" })).toBeNull();
+  });
+
   it("进行中 + 待审批申请：签到按钮变黄「覆盖请假」（warning 色系）", () => {
     render(
-      <RehearsalCard item={ongoing()} onSignIn={vi.fn()} leaveRequest={{ status: "pending" }} />,
+      <RehearsalCard
+        item={ongoing()}
+        onSignIn={vi.fn()}
+        onClick={vi.fn()}
+        leaveRequest={{ status: "pending" }}
+      />,
     );
     const btn = screen.getByRole("button", { name: "覆盖请假" });
     expect(btn.className).toContain("bg-warning-bg");
@@ -338,158 +231,60 @@ describe("RehearsalCard 覆盖请假签到按钮（Issue #155）", () => {
 
   it("进行中 + 已通过申请：同样变黄「覆盖请假」", () => {
     render(
-      <RehearsalCard item={ongoing()} onSignIn={vi.fn()} leaveRequest={{ status: "approved" }} />,
+      <RehearsalCard
+        item={ongoing()}
+        onSignIn={vi.fn()}
+        onClick={vi.fn()}
+        leaveRequest={{ status: "approved" }}
+      />,
     );
     expect(screen.getByRole("button", { name: "覆盖请假" })).toBeTruthy();
   });
 
-  it("进行中 + 待审批申请 + 出勤已写请假（excused）：黄色「覆盖请假」按钮替代请假 chip（返工）", () => {
-    // 审批通过会写 attendance.status=excused 使 statusChip 命中，此前只会渲染「⭕请假」chip，
-    // 黄色覆盖按钮分支不可达；返工后 statusChip 分支优先处理 canOverrideLeave
+  it("进行中 + excused 未签到 + 无申请：显示正常「签到」按钮（覆盖签到，Issue #159 方案 B）", () => {
     render(
       <RehearsalCard
         item={ongoing()}
         attendance={{ status: "excused", sign_in_time: null }}
         onSignIn={vi.fn()}
+        onClick={vi.fn()}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: "签到" });
+    expect(btn.className).not.toContain("bg-warning-bg");
+  });
+
+  it("进行中 + excused 未签到 + 待审批申请：黄色「覆盖请假」（优先级高于普通签到）", () => {
+    render(
+      <RehearsalCard
+        item={ongoing()}
+        attendance={{ status: "excused", sign_in_time: null }}
+        onSignIn={vi.fn()}
+        onClick={vi.fn()}
         leaveRequest={{ status: "pending" }}
       />,
     );
-    const btn = screen.getByRole("button", { name: "覆盖请假" });
-    expect(btn.className).toContain("bg-warning-bg");
-    expect(btn.className).toContain("text-warning");
-    // 请假 chip 被覆盖按钮替代，无普通「签到」按钮
-    expect(screen.queryByText(/⭕\s*请假/)).toBeNull();
+    expect(screen.getByRole("button", { name: "覆盖请假" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
   });
 
-  it("进行中 + 已通过申请 + 出勤已写请假（excused）：黄色「覆盖请假」按钮替代请假 chip（返工）", () => {
-    render(
-      <RehearsalCard
-        item={ongoing()}
-        attendance={{ status: "excused", sign_in_time: null }}
-        onSignIn={vi.fn()}
-        leaveRequest={{ status: "approved" }}
-      />,
-    );
-    const btn = screen.getByRole("button", { name: "覆盖请假" });
-    expect(btn.className).toContain("bg-warning-bg");
-    expect(btn.className).toContain("text-warning");
-    // 申请状态 chip 仍在下栏展示「已通过」，请假 chip 被覆盖按钮替代
-    expect(screen.getByText("已通过")).toBeTruthy();
-    expect(screen.queryByText(/⭕\s*请假/)).toBeNull();
-    expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
-  });
-
-  it("进行中 + 无申请 + 管理员手动设请假（excused 未签到）：显示正常「签到」按钮（返工，Issue #159 方案 B）", () => {
-    // 无申请时 canOverrideLeave 不成立；但请假未签到 + 无进行中申请时成员应可签到覆盖——
-    // 修复「撤回已通过申请后无法签到也无法重新申请」的死局（管理员手动设 excused 语义同构：
-    // 成员到场可覆盖，与需求方确认）
-    render(
-      <RehearsalCard
-        item={ongoing()}
-        attendance={{ status: "excused", sign_in_time: null }}
-        onSignIn={vi.fn()}
-      />,
-    );
-    const btn = screen.getByRole("button", { name: "签到" });
-    // 普通签到样式（非黄色覆盖按钮）
-    expect(btn.className).not.toContain("bg-warning-bg");
-    expect(screen.queryByRole("button", { name: "覆盖请假" })).toBeNull();
-    expect(screen.queryByText(/⭕\s*请假/)).toBeNull();
-  });
-
-  it("进行中 + excused 未签到 + 已撤回申请（死局场景）：显示正常「签到」按钮（Issue #159 方案 B）", () => {
-    // 撤回已通过申请后：考勤 excused、sign_in_time 空、无有效申请——此前无法签到
-    // （canOverrideLeave 需 pending/approved）也无法重新申请（请假入口被 excused 抑制），
-    // 返工后签到窗口内显示正常「签到」按钮
-    render(
-      <RehearsalCard
-        item={ongoing()}
-        attendance={{ status: "excused", sign_in_time: null }}
-        onSignIn={vi.fn()}
-        onLeaveRequest={vi.fn()}
-        leaveRequest={{ status: "withdrawn" }}
-      />,
-    );
-    const btn = screen.getByRole("button", { name: "签到" });
-    expect(btn.className).not.toContain("bg-warning-bg");
-    expect(screen.queryByRole("button", { name: "覆盖请假" })).toBeNull();
-    expect(screen.queryByText(/⭕\s*请假/)).toBeNull();
-  });
-
-  it("已结束 + excused 未签到：保留纯请假 chip，无签到按钮（窗口外不可签，Issue #159 方案 B）", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" })}
-        attendance={{ status: "excused", sign_in_time: null }}
-        onSignIn={vi.fn()}
-      />,
-    );
-    expect(screen.getByText(/⭕\s*请假/)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "覆盖请假" })).toBeNull();
-  });
-
-  it("未开始 + excused 未签到：保留纯请假 chip，无签到按钮（窗口外不可签，Issue #159 方案 B）", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
-        attendance={{ status: "excused", sign_in_time: null }}
-        onSignIn={vi.fn()}
-      />,
-    );
-    expect(screen.getByText(/⭕\s*请假/)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
-  });
-
-  it("excused 已签到（锁定）：chip 固定展示，无签到/覆盖按钮（不变）", () => {
-    render(
-      <RehearsalCard
-        item={ongoing()}
-        attendance={{ status: "excused", sign_in_time: "2026-08-15T12:05:00" }}
-        onSignIn={vi.fn()}
-      />,
-    );
-    expect(screen.getByText(/⭕\s*请假/)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "覆盖请假" })).toBeNull();
-  });
-
-  it("进行中 + 已驳回申请：签到按钮不变黄（已驳回维持不变，签到不覆盖）", () => {
-    render(
-      <RehearsalCard item={ongoing()} onSignIn={vi.fn()} leaveRequest={{ status: "rejected" }} />,
-    );
-    const btn = screen.getByRole("button", { name: "签到" });
-    expect(btn.className).not.toContain("bg-warning-bg");
-    expect(screen.queryByRole("button", { name: "覆盖请假" })).toBeNull();
-  });
-
-  it("进行中 + 无申请：普通「签到」按钮", () => {
-    render(<RehearsalCard item={ongoing()} onSignIn={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "签到" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "覆盖请假" })).toBeNull();
-  });
-
-  it("未开始 + 待审批：不在签到窗口，无黄色按钮（chip1 留空不显示「未开始」，Issue #171）", () => {
-    render(
+  it("未开始/已结束 + 待审批申请：签到窗口外无任何按钮（覆盖请假仅窗口内）", () => {
+    const { rerender } = render(
       <RehearsalCard
         item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
         onSignIn={vi.fn()}
+        onClick={vi.fn()}
         leaveRequest={{ status: "pending" }}
       />,
     );
     expect(screen.queryByRole("button", { name: "覆盖请假" })).toBeNull();
     expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
-    // 未开始不可签的时机不变，仅不再显示「未开始」chip；申请状态 chip 仍在下方展示
-    expect(screen.queryByText("未开始")).toBeNull();
-    expect(screen.getByText("待审批")).toBeTruthy();
-  });
 
-  it("已结束 + 待审批：无黄色按钮（已结束不可签）", () => {
-    render(
+    rerender(
       <RehearsalCard
         item={makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" })}
         onSignIn={vi.fn()}
+        onClick={vi.fn()}
         leaveRequest={{ status: "pending" }}
       />,
     );
@@ -497,189 +292,129 @@ describe("RehearsalCard 覆盖请假签到按钮（Issue #155）", () => {
     expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
   });
 
-  it("已签到（锁定）+ 待审批：显示状态 chip，无签到/覆盖按钮", () => {
+  it("进行中 + 已驳回申请：显示普通「签到」按钮（已驳回不拦截签到）", () => {
     render(
       <RehearsalCard
         item={ongoing()}
-        attendance={{ status: "present", sign_in_time: "2026-08-15T12:05:00" }}
         onSignIn={vi.fn()}
-        leaveRequest={{ status: "pending" }}
-      />,
-    );
-    expect(screen.queryByRole("button", { name: "覆盖请假" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
-    expect(screen.getByText(/✅\s*出席/)).toBeTruthy();
-  });
-
-  it("已签到（锁定）+ 无申请 + 进行中：不显示请假按钮（已签到不可再请假，返工）", () => {
-    // 无申请分支此前只拦 ended 后的补请假（补请假仅缺席）；进行中 + 已签到仍显示「请假」，
-    // 提交后审批通过会覆盖考勤为 excused，造成「已签到但请假」不可恢复矛盾（signedIn 锁定
-    // 不能重签、approved 无按钮不能撤回）——返工后已签到不显示任何请假入口
-    render(
-      <RehearsalCard
-        item={ongoing()}
-        attendance={{ status: "present", sign_in_time: "2026-08-15T12:05:00" }}
-        onSignIn={vi.fn()}
-        onLeaveRequest={vi.fn()}
-      />,
-    );
-    expect(screen.getByText(/✅\s*出席/)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "请假" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
-  });
-});
-
-describe("RehearsalCard 右栏三 chip/按钮样式统一（Issue #164）", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 7, 15, 13, 0, 0));
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.useRealTimers();
-  });
-
-  /** 已结束排练（上午 08:00-10:00） */
-  const ended = () =>
-    makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" });
-
-  it("已结束排练不再显示「已结束」灰标签，只显示状态 chip", () => {
-    render(<RehearsalCard item={ended()} attendance={{ status: "absent", sign_in_time: null }} />);
-    expect(screen.queryByText("已结束")).toBeNull();
-    expect(screen.getByText(/❌\s*缺勤/)).toBeTruthy();
-  });
-
-  it("状态 chip 与操作按钮：w-full、等高 h-8、文字居中", () => {
-    render(<RehearsalCard item={ended()} onLeaveRequest={vi.fn()} />);
-    const chip = screen.getByText(/❌\s*缺勤/);
-    expect(chip.className).toContain("w-full");
-    expect(chip.className).toContain("h-8");
-    expect(chip.className).toContain("justify-center");
-    expect(chip.className).toContain("text-center");
-
-    const btn = screen.getByRole("button", { name: "补请假" });
-    expect(btn.className).toContain("w-full");
-    expect(btn.className).toContain("h-8");
-    expect(btn.className).toContain("justify-center");
-    expect(btn.className).toContain("text-center");
-  });
-
-  it("申请状态 chip：同样 w-full、等高 h-8、文字居中", () => {
-    render(
-      <RehearsalCard
-        item={ended()}
-        onLeaveRequest={vi.fn()}
-        leaveRequest={{ status: "pending" }}
-      />,
-    );
-    const leaveChip = screen.getByText("待审批");
-    expect(leaveChip.className).toContain("w-full");
-    expect(leaveChip.className).toContain("h-8");
-    expect(leaveChip.className).toContain("justify-center");
-  });
-
-  it("签到按钮统一 w-full + h-8 + 居中（与 chip 等高）", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" })}
-        onSignIn={vi.fn()}
-        onLeaveRequest={vi.fn()}
+        onClick={vi.fn()}
+        leaveRequest={{ status: "rejected" }}
       />,
     );
     const btn = screen.getByRole("button", { name: "签到" });
-    expect(btn.className).toContain("w-full");
-    expect(btn.className).toContain("h-8");
-    expect(btn.className).toContain("justify-center");
+    expect(btn.className).not.toContain("bg-warning-bg");
   });
 
-  it("未开始的排练 chip1 位置留空不渲染（Issue #171），请假按钮不受影响", () => {
-    render(
-      <RehearsalCard
-        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
-        onLeaveRequest={vi.fn()}
-      />,
-    );
-    // 无「未开始」chip，也无状态 chip/签到按钮
-    expect(screen.queryByText("未开始")).toBeNull();
-    // 右栏第一个元素即「请假」按钮（chip1 位置留空后按钮上移）
-    const leaveBtn = screen.getByRole("button", { name: "请假" });
-    const column = leaveBtn.parentElement!;
-    expect(column.firstElementChild).toBe(leaveBtn);
-  });
-
-  it("考勤加载占位符统一 w-full + h-8（与 chip 等高）", () => {
-    render(<RehearsalCard item={ended()} attendanceLoading />);
+  it("考勤加载中：不渲染签到按钮，显示占位符（防首屏闪错）", () => {
+    render(<RehearsalCard item={ongoing()} attendanceLoading onClick={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
     const placeholder = screen.getByText("…");
     expect(placeholder.className).toContain("w-full");
     expect(placeholder.className).toContain("h-8");
   });
+
+  it("未传 onSignIn：不渲染签到按钮（其他场景复用卡片不受影响）", () => {
+    render(<RehearsalCard item={ongoing()} onClick={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+  });
 });
 
-describe("RehearsalCard 更新提示文案细分（Issue #171）", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 7, 15, 13, 0, 0));
+describe("RehearsalCard 卡片去按钮化（Issue #173）", () => {
+  it("右栏带分隔线与固定宽（border-l border-border pl-3 flex-shrink-0），不挤爆左栏", () => {
+    render(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" })}
+        onSignIn={vi.fn()}
+        onClick={vi.fn()}
+      />,
+    );
+    const column = screen.getByRole("button", { name: "签到" }).parentElement!;
+    expect(column.className).toContain("border-l");
+    expect(column.className).toContain("border-border");
+    expect(column.className).toContain("pl-3");
+    expect(column.className).toContain("flex-shrink-0");
+    expect(column.className).toContain("w-32");
   });
 
-  afterEach(() => {
-    cleanup();
-    vi.useRealTimers();
+  it("签到按钮统一 w-full + h-8 + 居中（样式保持 Issue #164）", () => {
+    render(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" })}
+        onSignIn={vi.fn()}
+        onClick={vi.fn()}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: "签到" });
+    expect(btn.className).toContain("w-full");
+    expect(btn.className).toContain("h-8");
+    expect(btn.className).toContain("justify-center");
   });
 
-  /** 已更新（updated_at > created_at）且进行中（12:00-15:00，now 13:00）的排练 */
-  function updatedItem(updatedFields: string | null) {
-    return makeRehearsal({
-      start_time: "2026-08-15T12:00:00",
-      end_time: "2026-08-15T15:00:00",
-      created_at: "2026-08-01T00:00:00",
-      updated_at: "2026-08-14T00:00:00",
-      updated_fields: updatedFields,
-    });
-  }
+  it("请假操作按钮已移除：请假/补请假/编辑申请/重新申请均不出现（入口收敛到详情弹窗）", () => {
+    const { rerender } = render(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
+        onClick={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "请假" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
 
-  it("updated_fields=time → 「更新排练时间」", () => {
-    render(<RehearsalCard item={updatedItem("time")} isUpdated />);
-    expect(screen.getByText("更新排练时间")).toBeTruthy();
-    expect(screen.queryByText("更新排练时间/地点/曲目")).toBeNull();
-  });
-
-  it("updated_fields=location/repertoire → 对应细分文案", () => {
-    const { rerender } = render(<RehearsalCard item={updatedItem("location")} isUpdated />);
-    expect(screen.getByText("更新排练地点")).toBeTruthy();
-    rerender(<RehearsalCard item={updatedItem("repertoire")} isUpdated />);
-    expect(screen.getByText("更新排练曲目")).toBeTruthy();
-  });
-
-  it("多字段按 time/location/repertoire 顺序拼接（与写入顺序无关）", () => {
-    const { rerender } = render(<RehearsalCard item={updatedItem("time,location")} isUpdated />);
-    expect(screen.getByText("更新排练时间/地点")).toBeTruthy();
-    rerender(<RehearsalCard item={updatedItem("repertoire,time")} isUpdated />);
-    expect(screen.getByText("更新排练时间/曲目")).toBeTruthy();
-  });
-
-  it("updated_fields 为 null/空但已更新（存量数据）→ 兜底「更新排练时间/地点/曲目」", () => {
-    const { rerender } = render(<RehearsalCard item={updatedItem(null)} isUpdated />);
-    expect(screen.getByText("更新排练时间/地点/曲目")).toBeTruthy();
-    rerender(<RehearsalCard item={updatedItem("")} isUpdated />);
-    expect(screen.getByText("更新排练时间/地点/曲目")).toBeTruthy();
-  });
-
-  it("isUpdated 为 false（未更新或已结束）时不渲染更新 chip", () => {
-    const { rerender } = render(<RehearsalCard item={updatedItem("time")} />);
-    expect(screen.queryByText(/更新排练/)).toBeNull();
-    // 已结束（更新标识持续到排练结束，Issue #140）：isUpdated 由父级计算为 false
     rerender(
       <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" })}
+        onClick={vi.fn()}
+        leaveRequest={{ status: "pending" }}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "编辑申请" })).toBeNull();
+
+    rerender(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
+        onClick={vi.fn()}
+        leaveRequest={{ status: "rejected" }}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "重新申请" })).toBeNull();
+  });
+
+  it("申请状态 chip 与出勤状态 chip 已移除（展示收敛到详情弹窗/请假面板）", () => {
+    const { rerender } = render(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" })}
+        attendance={{ status: "present", sign_in_time: "2026-08-15T12:05:00" }}
+        onClick={vi.fn()}
+        leaveRequest={{ status: "approved" }}
+      />,
+    );
+    expect(screen.queryByText(/出席|迟到|缺勤|请假/)).toBeNull();
+    expect(screen.queryByText(/待审批|已通过|已驳回/)).toBeNull();
+
+    rerender(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
+        onClick={vi.fn()}
+        leaveRequest={{ status: "pending" }}
+      />,
+    );
+    expect(screen.queryByText(/待审批|已通过|已驳回/)).toBeNull();
+  });
+
+  it("更新提示 chip 仍在卡片展示（Issue #171 不回归）", () => {
+    render(
+      <RehearsalCard
         item={makeRehearsal({
-          start_time: "2026-08-15T08:00:00",
-          end_time: "2026-08-15T10:00:00",
+          start_time: "2026-08-15T12:00:00",
+          end_time: "2026-08-15T15:00:00",
           created_at: "2026-08-01T00:00:00",
           updated_at: "2026-08-14T00:00:00",
           updated_fields: "time",
         })}
+        isUpdated
+        onClick={vi.fn()}
       />,
     );
-    expect(screen.queryByText(/更新排练/)).toBeNull();
+    expect(screen.getByText("更新排练时间")).toBeTruthy();
   });
 });

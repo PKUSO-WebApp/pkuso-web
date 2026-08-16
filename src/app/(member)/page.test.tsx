@@ -581,14 +581,19 @@ describe("Home 首页组件", () => {
       expect(screen.getByText("两个月前合排")).toBeTruthy();
     });
 
-    it("历史 tab 中已结束卡片照常显示状态与「补请假」入口", () => {
+    it("历史 tab 中已结束卡片无按钮/chip，详情弹窗展示「缺勤」与「我要请假 ＞」", () => {
       renderWithRehearsals([makeRehearsalAt(1, "2026-08-15T08:00:00", "上午合排")]);
       fireEvent.click(screen.getByTestId("toggle-history"));
 
-      // 「已结束」灰标签已移除（Issue #164）：只显示缺勤状态 chip 与补请假入口
+      // 卡片去按钮化（Issue #173）：「已结束」标签（#164）与「补请假」入口均从卡片移除
       expect(screen.queryByText("已结束")).toBeNull();
-      expect(screen.getByText(/❌\s*缺勤/)).toBeTruthy();
-      expect(screen.getByRole("button", { name: "补请假" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
+      expect(screen.queryByText(/缺勤/)).toBeNull();
+
+      // 出勤状态与请假入口收敛到详情弹窗（Issue #173）
+      fireEvent.click(screen.getByRole("button", { name: /上午合排/ }));
+      expect(screen.getByText("缺勤")).toBeTruthy();
+      expect(screen.getByRole("button", { name: /我要请假/ })).toBeTruthy();
     });
 
     it("分排 tab 窗口过滤不受影响：已过去/超期的分排仍隐藏（回归）", () => {
@@ -898,6 +903,8 @@ describe("Home 首页组件", () => {
       vi.useFakeTimers();
       // 固定系统时间 2026-08-15 21:00：当天 20:00-22:00 排练为"进行中"，上午排练已结束
       vi.setSystemTime(new Date(2026, 7, 15, 21, 0, 0));
+      // 详情弹窗红点机制依赖 localStorage（leaveSeen_<id>），清空避免跨用例污染
+      window.localStorage.clear();
       // 默认无考勤记录；每个用例按需覆盖 map
       mockUseAttendance.mockReturnValue({ ...defaultAttendanceMock });
     });
@@ -949,30 +956,34 @@ describe("Home 首页组件", () => {
       render(<Home />, { wrapper: UserProvider });
     }
 
-    it("签到后管理员改状态为缺席（sign_in_time 非空 + status=absent）：显示缺勤 chip，无签到按钮，不可再签到", () => {
+    it("签到后管理员改状态为缺席（sign_in_time 非空 + status=absent）：卡片无签到按钮，详情弹窗显示「缺勤」", () => {
       renderWithAttendance({
         1: { status: "absent", sign_in_time: "2026-08-15T20:05:00" },
       });
 
-      expect(screen.getByText(/缺勤/)).toBeTruthy();
+      // 卡片去按钮化（Issue #173）：签到后卡片无签到按钮，出勤状态收敛到详情弹窗
       expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: /今晚排练/ }));
+      expect(screen.getByText("缺勤")).toBeTruthy();
     });
 
-    it("签到后状态为出席：显示出席 chip，无签到按钮", () => {
+    it("签到后状态为出席：卡片无签到按钮，详情弹窗显示「出席」", () => {
       renderWithAttendance({
         1: { status: "present", sign_in_time: "2026-08-15T20:05:00" },
       });
 
-      expect(screen.getByText(/出席/)).toBeTruthy();
       expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: /今晚排练/ }));
+      expect(screen.getByText("出席")).toBeTruthy();
     });
 
-    it("签到后状态为迟到：显示迟到 chip", () => {
+    it("签到后状态为迟到：详情弹窗显示「迟到」", () => {
       renderWithAttendance({
         1: { status: "late", sign_in_time: "2026-08-15T20:20:00" },
       });
 
-      expect(screen.getByText(/迟到/)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: /今晚排练/ }));
+      expect(screen.getByText("迟到")).toBeTruthy();
     });
 
     it("未签到（无考勤记录）且排练进行中：显示签到按钮", () => {
@@ -991,7 +1002,7 @@ describe("Home 首页组件", () => {
       expect(screen.queryByText(/缺勤/)).toBeNull();
     });
 
-    it("排练已结束 + 已签到（出席）：只显示出席 chip（「已结束」标签已移除，Issue #164）", () => {
+    it("排练已结束 + 已签到（出席）：卡片无签到按钮，详情弹窗显示「出席」（「已结束」标签已移除，Issue #164）", () => {
       mockUseRehearsals.mockReturnValue({
         data: [makeRehearsalAt(1, "2026-08-15T08:00:00", "上午排练")],
         loading: false,
@@ -1008,12 +1019,15 @@ describe("Home 首页组件", () => {
       });
       render(<Home />, { wrapper: UserProvider });
 
+      // 卡片去按钮化（Issue #173）：已结束卡片无「已结束」标签、无签到按钮
       expect(screen.queryByText("已结束")).toBeNull();
-      expect(screen.getByText(/出席/)).toBeTruthy();
       expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+      // 出勤状态收敛到详情弹窗
+      fireEvent.click(screen.getByRole("button", { name: /上午排练/ }));
+      expect(screen.getByText("出席")).toBeTruthy();
     });
 
-    it("排练已结束 + 未签到（无考勤记录）：只显示缺勤 chip（「已结束」标签已移除，Issue #164）", () => {
+    it("排练已结束 + 未签到（无考勤记录）：卡片无任何状态展示，详情弹窗显示「缺勤」", () => {
       mockUseRehearsals.mockReturnValue({
         data: [makeRehearsalAt(1, "2026-08-15T08:00:00", "上午排练")],
         loading: false,
@@ -1028,10 +1042,12 @@ describe("Home 首页组件", () => {
       render(<Home />, { wrapper: UserProvider });
 
       expect(screen.queryByText("已结束")).toBeNull();
-      expect(screen.getByText(/缺勤/)).toBeTruthy();
+      expect(screen.queryByText(/缺勤/)).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: /上午排练/ }));
+      expect(screen.getByText("缺勤")).toBeTruthy();
     });
 
-    it("排练已结束 + 管理员设为请假（未签到）：只显示请假 chip（「已结束」标签已移除，Issue #164）", () => {
+    it("排练已结束 + 管理员设为请假（未签到）：详情弹窗显示「请假」，卡片无「补请假」按钮", () => {
       mockUseRehearsals.mockReturnValue({
         data: [makeRehearsalAt(1, "2026-08-15T08:00:00", "上午排练")],
         loading: false,
@@ -1049,9 +1065,10 @@ describe("Home 首页组件", () => {
       render(<Home />, { wrapper: UserProvider });
 
       expect(screen.queryByText("已结束")).toBeNull();
-      // 已请假（excused）不可再补请假（Issue #148）：仅渲染请假 chip，无「补请假」按钮
-      expect(screen.getByText(/⭕\s*请假/)).toBeTruthy();
+      // 已请假（excused）不可再补请假（Issue #148）：卡片无「补请假」按钮（入口统一在详情弹窗）
       expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: /上午排练/ }));
+      expect(screen.getByText("请假")).toBeTruthy();
     });
 
     it("未签到 + 无请假申请 + 管理员手动设请假（排练进行中）：显示正常「签到」按钮（返工，Issue #159 方案 B）", () => {
@@ -1070,6 +1087,162 @@ describe("Home 首页组件", () => {
   });
 
   // ============================================================
+  // 5.7.5 排练详情弹窗接线（Issue #173）：卡片点击 → 详情 → 我要请假 → 面板
+  // ============================================================
+  describe("排练详情弹窗接线", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 7, 15, 21, 0, 0));
+      // 红点机制依赖 localStorage（leaveSeen_<id>），清空避免跨用例污染
+      window.localStorage.clear();
+      mockUseAttendance.mockReturnValue({ ...defaultAttendanceMock });
+      // mockReturnValue 跨用例持续生效（afterEach 的 clearAllMocks 不清除），
+      // 显式恢复默认无申请，避免红点用例的 approved/rejected 数据污染后续区块
+      mockUseLeaveRequests.mockReturnValue(defaultLeaveRequestsMock());
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** 构造指定 startISO 的排练行（与 5.7 区块同构；describe 作用域独立，需各自定义） */
+    function makeRehearsalAt(id: number, startISO: string, repertoire: string): RehearsalRow {
+      const end = new Date(parseLocalISO(startISO).getTime() + 2 * 60 * 60 * 1000);
+      return {
+        id,
+        repertoire,
+        type: "full",
+        start_time: startISO,
+        end_time: formatLocalISO(end),
+        location: "排练厅",
+        title: null,
+        date: null,
+        time: null,
+        sign_in_code: null,
+        target_section: null,
+        created_at: null,
+        updated_at: "2026-08-14T00:00:00.000Z",
+        updated_fields: null,
+      };
+    }
+
+    /** 完整请假申请行（查看模式渲染 reason/created_at 等字段） */
+    function makeLeaveRequest(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "lr-1",
+        rehearsal_id: 1,
+        user_id: "u1",
+        reason: "身体不适",
+        attachment_url: null,
+        target_status: "excused",
+        status: "approved",
+        reject_reason: null,
+        created_at: "2026-08-15T10:00:00",
+        updated_at: "2026-08-15T10:00:00",
+        ...overrides,
+      };
+    }
+
+    /** 渲染单场进行中合排（今晚 20:00-22:00，now 21:00） */
+    function renderOngoingRehearsal() {
+      mockUseRehearsals.mockReturnValue({
+        data: [makeRehearsalAt(1, "2026-08-15T20:00:00", "今晚排练")],
+        loading: false,
+        error: null,
+        saving: false,
+        fetch: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      });
+      render(<Home />, { wrapper: UserProvider });
+    }
+
+    it("点击卡片打开详情弹窗：进行中未签到显示「未签到」+ 排练信息 + 「我要请假 ＞」", () => {
+      renderOngoingRehearsal();
+      fireEvent.click(screen.getByRole("button", { name: /今晚排练/ }));
+
+      expect(screen.getByText("排练详情")).toBeTruthy();
+      expect(screen.getByText("未签到")).toBeTruthy();
+      expect(screen.getByText("排练类型")).toBeTruthy();
+      expect(screen.getByText("时间")).toBeTruthy();
+      expect(screen.getByText("地点")).toBeTruthy();
+      expect(screen.getByText("曲目")).toBeTruthy();
+      expect(screen.getByRole("button", { name: /我要请假/ })).toBeTruthy();
+    });
+
+    it("点击「我要请假 ＞」打开请假面板（无申请 → 表单模式），详情弹窗保持打开", async () => {
+      renderOngoingRehearsal();
+      fireEvent.click(screen.getByRole("button", { name: /今晚排练/ }));
+      fireEvent.click(screen.getByRole("button", { name: /我要请假/ }));
+
+      // fetchMine 默认 resolve [] → 表单模式（提交申请按钮）
+      await act(async () => {});
+      expect(screen.getByRole("button", { name: "提交申请" })).toBeTruthy();
+      // 详情弹窗保持打开：关闭请假面板即返回详情
+      expect(screen.getByText("排练详情")).toBeTruthy();
+    });
+
+    it("已通过申请未查看：详情弹窗显示红点；点击「我要请假 ＞」写入 localStorage 且红点消失", async () => {
+      mockUseLeaveRequests.mockReturnValue(
+        defaultLeaveRequestsMock({
+          data: [makeLeaveRequest()],
+          fetchMine: vi.fn().mockResolvedValue([makeLeaveRequest()]),
+        }),
+      );
+      renderOngoingRehearsal();
+      fireEvent.click(screen.getByRole("button", { name: /今晚排练/ }));
+
+      expect(screen.getByTestId("leave-dot")).toBeTruthy();
+
+      fireEvent.click(screen.getByRole("button", { name: /我要请假/ }));
+      // 查看模式：左侧「已提交」+ 右侧「关闭」
+      await act(async () => {});
+      expect(screen.getByRole("button", { name: "已提交" })).toBeTruthy();
+      expect(window.localStorage.getItem("leaveSeen_lr-1")).toBe("1");
+      expect(screen.queryByTestId("leave-dot")).toBeNull();
+    });
+
+    it("已驳回申请未查看：同样显示红点，查看后消失（面板为「重新申请」）", async () => {
+      const rejected = makeLeaveRequest({ status: "rejected", reject_reason: "原因不符" });
+      mockUseLeaveRequests.mockReturnValue(
+        defaultLeaveRequestsMock({
+          data: [rejected],
+          fetchMine: vi.fn().mockResolvedValue([rejected]),
+        }),
+      );
+      renderOngoingRehearsal();
+      fireEvent.click(screen.getByRole("button", { name: /今晚排练/ }));
+      expect(screen.getByTestId("leave-dot")).toBeTruthy();
+
+      fireEvent.click(screen.getByRole("button", { name: /我要请假/ }));
+      await act(async () => {});
+      expect(screen.getByRole("button", { name: "重新申请" })).toBeTruthy();
+      expect(screen.queryByTestId("leave-dot")).toBeNull();
+    });
+
+    it("待审批申请：详情弹窗不显示红点（仅已通过/已驳回需查看提醒）", () => {
+      mockUseLeaveRequests.mockReturnValue(
+        defaultLeaveRequestsMock({
+          data: [makeLeaveRequest({ status: "pending" })],
+        }),
+      );
+      renderOngoingRehearsal();
+      fireEvent.click(screen.getByRole("button", { name: /今晚排练/ }));
+      expect(screen.queryByTestId("leave-dot")).toBeNull();
+    });
+
+    it("关闭详情弹窗返回列表", () => {
+      renderOngoingRehearsal();
+      fireEvent.click(screen.getByRole("button", { name: /今晚排练/ }));
+      expect(screen.getByText("排练详情")).toBeTruthy();
+
+      fireEvent.click(screen.getByRole("button", { name: "关闭弹窗" }));
+      expect(screen.queryByText("排练详情")).toBeNull();
+    });
+  });
+
+  // ============================================================
   // 5.8 签到防重复提交 + 首屏考勤加载（Issue #141 对抗返工）
   // ============================================================
   describe("签到防重复提交与首屏考勤加载", () => {
@@ -1079,6 +1252,9 @@ describe("Home 首页组件", () => {
       vi.setSystemTime(new Date(2026, 7, 15, 21, 0, 0));
       // jsdom 的 alert 未实现，spy 并吞掉
       vi.spyOn(window, "alert").mockImplementation(() => {});
+      // mockReturnValue 跨用例持续生效（afterEach 的 clearAllMocks 不清除），
+      // 显式恢复默认无申请，避免上游 5.7.5 红点用例的 approved/rejected 数据污染
+      mockUseLeaveRequests.mockReturnValue(defaultLeaveRequestsMock());
     });
 
     afterEach(() => {
@@ -1353,9 +1529,10 @@ describe("Home 首页组件", () => {
       expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
     });
 
-    it("进行中 + 已通过申请 + 出勤已写请假（excused）：黄色「覆盖请假」按钮替代请假 chip（返工）", () => {
-      // 审批通过会把考勤写成 excused（statusChip 命中「请假」chip），但已批准请假的成员
-      // 仍应可签到覆盖：页面经 leaveRequestMap 传入 approved 申请，卡片渲染覆盖按钮
+    it("进行中 + 已通过申请 + 出勤已写请假（excused）：黄色「覆盖请假」按钮（返工）", () => {
+      // 审批通过会把考勤写成 excused，但已批准请假的成员仍应可签到覆盖：
+      // 页面经 leaveRequestMap 传入 approved 申请，卡片渲染黄色覆盖按钮
+      // （申请状态 chip 已随卡片去按钮化移除，Issue #173；红点提示收敛到详情弹窗）
       mockUseLeaveRequests.mockReturnValue(
         defaultLeaveRequestsMock({
           data: [{ id: "lr-1", rehearsal_id: 1, status: "approved" }] as unknown as ReturnType<
@@ -1373,9 +1550,9 @@ describe("Home 首页组件", () => {
       expect(btn.className).toContain("bg-warning-bg");
       expect(btn.className).toContain("text-warning");
       expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
-      // 请假 chip 被覆盖按钮替代，申请状态 chip 仍在下方展示「已通过」
+      // 卡片不再渲染「请假」chip 与「已通过」申请状态 chip
       expect(screen.queryByText(/⭕\s*请假/)).toBeNull();
-      expect(screen.getByText("已通过")).toBeTruthy();
+      expect(screen.queryByText("已通过")).toBeNull();
     });
 
     it("签到成功但撤销申请网络失败（reason: network）：提示联系管理员处理（返工）", async () => {

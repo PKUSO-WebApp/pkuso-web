@@ -10,6 +10,7 @@ import { Toggle } from "@/components/ui/Toggle";
 import { Card } from "@/components/ui/Card";
 import { Modal } from "@/components/ui/Modal";
 import { RehearsalCard } from "./schedule/components/rehearsal-card";
+import { RehearsalDetailModal } from "./schedule/components/rehearsal-detail-modal";
 import { CodeVerifyModal } from "./schedule/components/code-verify-modal";
 import { LeaveRequestModal } from "./schedule/components/leave-request-modal";
 import type { LeaveRequestRow, RehearsalRow } from "@/types/database";
@@ -38,6 +39,8 @@ export default function Home() {
   // 请假/补请假（Issue #142）：打开面板的排练 + 我的申请列表
   const { data: leaveRequests, fetchMine: fetchLeaveMine, cancelOnSignIn } = useLeaveRequests();
   const [leaveRehearsal, setLeaveRehearsal] = React.useState<RehearsalRow | null>(null);
+  // 详情弹窗当前展示的排练（Issue #173：卡片去按钮化后，出勤状态/请假入口集中于此）
+  const [detailRehearsal, setDetailRehearsal] = React.useState<RehearsalRow | null>(null);
   // 分钟级时钟 tick：跨天停留页面时，定时刷新"今天"边界，驱动列表过滤与签到按钮状态更新
   const [nowTick, setNowTick] = React.useState(() => Date.now());
 
@@ -356,16 +359,17 @@ export default function Home() {
             <RehearsalCard
               key={String(r.id)}
               item={r}
-              // 出勤记录（含 sign_in_time）：已签到锁定 / 状态 chip 渲染依据（Issue #141）
+              // 出勤记录（含 sign_in_time）：签到按钮显示与详情弹窗出勤状态依据（Issue #141）
               attendance={attendanceMap[r.id] ?? null}
-              // 考勤加载中：卡片不渲染状态 chip 与签到按钮，防首屏 map 未就绪时闪错
+              // 考勤加载中：卡片不渲染签到按钮，防首屏 map 未就绪时闪错
               attendanceLoading={attendanceLoading}
               // 更新标识持续到排练结束：已结束后不再显示（Issue #140）
               isUpdated={isRehearsalUpdated(r) && !isRehearsalEnded(r, new Date(nowTick))}
               onSignIn={() => handleSignIn(r)}
-              // 请假/补请假入口与申请状态（Issue #142）
+              // 覆盖请假按钮判定（Issue #155）
               leaveRequest={leaveRequestMap[r.id] ?? null}
-              onLeaveRequest={() => setLeaveRehearsal(r)}
+              // 整卡点击打开详情弹窗（Issue #173）
+              onClick={() => setDetailRehearsal(r)}
             />
           ))
         )}
@@ -403,6 +407,17 @@ export default function Home() {
           if (!codeSubmitting) setCodeRehearsal(null);
         }}
         hint={codeOverrideHint}
+      />
+
+      {/* 排练详情弹窗（Issue #173）：出勤状态展示 + 「我要请假 ＞」入口（红点提示未查看的
+          已通过/已驳回申请）；点击我要请假打开下方请假面板（详情弹窗保持打开，关闭面板即返回） */}
+      <RehearsalDetailModal
+        item={detailRehearsal}
+        attendance={detailRehearsal ? (attendanceMap[detailRehearsal.id] ?? null) : null}
+        attendanceLoading={attendanceLoading}
+        leaveRequest={detailRehearsal ? (leaveRequestMap[detailRehearsal.id] ?? null) : null}
+        onClose={() => setDetailRehearsal(null)}
+        onLeaveRequest={() => setLeaveRehearsal(detailRehearsal)}
       />
 
       {/* 请假/补请假面板（Issue #142）：保存成功后刷新卡片状态 */}

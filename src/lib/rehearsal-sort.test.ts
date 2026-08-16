@@ -4,6 +4,7 @@ import type { RehearsalRow } from "@/types/database";
 import {
   isRehearsalUpdated,
   isRehearsalEnded,
+  isRehearsalTodayOrFuture,
   getUpdateBadgeLabel,
   sortRehearsalsForMember,
   sortEndedFullRehearsals,
@@ -114,6 +115,40 @@ describe("isRehearsalEnded", () => {
   it("无有效 start_time 时视为未结束", () => {
     const noTime = makeRehearsal(1, null, null);
     expect(isRehearsalEnded(noTime, NOW)).toBe(false);
+  });
+});
+
+describe("isRehearsalTodayOrFuture（Issue #173）", () => {
+  it("今天（含当天已结束）与未来日期的排练保留", () => {
+    // 今天 08:00 已结束，但日期仍是今天，保留（判定只看日期不看时刻）
+    const todayEnded = makeRehearsal(1, "2026-08-15T08:00:00", "2026-08-15T10:00:00");
+    const todayOngoing = makeRehearsal(2, "2026-08-15T20:00:00", null);
+    const future = makeRehearsal(3, "2026-08-16T20:00:00", null);
+    expect(isRehearsalTodayOrFuture(todayEnded, NOW)).toBe(true);
+    expect(isRehearsalTodayOrFuture(todayOngoing, NOW)).toBe(true);
+    expect(isRehearsalTodayOrFuture(future, NOW)).toBe(true);
+  });
+
+  it("过去日期的排练隐藏（哪怕仅早一天）", () => {
+    const past = makeRehearsal(1, "2026-08-14T23:59:00", null);
+    const longAgo = makeRehearsal(2, "2026-01-01T08:00:00", null);
+    expect(isRehearsalTodayOrFuture(past, NOW)).toBe(false);
+    expect(isRehearsalTodayOrFuture(longAgo, NOW)).toBe(false);
+  });
+
+  it("无 start_time 或无法解析时保守保留", () => {
+    const noTime = makeRehearsal(1, null, null);
+    const garbage = makeRehearsal(2, "不是有效时间", null);
+    expect(isRehearsalTodayOrFuture(noTime, NOW)).toBe(true);
+    expect(isRehearsalTodayOrFuture(garbage, NOW)).toBe(true);
+  });
+
+  it("跨年边界：now 为 12 月 31 日时，次年 1 月 1 日保留", () => {
+    const yearEnd = parseLocalISO("2026-12-31T23:00:00");
+    const newYear = makeRehearsal(1, "2027-01-01T00:00:00", null);
+    const lastYear = makeRehearsal(2, "2026-12-30T20:00:00", null);
+    expect(isRehearsalTodayOrFuture(newYear, yearEnd)).toBe(true);
+    expect(isRehearsalTodayOrFuture(lastYear, yearEnd)).toBe(false);
   });
 });
 

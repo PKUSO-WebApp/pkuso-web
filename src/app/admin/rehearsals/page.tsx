@@ -12,15 +12,18 @@ import type { ProfileRow } from "@/types/database";
 import { Toggle } from "@/components/ui/Toggle";
 import { Modal } from "@/components/ui/Modal";
 import { AdminRehearsalCard } from "./components/rehearsal-card";
+import { RehearsalDetailModal } from "./components/rehearsal-detail-modal";
 import {
   CreateRehearsalModal,
   type CreateFormState,
 } from "@/app/(member)/schedule/components/create-rehearsal-modal";
-import { AttendanceModal } from "@/app/(member)/schedule/components/attendance-modal";
-import { useAttendanceEditor } from "@/hooks/useAttendanceEditor";
 import type { RehearsalRow } from "@/types/database";
 import { formatLocalISO, parseLocalISO, getLocalDateString } from "@/lib/date-utils";
-import { sortRehearsalsForMember, sortEndedFullRehearsals } from "@/lib/rehearsal-sort";
+import {
+  sortRehearsalsForMember,
+  sortEndedFullRehearsals,
+  isRehearsalTodayOrFuture,
+} from "@/lib/rehearsal-sort";
 
 type RehearsalType = "合排" | "分排" | "历史合排";
 
@@ -60,21 +63,11 @@ export default function AdminRehearsalsPage() {
   const { checkConflict } = useSchedule();
   const { data: allProfiles } = useProfiles({ status: "approved" });
 
-  // 考勤查看/编辑（与 admin/members 共享同一套弹窗状态逻辑）
-  const {
-    attendanceRehearsal,
-    attendanceLoading,
-    attendanceList,
-    attendanceSaving,
-    openAttendance,
-    closeAttendance,
-    onAttendanceStatusChange,
-    saveAttendance,
-  } = useAttendanceEditor();
-
   const [currentType, setCurrentType] = React.useState<RehearsalType>("合排");
   const [createOpen, setCreateOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<number | null>(null);
+  // 详情弹窗当前展示的排练（Issue #173：卡片去按钮后，查看/编辑/删除入口集中于此）
+  const [detailItem, setDetailItem] = React.useState<RehearsalRow | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const submittingRef = React.useRef(false);
   const [notifyByEmail, setNotifyByEmail] = React.useState(false);
@@ -111,7 +104,11 @@ export default function AdminRehearsalsPage() {
       } else {
         return false;
       }
-      return byDate(r);
+      // 区间筛选仅对有时间可判的排练生效；无 start_time 的排练无法判断日期，保守保留
+      // （与 isRehearsalTodayOrFuture 的保守语义一致，Issue #173）
+      if (r.start_time && !byDate(r)) return false;
+      // 窗口过滤（Issue #173）：仅今天起（start_time 日期 >= 今天 00:00）的排练，不含过去
+      return isRehearsalTodayOrFuture(r, now);
     });
 
     // 排序与用户端一致（Issue #171）：进行中/未开始近 → 远、已结束组底部近 → 远、
@@ -258,8 +255,9 @@ export default function AdminRehearsalsPage() {
     }
   };
 
+  // 二级确认已收敛到详情弹窗（Issue #173：window.confirm「确认删除？」在
+  // rehearsal-detail-modal 内完成），此处仅保留删除调用与失败提示
   const handleDelete = async (id: number) => {
-    if (!window.confirm("确定删除?")) return;
     const ok = await remove(id);
     if (!ok) alert("删除失败");
   };
@@ -274,7 +272,7 @@ export default function AdminRehearsalsPage() {
             {currentType === "历史合排" ? "历史合排" : "排练管理"}
           </h1>
           <p className="mt-1 text-xs text-text-muted">
-            {currentType === "历史合排" ? "查看已结束的合排排练" : "发布、编辑、查看排练与出勤"}
+            {currentType === "历史合排" ? "查看已结束的合排排练" : "发布、编辑、查看排练详情"}
           </p>
         </div>
         {/* 历史合排 tab 不提供发布入口（创建类型跟随 toggle 在历史视图无意义） */}
@@ -296,40 +294,39 @@ export default function AdminRehearsalsPage() {
           onChange={setCurrentType}
         />
 
-        <div className="flex items-center gap-2">
-          <div className="flex-1">
-            <label className="mb-1 block text-xs font-medium text-text-muted">开始时间</label>
-            <DatePicker
-              selected={startDateFilter}
-              onChange={(date: Date | null) => setStartDateFilter(date)}
-              dateFormat="yyyy-MM-dd"
-              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/20"
-              placeholderText="选择日期"
-            />
+        {/* 日期区间筛选（Issue #173 隐藏）：列表窗口改为「今天起全部未来」（isRehearsalTodayOrFuture），
+            区间筛选已无实际用途，通过 false && 隐藏；恢复时删掉 false && 条件即可——
+            startDateFilter/endDateFilter 状态与 filterByDateRange 过滤链路均已保留 */}
+        {false && (
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              <label className="mb-1 block text-xs font-medium text-text-muted">开始时间</label>
+              <DatePicker
+                selected={startDateFilter}
+                onChange={(date: Date | null) => setStartDateFilter(date)}
+                dateFormat="yyyy-MM-dd"
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/20"
+                placeholderText="选择日期"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="mb-1 block text-xs font-medium text-text-muted">结束时间</label>
+              <DatePicker
+                selected={endDateFilter}
+                onChange={(date: Date | null) => setEndDateFilter(date)}
+                dateFormat="yyyy-MM-dd"
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/20"
+                placeholderText="选择日期"
+              />
+            </div>
           </div>
-          <div className="flex-1">
-            <label className="mb-1 block text-xs font-medium text-text-muted">结束时间</label>
-            <DatePicker
-              selected={endDateFilter}
-              onChange={(date: Date | null) => setEndDateFilter(date)}
-              dateFormat="yyyy-MM-dd"
-              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/20"
-              placeholderText="选择日期"
-            />
-          </div>
-        </div>
+        )}
 
         <section className="max-h-[400px] space-y-3 overflow-y-auto">
           {loading && <p className="py-6 text-center text-xs text-text-subtle">加载中…</p>}
           {!loading &&
             list.map((item) => (
-              <AdminRehearsalCard
-                key={item.id}
-                item={item}
-                onEdit={() => openEdit(item)}
-                onDelete={() => handleDelete(item.id)}
-                onViewAttendance={() => openAttendance(item)}
-              />
+              <AdminRehearsalCard key={item.id} item={item} onClick={() => setDetailItem(item)} />
             ))}
           {!loading && list.length === 0 && (
             <p className="py-8 text-center text-xs text-text-muted">暂无安排</p>
@@ -356,16 +353,18 @@ export default function AdminRehearsalsPage() {
         onSubmit={handleSubmit}
       />
 
-      <AttendanceModal
-        open={!!attendanceRehearsal}
-        title={attendanceRehearsal?.repertoire ?? ""}
-        loading={attendanceLoading}
-        list={attendanceList}
-        editable
-        onStatusChange={onAttendanceStatusChange}
-        onSave={saveAttendance}
-        saving={attendanceSaving}
-        onClose={closeAttendance}
+      {/* 只读详情（Issue #173）：删除/编辑入口在弹窗内；编辑复用 CreateRehearsalModal 编辑模式 */}
+      <RehearsalDetailModal
+        item={detailItem}
+        onClose={() => setDetailItem(null)}
+        onEdit={() => {
+          if (!detailItem) return;
+          setDetailItem(null);
+          openEdit(detailItem);
+        }}
+        onDelete={() => {
+          if (detailItem) handleDelete(detailItem.id);
+        }}
       />
 
       <Modal

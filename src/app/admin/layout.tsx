@@ -11,7 +11,7 @@ const tabs = [
   { href: "/admin/rehearsals", label: "排练", icon: Music },
   { href: "/admin/community", label: "社区", icon: MessagesSquare },
   { href: "/admin/schedule", label: "日程", icon: Calendar },
-  { href: "/admin/members", label: "成员", icon: UsersRound },
+  { href: "/admin/members", label: "成员&考勤", icon: UsersRound },
   { href: "/admin/profile", label: "我的", icon: User },
 ];
 

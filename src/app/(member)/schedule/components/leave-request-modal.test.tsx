@@ -131,16 +131,17 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     );
   });
 
-  it("pending：只读视图 + 待审批 chip + 修改后保存调用 updateReason", async () => {
+  it("pending：只读视图 + 待审批 chip + 底部「已提交/编辑申请」进入编辑模式保存调用 updateReason", async () => {
     hookMock.fetchMine.mockResolvedValue([makeRequest()]);
     renderModal();
 
     await waitFor(() => expect(screen.getByText("待审批")).toBeInTheDocument());
     expect(screen.getByText("感冒发烧")).toBeInTheDocument();
-    // 只读视图无提交按钮
+    // 只读视图无提交按钮；底部操作行为「已提交」状态 + 「编辑申请」后续操作（Issue #173）
     expect(screen.queryByRole("button", { name: "提交申请" })).toBeNull();
+    expect(screen.getByRole("button", { name: "已提交" })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "修改申请" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑申请" }));
     // 编辑模式：原因预填
     const ta = screen.getByLabelText(/请假原因/);
     expect(ta).toHaveValue("感冒发烧");
@@ -156,11 +157,26 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     );
   });
 
+  it("approved：底部「已提交/关闭」，点击关闭返回（关闭弹窗）", async () => {
+    const onClose = vi.fn();
+    hookMock.fetchMine.mockResolvedValue([makeRequest({ status: "approved" })]);
+    render(<LeaveRequestModal open rehearsal={rehearsal} onClose={onClose} onSaved={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByText("已通过")).toBeInTheDocument());
+    // 底部操作行（Issue #173）：左侧状态「已提交」+ 右侧「关闭」（返回/关闭）
+    expect(screen.getByRole("button", { name: "已提交" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("approved：撤回 → 确认后进入新申请模式，选择目标状态提交 create（target_status 生效）", async () => {
     hookMock.fetchMine.mockResolvedValue([makeRequest({ status: "approved" })]);
     renderModal();
 
     await waitFor(() => expect(screen.getByText("已通过")).toBeInTheDocument());
+    // 底部操作行（Issue #173）：左侧状态「已提交」；撤回能力保留（现有撤销状态机）
+    expect(screen.getByRole("button", { name: "已提交" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "关闭" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "撤回申请" }));
     // 撤回提示文案：撤回不影响当前考勤状态（Issue #155 移除考勤还原）
     expect(
@@ -204,7 +220,7 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     expect(hookMock.create).not.toHaveBeenCalled();
   });
 
-  it("rejected：已驳回 chip + 驳回原因 + 重新申请保存调用 reapply", async () => {
+  it("rejected：已驳回 chip + 驳回原因 + 底部「已提交/重新申请」保存调用 reapply", async () => {
     hookMock.fetchMine.mockResolvedValue([
       makeRequest({ status: "rejected", reject_reason: "理由不充分" }),
     ]);
@@ -212,6 +228,8 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
 
     await waitFor(() => expect(screen.getByText("已驳回")).toBeInTheDocument());
     expect(screen.getByText("理由不充分")).toBeInTheDocument();
+    // 底部操作行（Issue #173）：左侧状态「已提交」+ 右侧「重新申请」
+    expect(screen.getByRole("button", { name: "已提交" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "重新申请" }));
     expect(screen.getByLabelText(/请假原因/)).toHaveValue("感冒发烧");
@@ -286,7 +304,7 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     renderModal();
 
     await waitFor(() => expect(screen.getByText("待审批")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "修改申请" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑申请" }));
 
     // 编辑模式为旧附件生成签名 URL 预览
     expect(await screen.findByAltText("当前附件")).toBeInTheDocument();
@@ -301,7 +319,7 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     const { container } = renderModal();
 
     await waitFor(() => expect(screen.getByText("待审批")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "修改申请" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑申请" }));
     await screen.findByAltText("当前附件");
 
     // 通过「更换图片」的文件输入选新图（编辑模式仅渲染这一个 file input）
@@ -333,7 +351,7 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     await waitFor(() => expect(screen.getByText("待审批")).toBeInTheDocument());
     // 只读视图无取消入口，进入编辑模式后出现
     expect(screen.queryByRole("button", { name: "取消请假" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "修改申请" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑申请" }));
     expect(screen.getByRole("button", { name: "取消请假" })).toBeTruthy();
 
     // 内联确认（项目既有撤回确认同款模式）
@@ -351,14 +369,18 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     expect(onSaved).toHaveBeenCalledTimes(1);
   });
 
-  it("取消请假确认可反悔：点「取消」不调用 cancelRequest", async () => {
+  it("取消请假确认可反悔：点确认块「取消」不调用 cancelRequest", async () => {
     hookMock.fetchMine.mockResolvedValue([makeRequest()]);
     renderModal();
 
     await waitFor(() => expect(screen.getByText("待审批")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "修改申请" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑申请" }));
     fireEvent.click(screen.getByRole("button", { name: "取消请假" }));
-    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    // 编辑模式底部「取消」（关闭弹窗）与确认块「取消」（反悔）同时存在；
+    // DOM 顺序：底部操作行在前、确认块在后，取后者点击
+    const cancelButtons = screen.getAllByRole("button", { name: "取消" });
+    expect(cancelButtons).toHaveLength(2);
+    fireEvent.click(cancelButtons[1]);
 
     expect(hookMock.cancelRequest).not.toHaveBeenCalled();
     // 确认块关闭，入口按钮恢复
@@ -376,7 +398,7 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     renderModal();
 
     await waitFor(() => expect(screen.getByText("待审批")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "修改申请" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑申请" }));
     fireEvent.click(screen.getByRole("button", { name: "取消请假" }));
     fireEvent.click(screen.getByRole("button", { name: "确认取消" }));
 
@@ -393,5 +415,34 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "提交申请" })).toBeTruthy());
     expect(screen.queryByText("已取消")).toBeNull();
+  });
+
+  // ---- 底部操作行重构（Issue #173）----
+
+  it("无申请表单模式：取消移到右下角与提交同级（取消无底色、提交有底色），点击取消关闭弹窗", async () => {
+    const onClose = vi.fn();
+    render(<LeaveRequestModal open rehearsal={rehearsal} onClose={onClose} onSaved={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "提交申请" })).toBeTruthy());
+    const cancelBtn = screen.getByRole("button", { name: "取消" });
+    const submitBtn = screen.getByRole("button", { name: "提交申请" });
+    // 同一行且右对齐（右下角，与提交同级；对齐 community 编辑弹窗样式）
+    expect(cancelBtn.parentElement!.className).toContain("justify-end");
+    // 取消无底色、提交有底色
+    expect(cancelBtn.className).not.toContain("bg-primary");
+    expect(cancelBtn.className).not.toContain("bg-surface");
+    expect(submitBtn.className).toContain("bg-primary");
+    fireEvent.click(cancelBtn);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("编辑模式底部同样为「取消 + 保存修改」（取消无底色，原「返回」按钮移除）", async () => {
+    hookMock.fetchMine.mockResolvedValue([makeRequest()]);
+    renderModal();
+    await waitFor(() => expect(screen.getByText("待审批")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "编辑申请" }));
+    const cancelBtn = screen.getByRole("button", { name: "取消" });
+    expect(cancelBtn.className).not.toContain("bg-primary");
+    expect(screen.getByRole("button", { name: "保存修改" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "返回" })).toBeNull();
   });
 });

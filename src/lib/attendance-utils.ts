@@ -1,10 +1,14 @@
 import type { AttendanceStatus } from "@/types/database";
+import { parseLocalISO } from "@/lib/date-utils";
 
 /** 签到宽限期：开始时间后多少分钟内签到记为出席 */
 export const SIGN_IN_GRACE_MINUTES = 15;
 
 /** 签到窗口：开始时间前多少分钟内允许签到 */
 export const SIGN_IN_WINDOW_BEFORE_MINUTES = 30;
+
+/** 排练默认时长（end_time 缺失时按开始时间 + 3 小时计，与卡片/签到流程一致） */
+const DEFAULT_DURATION_MS = 3 * 60 * 60 * 1000;
 
 /**
  * 判断当前时间是否处于签到窗口内：
@@ -30,6 +34,32 @@ export function judgeAttendanceStatus(signInAt: Date, start: Date, end: Date): A
   if (signInAt.getTime() <= graceEnd) return "present";
   if (signInAt.getTime() <= end.getTime()) return "late";
   return "absent";
+}
+
+/**
+ * 签到窗口判定（供卡片/详情弹窗复用，Issue #173）：
+ * - 已过结束时间（now > end）→ "ended"（排练已结束）
+ * - 提前超过 30 分钟（now < start - 30min）→ "not-started"（排练尚未开始）
+ * - 其余（含 start_time 缺失或无法解析）→ null（签到窗口内，或无法判定）
+ *
+ * 原为卡片私有逻辑，详情弹窗（出勤状态判定）复用后上提至此（Issue #173 重构）。
+ */
+export function getSignBlockReason(
+  startTime: string | null,
+  endTime: string | null,
+  now: Date,
+): "not-started" | "ended" | null {
+  if (!startTime) return null;
+  const start = parseLocalISO(startTime);
+  // parseLocalISO 对无法解析的字符串会退化为 1900 年附近（非 NaN），
+  // 需年份守卫拦截，与 parseRehearsalTimes / isRehearsalTodayOrFuture 保持一致
+  if (Number.isNaN(start.getTime()) || start.getFullYear() < 2000) return null;
+  const end = endTime ? parseLocalISO(endTime) : new Date(start.getTime() + DEFAULT_DURATION_MS);
+  // end_time 无法解析时同样退化为 1900 年附近，视为无法判定，不得误判为已结束
+  if (Number.isNaN(end.getTime()) || end.getFullYear() < 2000) return null;
+  if (now.getTime() > end.getTime()) return "ended";
+  if (!canSignIn(now, start, end)) return "not-started";
+  return null;
 }
 
 /**

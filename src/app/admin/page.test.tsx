@@ -456,5 +456,19 @@ describe("AdminPage", () => {
       "textarea.max-h-\\[400px\\]",
     ) as HTMLElement;
     expect(announcementTextarea).not.toBeNull();
+    // 审计清理：无 resize-none（可拖拽拉长，max-h 内部滚动可共存）
+    expect(announcementTextarea.className).not.toContain("resize-none");
+  });
+
+  it("根容器 flex 化（矮屏布局）：头部固定、tab 栏 + 面板整体独立滚动（审计批次 3）", () => {
+    const { container } = render(<AdminPage />);
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("h-full");
+    expect(root.className).toContain("flex-col");
+    // tab 栏 + 三个面板所在的滚动容器
+    const scrollArea = container.querySelector(
+      "div.flex-1.min-h-0.overflow-y-auto",
+    ) as HTMLElement | null;
+    expect(scrollArea).not.toBeNull();
   });
 });

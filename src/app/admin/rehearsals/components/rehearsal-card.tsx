@@ -42,19 +42,17 @@ export function AdminRehearsalCard({ item, onEdit, onDelete, onViewAttendance }:
           ) : null}
           <div className="flex items-center gap-2">
             {onEdit && (
-              <button
-                type="button"
-                onClick={onEdit}
-                className="text-text-muted hover:text-blue-500"
-              >
+              /* hover 语义色（与社区页编辑按钮一致，替代硬编码 blue，审计清理） */
+              <button type="button" onClick={onEdit} className="text-text-muted hover:text-text">
                 编辑
               </button>
             )}
             {onDelete && (
+              /* hover 危险语义色（替代硬编码 red，审计清理） */
               <button
                 type="button"
                 onClick={onDelete}
-                className="text-text-subtle hover:text-red-500"
+                className="text-text-subtle hover:text-danger"
               >
                 删除
               </button>

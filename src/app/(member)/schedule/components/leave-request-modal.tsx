@@ -555,6 +555,7 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
             <label className="mb-1 block text-label text-text-muted" htmlFor="leave-reason">
               请假原因<span className="text-danger">*</span>
             </label>
+            {/* 弃用 .input（固定高度覆盖 rows）+ 去掉 resize-none，恢复可拖拽拉长（审计清理） */}
             <textarea
               id="leave-reason"
               value={reason}
@@ -563,7 +564,7 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
                 setError(null);
               }}
               rows={8}
-              className="input w-full resize-none p-3 leading-[1.5]"
+              className="w-full rounded-xl border border-border bg-muted px-3 py-3 text-xs text-text outline-none focus:border-text-muted leading-[1.5]"
               placeholder="请说明请假/补请假原因…"
               maxLength={500}
             />

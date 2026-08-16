@@ -259,7 +259,7 @@ export default function CommunityPage() {
             <button
               type="button"
               onClick={() => openPublish()}
-              className="rounded-full bg-primary px-3 py-1 text-label font-medium text-white shadow-sm hover:opacity-90"
+              className="rounded-full bg-primary px-3 py-1 text-label font-medium text-primary-foreground shadow-sm hover:opacity-90"
             >
               发布公告
             </button>
@@ -296,7 +296,8 @@ export default function CommunityPage() {
                     </p>
                     {post.type === "ensemble" && hasSectionText(post.missing_sections) && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
-                        <span className="inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-caption font-bold text-blue-700">
+                        {/* 缺声部徽章：语义强调色替代硬编码 blue（审计清理）；与详情弹窗「已有/缺」徽章配色一致 */}
+                        <span className="inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-caption font-bold text-primary">
                           缺：{post.missing_sections!.trim()}
                         </span>
                       </div>
@@ -455,6 +456,7 @@ function DetailModal({
         {TYPE_LABEL[post.type as PostType]} · {author}
       </p>
       {(showCurrent || showMissing) && (
+        /* 声部徽章统一语义色：已有=中性（bg-muted），缺=强调（bg-primary/10），替代硬编码 blue（审计清理） */
         <div className="mt-2 flex flex-wrap gap-1.5 flex-shrink-0">
           {showCurrent && (
             <span className="inline-flex rounded-full bg-muted px-2 py-0.5 text-caption font-medium text-text-muted">
@@ -462,7 +464,7 @@ function DetailModal({
             </span>
           )}
           {showMissing && (
-            <span className="inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-caption font-bold text-blue-700">
+            <span className="inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-caption font-bold text-primary">
               缺：{post.missing_sections!.trim()}
             </span>
           )}
@@ -502,7 +504,7 @@ function DetailModal({
             <button
               type="button"
               onClick={copyContact}
-              className="relative z-10 cursor-pointer rounded-full bg-primary px-3 py-1.5 text-label font-medium text-white shrink-0"
+              className="relative z-10 cursor-pointer rounded-full bg-primary px-3 py-1.5 text-label font-medium text-primary-foreground shrink-0"
             >
               一键复制
             </button>
@@ -552,7 +554,7 @@ function PublishModal({
           </div>
           <div className="space-y-1">
             <label className="block text-label font-medium text-text-muted">
-              联系方式 <span className="text-red-500">*</span>
+              联系方式 <span className="text-danger">*</span>
             </label>
             <input
               type="text"
@@ -639,7 +641,7 @@ function PublishModal({
           <button
             type="submit"
             disabled={submitting}
-            className="rounded-full bg-primary px-4 py-1.5 text-label font-medium text-white disabled:opacity-60"
+            className="rounded-full bg-primary px-4 py-1.5 text-label font-medium text-primary-foreground disabled:opacity-60"
           >
             {submitting ? "提交中…" : editId ? "保存" : "发布"}
           </button>

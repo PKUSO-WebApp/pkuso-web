@@ -235,6 +235,29 @@ describe("AnnouncementListModal", () => {
     expect(screen.getByText("暂无公告")).toBeInTheDocument();
   });
 
+  it("编辑模式下公告 textarea 无 resize-none（可拖拽拉长，审计清理）", async () => {
+    render(
+      <AnnouncementListModal
+        open={true}
+        onClose={() => {}}
+        announcements={sampleAnnouncements}
+        loading={false}
+        deletingId={null}
+        updatingId={null}
+        onDelete={vi.fn()}
+        onUpdate={vi.fn()}
+      />,
+    );
+
+    // 进入详情后点「修改公告」进入编辑模式
+    fireEvent.click(screen.getByText(/欢迎来到新学期/));
+    fireEvent.click(screen.getByRole("button", { name: /修改公告/ }));
+
+    const ta = (await screen.findByPlaceholderText(/输入公告内容/)) as HTMLTextAreaElement;
+    expect(ta).toBeTruthy();
+    expect(ta.className).not.toContain("resize-none");
+  });
+
   it("加载中显示'加载中…'", () => {
     render(
       <AnnouncementListModal

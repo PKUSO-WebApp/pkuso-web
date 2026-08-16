@@ -389,6 +389,7 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
         <p className="mt-2 text-sm text-text-muted">
           驳回原因将应用到选中的 {selectedIds.length} 条申请。
         </p>
+        {/* 弃用 .input（固定高度覆盖 rows）+ 去掉 resize-none，恢复可拖拽拉长（审计清理） */}
         <textarea
           value={rejectReason}
           onChange={(e) => {
@@ -396,7 +397,7 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
             setRejectError(null);
           }}
           rows={3}
-          className="input mt-3 w-full resize-none p-3 text-sm leading-[1.5]"
+          className="mt-3 w-full rounded-xl border border-border bg-muted px-3 py-3 text-sm text-text outline-none focus:border-text-muted leading-[1.5]"
           placeholder="请输入驳回原因（必填）…"
           maxLength={200}
         />

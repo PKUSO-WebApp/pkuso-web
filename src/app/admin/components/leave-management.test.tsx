@@ -191,6 +191,9 @@ describe("LeaveManagement 请假审批区块（管理端）", () => {
     fireEvent.click(screen.getByRole("button", { name: "批量驳回" }));
 
     const ta = await screen.findByPlaceholderText(/驳回原因/);
+    // 审计清理：无 resize-none（可拖拽拉长），且未使用 .input 固定高度（否则 rows 失效）
+    expect(ta.className).not.toContain("resize-none");
+    expect(ta.className).not.toContain("input");
     // 空原因时确认按钮禁用
     expect(screen.getByRole("button", { name: "确认驳回" })).toBeDisabled();
 

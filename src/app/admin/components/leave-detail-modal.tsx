@@ -231,6 +231,7 @@ export function LeaveDetailModal({
               <label className="mb-1 block text-label text-danger" htmlFor="admin-reject-reason">
                 驳回原因<span className="text-danger">*</span>
               </label>
+              {/* 弃用 .input（固定高度覆盖 rows）+ 去掉 resize-none，恢复可拖拽拉长（审计清理） */}
               <textarea
                 id="admin-reject-reason"
                 value={rejectReason}
@@ -239,7 +240,7 @@ export function LeaveDetailModal({
                   setRejectError(null);
                 }}
                 rows={3}
-                className="input w-full resize-none p-2 text-sm leading-[1.5]"
+                className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-sm text-text outline-none focus:border-text-muted leading-[1.5]"
                 placeholder="请填写驳回原因…"
                 maxLength={200}
               />

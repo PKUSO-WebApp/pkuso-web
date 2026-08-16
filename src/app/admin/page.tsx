@@ -145,179 +145,183 @@ export default function AdminPage() {
     pendingLoading || pendingSaving || anySinglePending || pendingRows.length === 0;
 
   return (
-    <div className="space-y-4">
+    /* 根容器 flex 化（矮屏布局，审计批次 3）：头部固定，下方内容区整体独立滚动 */
+    <div className="flex h-full min-h-0 flex-col space-y-4">
       <h1 className="text-lg font-semibold text-text">管理员控制台</h1>
 
-      {/* 功能 tab 栏（视觉与 Toggle 一致；自绘以便嵌入右上角红点徽章） */}
-      <div
-        className="flex rounded-full bg-muted p-1 text-xs"
-        role="tablist"
-        aria-label="控制台功能切换"
-      >
-        {tabs.map((t) => {
-          const active = activeTab === t.key;
-          // 待处理数红点：>0 才显示；超过 99 截断为 "99+"，避免徽章过宽
-          const badge =
-            t.badgeCount > 0 ? (t.badgeCount > 99 ? "99+" : String(t.badgeCount)) : null;
-          return (
-            <button
-              key={t.key}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setActiveTab(t.key)}
-              className={`relative flex-1 rounded-full px-3 py-1 text-center transition-colors ${
-                active
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-text-muted hover:text-text"
-              }`}
-            >
-              {t.label}
-              {badge && (
-                <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-caption font-medium text-danger-foreground">
-                  {badge}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* 入团审批 */}
-      <section
-        className={`rounded-2xl border border-border bg-card p-4 ${
-          activeTab === "approval" ? "" : "hidden"
-        }`}
-      >
-        {pendingError && (
-          <div className="mb-3 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
-            {pendingError}
-          </div>
-        )}
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-text">
-            入团审批 · 待处理（{pendingRows.length}）
-          </h2>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={handleBatchApprove}
-              disabled={batchDisabled || isBatchSubmitting}
-              className="rounded-full bg-success-bg px-2 py-1 text-label font-medium text-success hover:opacity-90 disabled:opacity-60"
-            >
-              全部批准
-            </button>
-            <button
-              type="button"
-              onClick={handleBatchReject}
-              disabled={batchDisabled || isBatchSubmitting}
-              className="rounded-full bg-danger-bg px-2 py-1 text-label font-medium text-danger hover:opacity-90 disabled:opacity-60"
-            >
-              全部拒绝
-            </button>
-            <button
-              type="button"
-              onClick={() => refetchPending()}
-              disabled={pendingLoading}
-              className="rounded-full px-2 py-1 text-label text-text-muted hover:bg-border disabled:opacity-60"
-            >
-              刷新
-            </button>
-          </div>
-        </div>
-
-        {pendingLoading ? (
-          <p className="py-4 text-center text-xs text-text-subtle">加载中…</p>
-        ) : pendingRows.length === 0 ? (
-          <p className="py-4 text-center text-xs text-text-muted">暂无待审批用户</p>
-        ) : (
-          <div className="max-h-[400px] space-y-2 overflow-y-auto">
-            {pendingRows.map((r) => (
-              <div
-                key={r.id}
-                className="flex items-start justify-between gap-3 rounded-xl border border-border bg-surface px-3 py-2"
+      {/* 内容区（tab 栏 + 三个面板）：flex-1 占满剩余高度，矮屏下整体滚动 */}
+      <div className="flex-1 min-h-0 space-y-4 overflow-y-auto">
+        {/* 功能 tab 栏（视觉与 Toggle 一致；自绘以便嵌入右上角红点徽章） */}
+        <div
+          className="flex rounded-full bg-muted p-1 text-xs"
+          role="tablist"
+          aria-label="控制台功能切换"
+        >
+          {tabs.map((t) => {
+            const active = activeTab === t.key;
+            // 待处理数红点：>0 才显示；超过 99 截断为 "99+"，避免徽章过宽
+            const badge =
+              t.badgeCount > 0 ? (t.badgeCount > 99 ? "99+" : String(t.badgeCount)) : null;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setActiveTab(t.key)}
+                className={`relative flex-1 rounded-full px-3 py-1 text-center transition-colors ${
+                  active
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-text-muted hover:text-text"
+                }`}
               >
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-text">{r.full_name || "未填写"}</p>
-                  <p className="mt-0.5 text-xs text-text-muted">{r.instrument || "未选声部"}</p>
-                  <p className="mt-0.5 text-xs text-text-muted">{r.email || "—"}</p>
-                  <p className="mt-0.5 text-caption text-text-subtle">
-                    注册：{formatDateTimeInChina(r.created_at)}
-                  </p>
-                </div>
-                <div className="flex gap-1">
-                  <button
-                    type="button"
-                    onClick={() => handleApprove(r.id)}
-                    disabled={
-                      approvingId === r.id ||
-                      rejectingId === r.id ||
-                      isBatchSubmitting ||
-                      batchAction !== null
-                    }
-                    className="shrink-0 rounded-full bg-success px-3 py-1.5 text-label font-medium text-success-foreground hover:opacity-90 disabled:opacity-60"
-                  >
-                    {approvingId === r.id ? "处理中…" : "✅ 批准"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleReject(r.id)}
-                    disabled={
-                      rejectingId === r.id ||
-                      approvingId === r.id ||
-                      isBatchSubmitting ||
-                      batchAction !== null
-                    }
-                    className="shrink-0 rounded-full bg-danger px-3 py-1.5 text-label font-medium text-danger-foreground hover:opacity-90 disabled:opacity-60"
-                  >
-                    {rejectingId === r.id ? "处理中…" : "❌ 拒绝"}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* 请假审批（Issue #142）；全部渲染 + hidden 切换以保留内部状态（hook 数据不随卸载重取） */}
-      <div className={activeTab === "leave" ? "" : "hidden"}>
-        <LeaveManagement onPendingCountChange={setPendingLeaveCount} />
-      </div>
-
-      {/* 发布公告 */}
-      <section
-        className={`rounded-2xl border border-border bg-card p-4 ${
-          activeTab === "announcement" ? "" : "hidden"
-        }`}
-      >
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-text">发布全团公告</h2>
-          <button
-            type="button"
-            onClick={handleOpenAnnouncementModal}
-            className="rounded-full px-3 py-1 text-label text-text-muted hover:bg-border"
-          >
-            管理公告
-          </button>
+                {t.label}
+                {badge && (
+                  <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-caption font-medium text-danger-foreground">
+                    {badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
-        <form onSubmit={handlePublish} className="space-y-3">
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            rows={6}
-            className="input resize-none max-h-[400px] overflow-y-auto leading-[1.5] p-3"
-            placeholder="输入公告内容…"
-            style={{ minHeight: "120px" }}
-          />
-          <button
-            type="submit"
-            disabled={publishing}
-            className="w-full rounded-xl bg-primary py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
-          >
-            {publishing ? "发布中…" : "发布"}
-          </button>
-        </form>
-      </section>
+
+        {/* 入团审批 */}
+        <section
+          className={`rounded-2xl border border-border bg-card p-4 ${
+            activeTab === "approval" ? "" : "hidden"
+          }`}
+        >
+          {pendingError && (
+            <div className="mb-3 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
+              {pendingError}
+            </div>
+          )}
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-text">
+              入团审批 · 待处理（{pendingRows.length}）
+            </h2>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={handleBatchApprove}
+                disabled={batchDisabled || isBatchSubmitting}
+                className="rounded-full bg-success-bg px-2 py-1 text-label font-medium text-success hover:opacity-90 disabled:opacity-60"
+              >
+                全部批准
+              </button>
+              <button
+                type="button"
+                onClick={handleBatchReject}
+                disabled={batchDisabled || isBatchSubmitting}
+                className="rounded-full bg-danger-bg px-2 py-1 text-label font-medium text-danger hover:opacity-90 disabled:opacity-60"
+              >
+                全部拒绝
+              </button>
+              <button
+                type="button"
+                onClick={() => refetchPending()}
+                disabled={pendingLoading}
+                className="rounded-full px-2 py-1 text-label text-text-muted hover:bg-border disabled:opacity-60"
+              >
+                刷新
+              </button>
+            </div>
+          </div>
+
+          {pendingLoading ? (
+            <p className="py-4 text-center text-xs text-text-subtle">加载中…</p>
+          ) : pendingRows.length === 0 ? (
+            <p className="py-4 text-center text-xs text-text-muted">暂无待审批用户</p>
+          ) : (
+            <div className="max-h-[400px] space-y-2 overflow-y-auto">
+              {pendingRows.map((r) => (
+                <div
+                  key={r.id}
+                  className="flex items-start justify-between gap-3 rounded-xl border border-border bg-surface px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-text">{r.full_name || "未填写"}</p>
+                    <p className="mt-0.5 text-xs text-text-muted">{r.instrument || "未选声部"}</p>
+                    <p className="mt-0.5 text-xs text-text-muted">{r.email || "—"}</p>
+                    <p className="mt-0.5 text-caption text-text-subtle">
+                      注册：{formatDateTimeInChina(r.created_at)}
+                    </p>
+                  </div>
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleApprove(r.id)}
+                      disabled={
+                        approvingId === r.id ||
+                        rejectingId === r.id ||
+                        isBatchSubmitting ||
+                        batchAction !== null
+                      }
+                      className="shrink-0 rounded-full bg-success px-3 py-1.5 text-label font-medium text-success-foreground hover:opacity-90 disabled:opacity-60"
+                    >
+                      {approvingId === r.id ? "处理中…" : "✅ 批准"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleReject(r.id)}
+                      disabled={
+                        rejectingId === r.id ||
+                        approvingId === r.id ||
+                        isBatchSubmitting ||
+                        batchAction !== null
+                      }
+                      className="shrink-0 rounded-full bg-danger px-3 py-1.5 text-label font-medium text-danger-foreground hover:opacity-90 disabled:opacity-60"
+                    >
+                      {rejectingId === r.id ? "处理中…" : "❌ 拒绝"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* 请假审批（Issue #142）；全部渲染 + hidden 切换以保留内部状态（hook 数据不随卸载重取） */}
+        <div className={activeTab === "leave" ? "" : "hidden"}>
+          <LeaveManagement onPendingCountChange={setPendingLeaveCount} />
+        </div>
+
+        {/* 发布公告 */}
+        <section
+          className={`rounded-2xl border border-border bg-card p-4 ${
+            activeTab === "announcement" ? "" : "hidden"
+          }`}
+        >
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-text">发布全团公告</h2>
+            <button
+              type="button"
+              onClick={handleOpenAnnouncementModal}
+              className="rounded-full px-3 py-1 text-label text-text-muted hover:bg-border"
+            >
+              管理公告
+            </button>
+          </div>
+          <form onSubmit={handlePublish} className="space-y-3">
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={6}
+              className="input max-h-[400px] overflow-y-auto leading-[1.5] p-3"
+              placeholder="输入公告内容…"
+              style={{ minHeight: "120px" }}
+            />
+            <button
+              type="submit"
+              disabled={publishing}
+              className="w-full rounded-xl bg-primary py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+            >
+              {publishing ? "发布中…" : "发布"}
+            </button>
+          </form>
+        </section>
+      </div>
 
       {/* 公告管理 Modal */}
       <AnnouncementListModal

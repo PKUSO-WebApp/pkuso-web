@@ -152,6 +152,18 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
     expect(screen.getByText("📥 导出区间全部考勤（2 场排练）")).toBeInTheDocument();
   });
 
+  it("根容器 flex 化（矮屏布局）：头部固定、筛选控件 + 列表整体独立滚动（审计批次 3）", () => {
+    const { container } = render(<MembersPage />);
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("h-full");
+    expect(root.className).toContain("flex-col");
+    // Toggle + 考勤/花名册区块所在的滚动容器
+    const scrollArea = root.querySelector(
+      "div.flex-1.min-h-0.overflow-y-auto",
+    ) as HTMLElement | null;
+    expect(scrollArea).not.toBeNull();
+  });
+
   // ==========================================
   // 验收标准 2: 点击排练行打开考勤弹窗
   // ==========================================

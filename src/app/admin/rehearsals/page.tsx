@@ -240,7 +240,8 @@ export default function AdminRehearsalsPage() {
   };
 
   return (
-    <div className="space-y-4">
+    /* 根容器 flex 化（矮屏布局，审计批次 3）：头部固定，筛选控件 + 列表整体独立滚动 */
+    <div className="flex h-full min-h-0 flex-col space-y-4">
       <header className="mb-2 flex items-center justify-between gap-2">
         <div>
           <h1 className="text-lg font-semibold text-text">排练管理</h1>
@@ -255,47 +256,49 @@ export default function AdminRehearsalsPage() {
         </button>
       </header>
 
-      <Toggle options={["合排", "分排"] as const} value={currentType} onChange={setCurrentType} />
+      <div className="flex-1 min-h-0 space-y-4 overflow-y-auto">
+        <Toggle options={["合排", "分排"] as const} value={currentType} onChange={setCurrentType} />
 
-      <div className="flex items-center gap-2">
-        <div className="flex-1">
-          <label className="mb-1 block text-xs font-medium text-text-muted">开始时间</label>
-          <DatePicker
-            selected={startDateFilter}
-            onChange={(date: Date | null) => setStartDateFilter(date)}
-            dateFormat="yyyy-MM-dd"
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/20"
-            placeholderText="选择日期"
-          />
-        </div>
-        <div className="flex-1">
-          <label className="mb-1 block text-xs font-medium text-text-muted">结束时间</label>
-          <DatePicker
-            selected={endDateFilter}
-            onChange={(date: Date | null) => setEndDateFilter(date)}
-            dateFormat="yyyy-MM-dd"
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/20"
-            placeholderText="选择日期"
-          />
-        </div>
-      </div>
-
-      <section className="max-h-[400px] space-y-3 overflow-y-auto">
-        {loading && <p className="py-6 text-center text-xs text-text-subtle">加载中…</p>}
-        {!loading &&
-          list.map((item) => (
-            <AdminRehearsalCard
-              key={item.id}
-              item={item}
-              onEdit={() => openEdit(item)}
-              onDelete={() => handleDelete(item.id)}
-              onViewAttendance={() => openAttendance(item)}
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <label className="mb-1 block text-xs font-medium text-text-muted">开始时间</label>
+            <DatePicker
+              selected={startDateFilter}
+              onChange={(date: Date | null) => setStartDateFilter(date)}
+              dateFormat="yyyy-MM-dd"
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/20"
+              placeholderText="选择日期"
             />
-          ))}
-        {!loading && list.length === 0 && (
-          <p className="py-8 text-center text-xs text-text-muted">暂无安排</p>
-        )}
-      </section>
+          </div>
+          <div className="flex-1">
+            <label className="mb-1 block text-xs font-medium text-text-muted">结束时间</label>
+            <DatePicker
+              selected={endDateFilter}
+              onChange={(date: Date | null) => setEndDateFilter(date)}
+              dateFormat="yyyy-MM-dd"
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/20"
+              placeholderText="选择日期"
+            />
+          </div>
+        </div>
+
+        <section className="max-h-[400px] space-y-3 overflow-y-auto">
+          {loading && <p className="py-6 text-center text-xs text-text-subtle">加载中…</p>}
+          {!loading &&
+            list.map((item) => (
+              <AdminRehearsalCard
+                key={item.id}
+                item={item}
+                onEdit={() => openEdit(item)}
+                onDelete={() => handleDelete(item.id)}
+                onViewAttendance={() => openAttendance(item)}
+              />
+            ))}
+          {!loading && list.length === 0 && (
+            <p className="py-8 text-center text-xs text-text-muted">暂无安排</p>
+          )}
+        </section>
+      </div>
 
       <CreateRehearsalModal
         open={createOpen}

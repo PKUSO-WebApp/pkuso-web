@@ -64,6 +64,18 @@ describe("MembersPage 成员花名册页", () => {
     expect(screen.queryByText(/管理员/)).toBeNull();
   });
 
+  it("根容器 flex 化（矮屏布局）：头部固定、搜索框 + 列表整体独立滚动（审计批次 3）", () => {
+    const { container } = render(<MembersPage />);
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("h-full");
+    expect(root.className).toContain("flex-col");
+    // 搜索框 + 列表所在的滚动容器
+    const scrollArea = root.querySelector(
+      "div.flex-1.min-h-0.overflow-y-auto",
+    ) as HTMLElement | null;
+    expect(scrollArea).not.toBeNull();
+  });
+
   it("声部长成员显示 🏅 徽章", () => {
     mockUseProfiles.mockReturnValue({
       data: [

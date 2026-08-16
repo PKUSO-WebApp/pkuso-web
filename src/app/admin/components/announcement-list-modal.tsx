@@ -125,11 +125,12 @@ export function AnnouncementListModal({
                 </button>
               </div>
               <div className="rounded-xl border border-border bg-surface p-4">
+                {/* 去掉 resize-none，恢复可拖拽拉长（审计清理） */}
                 <textarea
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
                   rows={8}
-                  className="w-full resize-none rounded-lg bg-transparent text-sm text-text leading-relaxed outline-none"
+                  className="w-full rounded-lg bg-transparent text-sm text-text leading-relaxed outline-none"
                   placeholder="输入公告内容…"
                 />
               </div>

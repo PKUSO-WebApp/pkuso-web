@@ -97,6 +97,9 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "提交申请" })).toBeTruthy());
     const ta = screen.getByLabelText(/请假原因/) as HTMLTextAreaElement;
     expect(ta.rows).toBe(8);
+    // 审计清理：无 resize-none（可拖拽拉长），且未使用 .input 固定高度（否则 rows 失效）
+    expect(ta.className).not.toContain("resize-none");
+    expect(ta.className).not.toContain("input");
   });
 
   it("无申请：表单模式，空原因提交被拦截，create 不调用", async () => {

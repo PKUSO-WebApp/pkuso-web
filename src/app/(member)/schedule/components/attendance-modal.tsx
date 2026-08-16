@@ -121,7 +121,7 @@ export function AttendanceModal({
             type="button"
             onClick={onSave}
             disabled={loading || saving}
-            className="rounded-full bg-success px-4 py-1.5 text-label font-medium text-white shadow-sm hover:opacity-90 disabled:opacity-60"
+            className="rounded-full bg-success px-4 py-1.5 text-label font-medium text-success-foreground shadow-sm hover:opacity-90 disabled:opacity-60"
           >
             {saving ? "保存中…" : "保存修改"}
           </button>

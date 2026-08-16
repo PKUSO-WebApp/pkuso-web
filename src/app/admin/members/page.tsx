@@ -158,177 +158,184 @@ export default function MembersPage() {
   };
 
   return (
-    <div className="space-y-4 pb-2">
+    /* 根容器 flex 化（矮屏布局，审计批次 3）：头部固定，筛选控件 + 列表整体独立滚动 */
+    <div className="flex h-full min-h-0 flex-col space-y-4 pb-2">
       <header className="mt-1">
         <h1 className="text-lg font-semibold text-text">成员</h1>
         <p className="mt-1 text-xs text-text-muted">排练考勤与乐团花名册</p>
       </header>
 
-      <Toggle
-        options={["排练考勤", "全团成员"] as const}
-        value={currentView === "attendance" ? "排练考勤" : "全团成员"}
-        onChange={(v) => setCurrentView(v === "排练考勤" ? "attendance" : "roster")}
-      />
+      <div className="flex-1 min-h-0 space-y-4 overflow-y-auto">
+        <Toggle
+          options={["排练考勤", "全团成员"] as const}
+          value={currentView === "attendance" ? "排练考勤" : "全团成员"}
+          onChange={(v) => setCurrentView(v === "排练考勤" ? "attendance" : "roster")}
+        />
 
-      {currentView === "attendance" && (
-        <section>
-          <div className="mb-3 flex items-center gap-2">
-            <div className="flex-1">
-              <label className="mb-1 block text-xs font-medium text-text-muted">开始时间</label>
-              <DatePicker
-                selected={attendanceStartDate}
-                onChange={(date: Date | null) => setAttendanceStartDate(date)}
-                dateFormat="yyyy-MM-dd"
-                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/20"
-                placeholderText="选择日期"
-                isClearable
-              />
+        {currentView === "attendance" && (
+          <section>
+            <div className="mb-3 flex items-center gap-2">
+              <div className="flex-1">
+                <label className="mb-1 block text-xs font-medium text-text-muted">开始时间</label>
+                <DatePicker
+                  selected={attendanceStartDate}
+                  onChange={(date: Date | null) => setAttendanceStartDate(date)}
+                  dateFormat="yyyy-MM-dd"
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  placeholderText="选择日期"
+                  isClearable
+                />
+              </div>
+              <div className="flex-1">
+                <label className="mb-1 block text-xs font-medium text-text-muted">结束时间</label>
+                <DatePicker
+                  selected={attendanceEndDate}
+                  onChange={(date: Date | null) => setAttendanceEndDate(date)}
+                  dateFormat="yyyy-MM-dd"
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  placeholderText="选择日期"
+                  isClearable
+                />
+              </div>
             </div>
-            <div className="flex-1">
-              <label className="mb-1 block text-xs font-medium text-text-muted">结束时间</label>
-              <DatePicker
-                selected={attendanceEndDate}
-                onChange={(date: Date | null) => setAttendanceEndDate(date)}
-                dateFormat="yyyy-MM-dd"
-                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/20"
-                placeholderText="选择日期"
-                isClearable
-              />
-            </div>
-          </div>
 
-          {filteredRehearsals.length > 0 && (
-            <button
-              type="button"
-              onClick={exportAllRehearsals}
-              disabled={exportingAll}
-              className="mb-3 w-full rounded-2xl bg-primary px-4 py-3 text-sm font-medium text-primary-foreground shadow-md hover:opacity-90 disabled:opacity-50"
-            >
-              {exportingAll
-                ? "导出中…"
-                : `📥 导出区间全部考勤（${filteredRehearsals.length} 场排练）`}
-            </button>
-          )}
+            {filteredRehearsals.length > 0 && (
+              <button
+                type="button"
+                onClick={exportAllRehearsals}
+                disabled={exportingAll}
+                className="mb-3 w-full rounded-2xl bg-primary px-4 py-3 text-sm font-medium text-primary-foreground shadow-md hover:opacity-90 disabled:opacity-50"
+              >
+                {exportingAll
+                  ? "导出中…"
+                  : `📥 导出区间全部考勤（${filteredRehearsals.length} 场排练）`}
+              </button>
+            )}
 
-          <div className="max-h-[400px] space-y-2 overflow-y-auto">
-            {filteredRehearsals.length === 0 ? (
-              <p className="py-8 text-center text-xs text-text-muted">
-                {allRehearsals.length === 0 ? "暂无排练日程" : "该区间暂无排练"}
-              </p>
-            ) : (
-              filteredRehearsals.map((rehearsal) => {
-                const startDate = parseLocalISO(rehearsal.start_time!);
-                const endDate = rehearsal.end_time ? parseLocalISO(rehearsal.end_time) : null;
-                const dateStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, "0")}-${String(startDate.getDate()).padStart(2, "0")}`;
-                const timeStr = `${String(startDate.getHours()).padStart(2, "0")}:${String(startDate.getMinutes()).padStart(2, "0")} - ${endDate ? `${String(endDate.getHours()).padStart(2, "0")}:${String(endDate.getMinutes()).padStart(2, "0")}` : "—"}`;
+            <div className="max-h-[400px] space-y-2 overflow-y-auto">
+              {filteredRehearsals.length === 0 ? (
+                <p className="py-8 text-center text-xs text-text-muted">
+                  {allRehearsals.length === 0 ? "暂无排练日程" : "该区间暂无排练"}
+                </p>
+              ) : (
+                filteredRehearsals.map((rehearsal) => {
+                  const startDate = parseLocalISO(rehearsal.start_time!);
+                  const endDate = rehearsal.end_time ? parseLocalISO(rehearsal.end_time) : null;
+                  const dateStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, "0")}-${String(startDate.getDate()).padStart(2, "0")}`;
+                  const timeStr = `${String(startDate.getHours()).padStart(2, "0")}:${String(startDate.getMinutes()).padStart(2, "0")} - ${endDate ? `${String(endDate.getHours()).padStart(2, "0")}:${String(endDate.getMinutes()).padStart(2, "0")}` : "—"}`;
 
-                return (
-                  // 方案 A：可点击区（role="button"）只含文本信息，导出按钮为行外兄弟节点。
-                  // 嵌套交互元素（button 嵌在 role="button" 内）违反 ARIA 规则、读屏混乱，
-                  // 事件也无法靠 stopPropagation 拦截键盘冒泡，故改为兄弟结构。
-                  <div key={rehearsal.id} className="flex items-center gap-2">
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={(e) => {
-                        // 双保险：若未来在行内嵌入真实按钮，不拦截其点击。
-                        // 注意不能用 e.target !== e.currentTarget —— 点击文本时 target 是
-                        // 文本元素而非容器自身，会拦截核心交互（点击文本打开弹窗）。
-                        if ((e.target as HTMLElement).closest("button")) return;
-                        openAttendance(rehearsal);
-                      }}
-                      onKeyDown={(e) => {
-                        // 目标守卫：只响应行容器自身的键盘事件，
-                        // 子元素的键盘事件（如未来行内新增的可聚焦元素）不被行处理器劫持
-                        if (e.target !== e.currentTarget) return;
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
+                  return (
+                    // 方案 A：可点击区（role="button"）只含文本信息，导出按钮为行外兄弟节点。
+                    // 嵌套交互元素（button 嵌在 role="button" 内）违反 ARIA 规则、读屏混乱，
+                    // 事件也无法靠 stopPropagation 拦截键盘冒泡，故改为兄弟结构。
+                    <div key={rehearsal.id} className="flex items-center gap-2">
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          // 双保险：若未来在行内嵌入真实按钮，不拦截其点击。
+                          // 注意不能用 e.target !== e.currentTarget —— 点击文本时 target 是
+                          // 文本元素而非容器自身，会拦截核心交互（点击文本打开弹窗）。
+                          if ((e.target as HTMLElement).closest("button")) return;
                           openAttendance(rehearsal);
-                        }
-                      }}
-                      className="min-w-0 flex-1 cursor-pointer rounded-2xl border border-border bg-card px-3 py-2.5 text-xs transition-colors hover:bg-muted"
-                    >
-                      <div className="min-w-0 space-y-0.5">
-                        <p className="truncate font-medium text-text">
-                          {rehearsal.repertoire ?? "未命名排练"}
-                        </p>
-                        <p className="text-text-muted">
-                          {dateStr} · {timeStr}
-                        </p>
-                        <p className="text-text-muted">📍 {rehearsal.location ?? "—"}</p>
+                        }}
+                        onKeyDown={(e) => {
+                          // 目标守卫：只响应行容器自身的键盘事件，
+                          // 子元素的键盘事件（如未来行内新增的可聚焦元素）不被行处理器劫持
+                          if (e.target !== e.currentTarget) return;
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openAttendance(rehearsal);
+                          }
+                        }}
+                        className="min-w-0 flex-1 cursor-pointer rounded-2xl border border-border bg-card px-3 py-2.5 text-xs transition-colors hover:bg-muted"
+                      >
+                        <div className="min-w-0 space-y-0.5">
+                          <p className="truncate font-medium text-text">
+                            {rehearsal.repertoire ?? "未命名排练"}
+                          </p>
+                          <p className="text-text-muted">
+                            {dateStr} · {timeStr}
+                          </p>
+                          <p className="text-text-muted">📍 {rehearsal.location ?? "—"}</p>
+                        </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => exportSingleRehearsal(rehearsal)}
+                        disabled={exportingId === rehearsal.id}
+                        className="flex-shrink-0 cursor-pointer rounded-full bg-primary px-3 py-1.5 text-label font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                      >
+                        {exportingId === rehearsal.id ? "导出中…" : "📥 导出"}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => exportSingleRehearsal(rehearsal)}
-                      disabled={exportingId === rehearsal.id}
-                      className="flex-shrink-0 cursor-pointer rounded-full bg-primary px-3 py-1.5 text-label font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                    >
-                      {exportingId === rehearsal.id ? "导出中…" : "📥 导出"}
-                    </button>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </section>
-      )}
+                  );
+                })
+              )}
+            </div>
+          </section>
+        )}
 
-      {currentView === "roster" && (
-        <div className="space-y-3">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索姓名（支持中文/拼音/首字母）"
-            className="input"
-          />
-          <div className="max-h-[440px] space-y-5 overflow-y-auto">
-            {rosterLoading ? (
-              <p className="py-8 text-center text-xs text-text-subtle">加载中…</p>
-            ) : rosterError ? (
-              <p className="rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">{rosterError}</p>
-            ) : rosterRows.length === 0 ? (
-              <p className="py-8 text-center text-xs text-text-muted">暂无已通过成员</p>
-            ) : grouped.length === 0 ? (
-              <p className="py-8 text-center text-xs text-text-muted">未找到匹配的成员</p>
-            ) : (
-              grouped.map(({ group, users }) => (
-                <div key={group}>
-                  <p className="mb-2 text-label font-medium uppercase tracking-wide text-text-muted">
-                    {group}
-                  </p>
-                  <ul className="space-y-2">
-                    {users.map((u) => (
-                      <li key={u.id}>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedUser(u)}
-                          className="w-full rounded-xl border border-border bg-card px-3 py-2 text-left text-xs hover:bg-muted"
-                        >
-                          <p className="flex flex-wrap items-center gap-1.5 font-medium text-text">
-                            <span>{(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}</span>
-                            {u.is_section_leader && (
-                              <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-caption text-warning">
-                                🏅 声部长
-                              </span>
-                            )}
-                          </p>
-                          <p className="mt-0.5 text-text-muted">学院：{u.college?.trim() || "—"}</p>
-                          <p className="mt-0.5 text-text-muted">邮箱：{u.email ?? "—"}</p>
-                          <p className="mt-0.5 text-text-subtle">
-                            入团时间：{u.join_date?.trim() || "—"}
-                          </p>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))
-            )}
+        {currentView === "roster" && (
+          <div className="space-y-3">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="搜索姓名（支持中文/拼音/首字母）"
+              className="input"
+            />
+            <div className="max-h-[440px] space-y-5 overflow-y-auto">
+              {rosterLoading ? (
+                <p className="py-8 text-center text-xs text-text-subtle">加载中…</p>
+              ) : rosterError ? (
+                <p className="rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
+                  {rosterError}
+                </p>
+              ) : rosterRows.length === 0 ? (
+                <p className="py-8 text-center text-xs text-text-muted">暂无已通过成员</p>
+              ) : grouped.length === 0 ? (
+                <p className="py-8 text-center text-xs text-text-muted">未找到匹配的成员</p>
+              ) : (
+                grouped.map(({ group, users }) => (
+                  <div key={group}>
+                    <p className="mb-2 text-label font-medium uppercase tracking-wide text-text-muted">
+                      {group}
+                    </p>
+                    <ul className="space-y-2">
+                      {users.map((u) => (
+                        <li key={u.id}>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedUser(u)}
+                            className="w-full rounded-xl border border-border bg-card px-3 py-2 text-left text-xs hover:bg-muted"
+                          >
+                            <p className="flex flex-wrap items-center gap-1.5 font-medium text-text">
+                              <span>{(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}</span>
+                              {u.is_section_leader && (
+                                <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-caption text-warning">
+                                  🏅 声部长
+                                </span>
+                              )}
+                            </p>
+                            <p className="mt-0.5 text-text-muted">
+                              学院：{u.college?.trim() || "—"}
+                            </p>
+                            <p className="mt-0.5 text-text-muted">邮箱：{u.email ?? "—"}</p>
+                            <p className="mt-0.5 text-text-subtle">
+                              入团时间：{u.join_date?.trim() || "—"}
+                            </p>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <AdminMemberDetailModal
         open={!!selectedUser}

@@ -121,6 +121,9 @@ describe("LeaveDetailModal 请假详情弹窗（管理端）", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "驳回" }));
     const ta = await screen.findByLabelText(/驳回原因/);
+    // 审计清理：无 resize-none（可拖拽拉长），且未使用 .input 固定高度（否则 rows 失效）
+    expect(ta.className).not.toContain("resize-none");
+    expect(ta.className).not.toContain("input");
     fireEvent.click(screen.getByRole("button", { name: "确认驳回" }));
     expect(await screen.findByText("请填写驳回原因")).toBeInTheDocument();
     expect(onReject).not.toHaveBeenCalled();

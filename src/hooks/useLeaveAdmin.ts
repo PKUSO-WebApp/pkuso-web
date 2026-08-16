@@ -60,10 +60,14 @@ export function useLeaveAdmin(client: typeof defaultClient = defaultClient) {
     void fetch();
   }, [fetch]);
 
-  /** 批量通过（逐条联动考勤，由服务端处理） */
+  /**
+   * 批量通过（逐条联动考勤，由服务端处理）。
+   * 返回 { ok, warnings }：warnings 透传 API 响应的提示消息数组
+   * （如成员已实际签到、考勤未联动），供管理端 UI 逐条展示（Issue #159 返工）。
+   */
   const approve = React.useCallback(
-    async (ids: string[]) => {
-      if (processingRef.current) return false;
+    async (ids: string[]): Promise<{ ok: boolean; warnings: string[] }> => {
+      if (processingRef.current) return { ok: false, warnings: [] };
       processingRef.current = true;
       setProcessing(true);
       try {
@@ -75,17 +79,21 @@ export function useLeaveAdmin(client: typeof defaultClient = defaultClient) {
         const result = await response.json();
         if (!response.ok || !result.success) {
           setError(result.error || "批量通过失败");
-          return false;
+          return { ok: false, warnings: [] };
         }
         // 本地移除已处理行（部分失败时只移除成功项）
         const processedIds = (result.processed as string[]) ?? [];
         setRequests((prev) => prev.filter((r) => !processedIds.includes(r.id)));
         setError(null);
-        return true;
+        // warnings 消息数组透传（未提供时为空数组）
+        const warnings: string[] = Array.isArray(result.warnings)
+          ? (result.warnings as { message: string }[]).map((w) => w.message)
+          : [];
+        return { ok: true, warnings };
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
       } catch (_err: unknown) {
         setError("网络错误");
-        return false;
+        return { ok: false, warnings: [] };
       } finally {
         processingRef.current = false;
         setProcessing(false);

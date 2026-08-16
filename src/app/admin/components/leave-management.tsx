@@ -92,8 +92,12 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
     batchBusyRef.current = true;
     setBatchBusy(true);
     try {
-      const ok = await approve(selectedIds);
-      if (ok) {
+      const result = await approve(selectedIds);
+      if (result.ok) {
+        // 有 warnings（如成员已实际签到、考勤未联动）时逐条提示管理员（Issue #159 返工）
+        if (result.warnings.length > 0) {
+          alert(result.warnings.join("\n"));
+        }
         setConfirmApproveOpen(false);
         setSelectedIds([]);
       } else {
@@ -359,9 +363,10 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
         request={detailRequest}
         onClose={() => setDetailId(null)}
         onApprove={async (id) => {
-          const ok = await approve([id]);
-          if (ok) setSelectedIds((prev) => prev.filter((x) => x !== id));
-          return ok;
+          // 单条通过透传 approve 结果（含 warnings），由详情弹窗展示提示（Issue #159 返工）
+          const result = await approve([id]);
+          if (result.ok) setSelectedIds((prev) => prev.filter((x) => x !== id));
+          return result;
         }}
         onReject={async (id, reason) => {
           const ok = await reject([id], reason);

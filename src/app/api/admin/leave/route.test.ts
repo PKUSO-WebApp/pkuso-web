@@ -281,9 +281,9 @@ describe("GET/POST /api/admin/leave", () => {
     }
   });
 
-  // ---- approve 联动考勤 ----
+  // ---- approve 联动考勤（返工：sign_in_time 守卫）----
   it(
-    "POST approve → 申请已通过 + 考勤状态改为 target_status + sign_in_time 不被覆盖",
+    "POST approve 成员已签到（sign_in_time 非空）：考勤不被覆盖、返回 warning（返工）",
     { timeout: 20000 },
     async () => {
       if (!ready) return;
@@ -305,15 +305,56 @@ describe("GET/POST /api/admin/leave", () => {
         expect(res.status).toBe(200);
         const body = await res.json();
         expect(body.success).toBe(true);
+        // 申请照常置 approved（进 processed 供管理端本地移除），并返回 warning 让管理员知晓
         expect(body.processed).toEqual([id]);
+        expect(body.warnings).toHaveLength(1);
+        expect(body.warnings[0].id).toBe(id);
+        expect(body.warnings[0].message).toContain("已签到");
 
         const req = await getRequest(id);
         expect(req?.status).toBe("approved");
 
-        // 考勤：status 变为 excused（target_status），sign_in_time 保持原值（PR2 锁定语义）
+        // 考勤不被覆盖：「已签到但请假」不可恢复矛盾（返工）——
+        // status 保持 absent（不改为 excused），sign_in_time 保持原值
+        const att = await getAttendance();
+        expect(att?.status).toBe("absent");
+        expect(att?.sign_in_time).toBe("2026-08-16T13:05:00");
+      } finally {
+        await dbSb.from("attendances").delete().eq("rehearsal_id", rehearsalId);
+        await dbSb.from("leave_requests").delete().eq("id", id);
+      }
+    },
+  );
+
+  it(
+    "POST approve 考勤行存在且未签到（sign_in_time 为空）：仅改 status、不返回 warning",
+    { timeout: 20000 },
+    async () => {
+      if (!ready) return;
+      const id = await createPendingRequest();
+      // 预置考勤行：未签到（sign_in_time 为空），状态缺勤
+      await dbSb.from("attendances").insert({
+        rehearsal_id: rehearsalId,
+        user_id: memberUserId,
+        status: "absent",
+        sign_in_time: null,
+      } as never);
+      try {
+        const res = await POST(
+          authRequest(adminToken, {
+            method: "POST",
+            body: JSON.stringify({ action: "approve", ids: [id] }),
+          }),
+        );
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body.processed).toEqual([id]);
+        expect(body.warnings).toEqual([]);
+
+        // 考勤：status 变为 excused（target_status），sign_in_time 保持空（签到锁定语义）
         const att = await getAttendance();
         expect(att?.status).toBe("excused");
-        expect(att?.sign_in_time).toBe("2026-08-16T13:05:00");
+        expect(att?.sign_in_time).toBeNull();
       } finally {
         await dbSb.from("attendances").delete().eq("rehearsal_id", rehearsalId);
         await dbSb.from("leave_requests").delete().eq("id", id);

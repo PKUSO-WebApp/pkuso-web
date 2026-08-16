@@ -158,18 +158,13 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
 
     await waitFor(() => expect(screen.getByText("已通过")).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "撤回申请" }));
-    // 撤回提示文案：考勤还原语义（未签到时恢复缺勤，已签到不受影响）
+    // 撤回提示文案：撤回不影响当前考勤状态（Issue #155 移除考勤还原）
     expect(
-      screen.getByText(/撤回后考勤恢复为缺勤（未签到时），已签到状态不受影响/),
+      screen.getByText(/确认撤回该请假申请？撤回不影响当前考勤状态，可重新提交申请。/),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认撤回" }));
-    // withdraw 携带被撤回的申请行（hook 据此联动还原考勤）
-    await waitFor(() =>
-      expect(hookMock.withdraw).toHaveBeenCalledWith(
-        "lr-1",
-        expect.objectContaining({ rehearsal_id: 1, user_id: "u1", target_status: "excused" }),
-      ),
-    );
+    // withdraw 仅携带申请 id（撤回只改申请状态，不动考勤）
+    await waitFor(() => expect(hookMock.withdraw).toHaveBeenCalledWith("lr-1"));
 
     // 撤回后进入新申请模式：目标状态单选出现
     expect(await screen.findByText(/目标出勤状态/)).toBeInTheDocument();

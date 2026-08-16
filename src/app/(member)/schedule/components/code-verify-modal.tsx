@@ -12,6 +12,8 @@ type Props = {
   onCodeChange: (v: string) => void;
   onConfirm: (e: React.FormEvent) => void;
   onClose: () => void;
+  /** 提醒文案（如请假后签到覆盖提醒，Issue #155），无则不渲染 */
+  hint?: string | null;
 };
 
 export function CodeVerifyModal({
@@ -23,10 +25,14 @@ export function CodeVerifyModal({
   onCodeChange,
   onConfirm,
   onClose,
+  hint,
 }: Props) {
   return (
     <Modal open={open} onClose={onClose} title="输入签到码" closeOnOverlay={!submitting}>
       <p className="mb-3 text-label text-text-muted">本次排练：{title}</p>
+      {hint && (
+        <p className="mb-3 rounded-lg bg-warning-bg/80 px-3 py-2 text-label text-warning">{hint}</p>
+      )}
       <form onSubmit={onConfirm}>
         <div className="space-y-1 text-xs">
           <label className="block text-label font-medium text-text-muted">四位数字签到码</label>

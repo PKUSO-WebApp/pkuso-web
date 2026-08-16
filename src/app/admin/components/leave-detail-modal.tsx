@@ -17,7 +17,8 @@ import type { LeaveRequestWithDetails } from "@/types/database";
 type Props = {
   request: LeaveRequestWithDetails | null;
   onClose: () => void;
-  onApprove: (id: string) => Promise<boolean>;
+  /** 通过回调返回 { ok, warnings }（warnings 如成员已实际签到、考勤未联动，Issue #159 返工） */
+  onApprove: (id: string) => Promise<{ ok: boolean; warnings: string[] }>;
   onReject: (id: string, reason: string) => Promise<boolean>;
   getSignedUrl: (path: string) => Promise<string | null>;
   /** 父级批量操作进行中：禁用本弹窗操作 */
@@ -96,8 +97,12 @@ export function LeaveDetailModal({
     setActing(true);
     setRejectError(null);
     try {
-      await onApprove(request.id);
+      const result = await onApprove(request.id);
+      // 有 warnings（如成员已实际签到、考勤未联动）时逐条提示管理员（Issue #159 返工）；
       // 成功时父级移除该行，request 变 null 自动关闭；失败由父级提示
+      if (result.ok && result.warnings.length > 0) {
+        alert(result.warnings.join("\n"));
+      }
     } finally {
       actingRef.current = false;
       setActing(false);

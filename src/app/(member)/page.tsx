@@ -36,7 +36,7 @@ export default function Home() {
   const [scheduleTab, setScheduleTab] = React.useState<"full" | "section" | "history">("full");
   const [showAnnouncementDetail, setShowAnnouncementDetail] = React.useState(false);
   // 请假/补请假（Issue #142）：打开面板的排练 + 我的申请列表
-  const { data: leaveRequests, fetchMine: fetchLeaveMine } = useLeaveRequests();
+  const { data: leaveRequests, fetchMine: fetchLeaveMine, cancelOnSignIn } = useLeaveRequests();
   const [leaveRehearsal, setLeaveRehearsal] = React.useState<RehearsalRow | null>(null);
   // 分钟级时钟 tick：跨天停留页面时，定时刷新"今天"边界，驱动列表过滤与签到按钮状态更新
   const [nowTick, setNowTick] = React.useState(() => Date.now());
@@ -94,6 +94,17 @@ export default function Home() {
     }
     return m;
   }, [leaveRequests]);
+
+  // 覆盖请假提醒（Issue #155）：该排练存在 pending/approved 申请时，
+  // 签到码弹窗提示「签到会覆盖请假状态」；已驳回维持不变（不提示）
+  const codeOverrideHint = React.useMemo(() => {
+    if (!codeRehearsal) return null;
+    const req = leaveRequestMap[codeRehearsal.id];
+    if (req && (req.status === "pending" || req.status === "approved")) {
+      return "请假后签到会覆盖请假状态，并记录实际出勤";
+    }
+    return null;
+  }, [codeRehearsal, leaveRequestMap]);
 
   const list = React.useMemo(() => {
     if (!rehearsals) return [];
@@ -164,6 +175,18 @@ export default function Home() {
                 ? "签到成功（排练已结束，记为缺勤）"
                 : "签到成功",
           );
+          // 覆盖请假（Issue #155）：签到成功后撤销该排练 pending/approved 申请
+          // （已驳回维持不变；hook 批量处理并刷新申请列表，best-effort 失败不阻断已成功的签到）
+          const cancelResult = await cancelOnSignIn(rehearsal.id);
+          // 撤销失败按原因区分提示（返工）：申请已被管理员并发处理（驳回/审批）时无需取消，
+          // 仅中性告知；网络/DB 失败时指引联系管理员（approved 申请成员端无手动处理入口）
+          if (!cancelResult.ok) {
+            alert(
+              cancelResult.reason === "already-processed"
+                ? "签到成功，请假申请已被管理员处理，无需取消"
+                : "签到成功，但请假申请取消失败，请联系管理员处理",
+            );
+          }
           // await 保持 ref 置位至考勤 map 刷新完成，避免刷新间隙的重复签到
           await fetchMyAttendances(
             user.id,
@@ -240,6 +263,18 @@ export default function Home() {
               : "签到成功",
         );
         setCodeRehearsal(null);
+        // 覆盖请假（Issue #155）：签到成功后撤销该排练 pending/approved 申请
+        // （已驳回维持不变；hook 批量处理并刷新申请列表，best-effort 失败不阻断已成功的签到）
+        const cancelResult = await cancelOnSignIn(codeRehearsal.id);
+        // 撤销失败按原因区分提示（返工）：申请已被管理员并发处理（驳回/审批）时无需取消，
+        // 仅中性告知；网络/DB 失败时指引联系管理员（approved 申请成员端无手动处理入口）
+        if (!cancelResult.ok) {
+          alert(
+            cancelResult.reason === "already-processed"
+              ? "签到成功，请假申请已被管理员处理，无需取消"
+              : "签到成功，但请假申请取消失败，请联系管理员处理",
+          );
+        }
         // await 保持 ref 置位至考勤 map 刷新完成，避免刷新间隙的重复提交
         await fetchMyAttendances(
           user.id,
@@ -367,6 +402,7 @@ export default function Home() {
         onClose={() => {
           if (!codeSubmitting) setCodeRehearsal(null);
         }}
+        hint={codeOverrideHint}
       />
 
       {/* 请假/补请假面板（Issue #142）：保存成功后刷新卡片状态 */}
@@ -376,7 +412,7 @@ export default function Home() {
         onClose={() => setLeaveRehearsal(null)}
         onSaved={() => {
           void fetchLeaveMine();
-          // 撤回已通过申请会联动还原考勤为缺勤（未签到时），同步刷新卡片状态 chip
+          // 保存/撤回/取消后同步刷新考勤（撤回不动考勤，刷新仅保证 chip 与数据库一致，Issue #155）
           if (user?.id && rehearsals) {
             void fetchMyAttendances(
               user.id,

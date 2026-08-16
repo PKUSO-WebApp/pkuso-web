@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import { hasSignedIn } from "@/lib/attendance-utils";
 import { supabase as defaultClient } from "@/lib/supabase";
 import type { AttendanceStatus, LeaveRequestRow, LeaveRequestWithDetails } from "@/types/database";
 
@@ -20,6 +19,15 @@ type EditLeaveRequestPayload = {
   attachment_url?: string | null;
   old_attachment_url?: string | null;
 };
+
+/**
+ * cancelOnSignIn 返回值（返工）：ok 为 false 时区分失败原因，供页面出不同提示文案——
+ * - "already-processed"：SELECT 与 UPDATE 间隙管理员并发处理了申请（驳回/审批），
+ *   申请已不归成员掌控，无需再取消；
+ * - "network"：查询/更新本身失败（网络或数据库错误），需联系管理员处理。
+ */
+export type CancelOnSignInResult =
+  { ok: true } | { ok: false; reason: "already-processed" | "network" };
 
 /**
  * 从 attachment_url 提取 storage 文件路径（参考 usePosts.remove 的提取方式）。
@@ -186,24 +194,13 @@ export function useLeaveRequests(client: typeof defaultClient = defaultClient) {
   );
 
   /**
-   * 撤回已通过的申请（状态 → withdrawn）。
-   * 撤回后联动还原考勤（与 #141 前端锁定语义一致）：若该排练的考勤行未签到
-   * （sign_in_time 为空）且当前状态与申请 target_status 一致（说明由审批改写），
-   * 还原为 absent——避免「撤回后不再重新提交 → 永久 excused 且无有效申请」；
-   * 已签到（sign_in_time 非空，锁定）则考勤不动。
-   *
-   * 选择「hook 内直连 supabase 改 attendance」而非回调注入：考勤联动是撤回操作
-   * 领域逻辑的一部分（与管理端审批联动考勤对应），集中在 hook 一处，调用方
-   * 无需（也不可能遗忘）自己补还原步骤——本次返工的漏洞正是调用方不负责联动所致。
-   * 成员端 RLS 允许本人更新自己的考勤行（签到 upsert 同款通路），无需走服务端 API。
-   * @param request - 被撤回的申请行（含 rehearsal_id/user_id/target_status），
-   * 由调用方传入当前展示的申请；缺省时仅撤回申请不动考勤。
+   * 撤回已通过的申请（状态 → withdrawn，Issue #155）。
+   * 撤回只改申请状态，考勤保持现状：审批时按 target_status 写入的考勤记录不再还原为缺勤
+   * （移除 #149 的考勤联动逻辑）。成员如需调整考勤，可在撤回后的新申请中选择目标状态
+   * 重新提交，待管理端审批通过后按新 target_status 记录。
    */
   const withdraw = React.useCallback(
-    async (
-      id: string,
-      request?: Pick<LeaveRequestRow, "rehearsal_id" | "user_id" | "target_status"> | null,
-    ) => {
+    async (id: string) => {
       setSaving(true);
       const { error: dbError } = await client
         .from("leave_requests")
@@ -214,33 +211,6 @@ export function useLeaveRequests(client: typeof defaultClient = defaultClient) {
       if (dbError) {
         setError(dbError.message);
         return false;
-      }
-      // 考勤联动：未签到（sign_in_time 空）且状态与 target_status 一致（审批改写）→
-      // 还原为 absent；已签到锁定 / 管理员另行改写（状态不一致）→ 不动。
-      if (request) {
-        const { data: att, error: attErr } = await client
-          .from("attendances")
-          .select("sign_in_time, status")
-          .eq("rehearsal_id", request.rehearsal_id)
-          .eq("user_id", request.user_id)
-          .maybeSingle();
-        if (
-          !attErr &&
-          att &&
-          !hasSignedIn(att.sign_in_time) &&
-          att.status === request.target_status
-        ) {
-          const { error: restoreErr } = await client
-            .from("attendances")
-            .update({ status: "absent" })
-            .eq("rehearsal_id", request.rehearsal_id)
-            .eq("user_id", request.user_id);
-          if (restoreErr) {
-            // 撤回本身已成功；还原失败按整体失败返回，调用方可留在原视图重试
-            setError(`撤回成功，但考勤还原失败：${restoreErr.message}`);
-            return false;
-          }
-        }
       }
       await fetchMine();
       setError(null);
@@ -293,6 +263,77 @@ export function useLeaveRequests(client: typeof defaultClient = defaultClient) {
     [client, fetchMine],
   );
 
+  /**
+   * 覆盖请假签到后撤销有效申请（Issue #155）：将本排练当前 pending/approved 的申请
+   * 记为 canceled，已驳回维持不变（驳回是管理端结论，签到不覆盖）。
+   * 与 cancelRequest 的区别：cancelRequest 仅限 pending 单行（成员主动取消），本方法
+   * 按排练批量处理两种状态——签到覆盖是签到的配套动作，approved 申请同样失效。
+   * 附件处理与 cancelRequest 同语义（best effort，失败仅遗留孤儿文件，不阻断撤销）。
+   * 并发安全（返工）：UPDATE 精确到 SELECT 快照返回的 id 集合（不再按 rehearsal_id +
+   * status 宽匹配），并以 UPDATE 返回的已更新 id 与快照取交集——间隙管理员并发驳回的
+   * 行不在交集内，其附件（属审批结果一部分）不会被误删；全部被并发处理后 0 行更新，
+   * 跳过附件清理并返回 { ok: false, reason: "already-processed" } 由页面提示无需取消。
+   * 签到已成功写入考勤，本方法为配套动作：失败返回 { ok: false } 不阻断签到流程。
+   */
+  const cancelOnSignIn = React.useCallback(
+    async (rehearsalId: number): Promise<CancelOnSignInResult> => {
+      setSaving(true);
+      try {
+        // 先查待撤销的申请（含附件路径，用于清理私有桶附件）
+        const { data: rows, error: qErr } = await client
+          .from("leave_requests")
+          .select("id, attachment_url")
+          .eq("rehearsal_id", rehearsalId)
+          .in("status", ["pending", "approved"]);
+        if (qErr) {
+          setError(qErr.message);
+          return { ok: false, reason: "network" };
+        }
+        const active = (rows as Pick<LeaveRequestRow, "id" | "attachment_url">[] | null) ?? [];
+        const activeIds = active.map((r) => r.id);
+        if (activeIds.length > 0) {
+          const { data: updated, error: dbError } = await client
+            .from("leave_requests")
+            .update({ status: "canceled" })
+            .in("id", activeIds)
+            .in("status", ["pending", "approved"])
+            .select("id");
+          if (dbError) {
+            setError(dbError.message);
+            return { ok: false, reason: "network" };
+          }
+          // 0 行更新检测：SELECT 与 UPDATE 间隙管理员并发处理了全部申请（如驳回），
+          // update 匹配 0 行——申请已不归成员掌控，跳过附件清理（附件属审批结果一部分，
+          // 误删会破坏已驳回申请的追溯），按 already-processed 返回由页面提示无需取消
+          if (!updated || updated.length === 0) {
+            setError("申请已被处理，请刷新后重试");
+            return { ok: false, reason: "already-processed" };
+          }
+          // 附件清理只针对「实际被撤销行 ∩ SELECT 快照」：UPDATE 精确到 id 集合后，
+          // 返回的 updated 即真正置 canceled 的行；并发中被管理员改状态（如驳回）的
+          // 行不在 updated 内，其附件保留。删除失败不阻断撤销（同 cancelRequest 容错语义）
+          const updatedIds = new Set((updated as { id: string }[]).map((r) => r.id));
+          for (const r of active) {
+            if (r.attachment_url && updatedIds.has(r.id)) {
+              const { error: removeError } = await client.storage
+                .from("leave-attachments")
+                .remove([extractAttachmentPath(r.attachment_url)]);
+              if (removeError) {
+                // 忽略：存储删除失败不阻断撤销（仅遗留孤儿文件）
+              }
+            }
+          }
+        }
+        await fetchMine();
+        setError(null);
+        return { ok: true };
+      } finally {
+        setSaving(false);
+      }
+    },
+    [client, fetchMine],
+  );
+
   /** 上传附件到私有桶（路径沿用 usePosts.uploadImage 的 <user_id>/<时间戳>-<文件名> 模式），返回 storage 路径 */
   const uploadAttachment = React.useCallback(
     async (file: File, userId: string) => {
@@ -330,6 +371,7 @@ export function useLeaveRequests(client: typeof defaultClient = defaultClient) {
     reapply,
     withdraw,
     cancelRequest,
+    cancelOnSignIn,
     uploadAttachment,
     getSignedUrl,
   };

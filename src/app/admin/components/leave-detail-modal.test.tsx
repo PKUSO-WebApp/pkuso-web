@@ -42,7 +42,8 @@ function makeRequest(overrides: Record<string, unknown> = {}): LeaveRequestWithD
 type DetailModalProps = {
   request: LeaveRequestWithDetails | null;
   onClose: () => void;
-  onApprove: (id: string) => Promise<boolean>;
+  /** 通过回调返回 { ok, warnings }（Issue #159 返工） */
+  onApprove: (id: string) => Promise<{ ok: boolean; warnings: string[] }>;
   onReject: (id: string, reason: string) => Promise<boolean>;
   getSignedUrl: (path: string) => Promise<string | null>;
   processing?: boolean;
@@ -52,7 +53,7 @@ function renderModal(props: Partial<DetailModalProps> = {}) {
   const defaults: DetailModalProps = {
     request: makeRequest(),
     onClose: vi.fn(),
-    onApprove: vi.fn().mockResolvedValue(true),
+    onApprove: vi.fn().mockResolvedValue({ ok: true, warnings: [] }),
     onReject: vi.fn().mockResolvedValue(true),
     getSignedUrl: vi.fn().mockResolvedValue("https://x/signed.jpg"),
     processing: false,
@@ -67,6 +68,7 @@ describe("LeaveDetailModal 请假详情弹窗（管理端）", () => {
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
   });
 
   it("pending：展示成员/排练/原因，底部有通过与驳回按钮", () => {
@@ -81,10 +83,36 @@ describe("LeaveDetailModal 请假详情弹窗（管理端）", () => {
   });
 
   it("点击通过 → onApprove 以该申请 id 调用", async () => {
-    const onApprove = vi.fn().mockResolvedValue(true);
+    const onApprove = vi.fn().mockResolvedValue({ ok: true, warnings: [] });
     renderModal({ onApprove });
     fireEvent.click(screen.getByRole("button", { name: "通过" }));
     await waitFor(() => expect(onApprove).toHaveBeenCalledWith("lr-1"));
+  });
+
+  it("通过返回 warnings：alert 逐条展示（成员已实际签到、考勤未联动，Issue #159 返工）", async () => {
+    const alertSpy = vi.fn();
+    vi.stubGlobal("alert", alertSpy);
+    const onApprove = vi.fn().mockResolvedValue({
+      ok: true,
+      warnings: ["张三已实际签到，考勤未联动", "李四已实际签到，考勤未联动"],
+    });
+    renderModal({ onApprove });
+    fireEvent.click(screen.getByRole("button", { name: "通过" }));
+    await waitFor(() =>
+      expect(alertSpy).toHaveBeenCalledWith(
+        "张三已实际签到，考勤未联动\n李四已实际签到，考勤未联动",
+      ),
+    );
+  });
+
+  it("通过无 warnings：不弹 alert（普通成功路径）", async () => {
+    const alertSpy = vi.fn();
+    vi.stubGlobal("alert", alertSpy);
+    const onApprove = vi.fn().mockResolvedValue({ ok: true, warnings: [] });
+    renderModal({ onApprove });
+    fireEvent.click(screen.getByRole("button", { name: "通过" }));
+    await waitFor(() => expect(onApprove).toHaveBeenCalledWith("lr-1"));
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 
   it("驳回：原因必填，空原因提交被拦截，填写后调用 onReject", async () => {
@@ -128,10 +156,10 @@ describe("LeaveDetailModal 请假详情弹窗（管理端）", () => {
   });
 
   it("审批中禁关闭（closeOnOverlay=false）", async () => {
-    let resolveApprove!: (v: boolean) => void;
+    let resolveApprove!: (v: { ok: boolean; warnings: string[] }) => void;
     const onApprove = vi.fn(
       () =>
-        new Promise<boolean>((res) => {
+        new Promise<{ ok: boolean; warnings: string[] }>((res) => {
           resolveApprove = res;
         }),
     );
@@ -143,7 +171,7 @@ describe("LeaveDetailModal 请假详情弹窗（管理端）", () => {
     const lastCall = calls[calls.length - 1];
     expect(lastCall[0].closeOnOverlay).toBe(false);
 
-    resolveApprove(true);
+    resolveApprove({ ok: true, warnings: [] });
     // 等待父级移除行（request 变 null 关闭）后的异步收尾
     await waitFor(() => expect((Modal as unknown as Mock).mock.calls.length).toBeGreaterThan(0));
   });

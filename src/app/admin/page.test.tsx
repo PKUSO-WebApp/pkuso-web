@@ -106,7 +106,8 @@ const mockLeaveAdmin = (overrides: Record<string, unknown> = {}) => {
     error: null,
     processing: false,
     fetch: vi.fn(),
-    approve: vi.fn().mockResolvedValue(true),
+    // approve 返回值形态：{ ok, warnings }（Issue #159 返工）
+    approve: vi.fn().mockResolvedValue({ ok: true, warnings: [] }),
     reject: vi.fn().mockResolvedValue(true),
     getSignedUrl: vi.fn().mockResolvedValue(null),
   };

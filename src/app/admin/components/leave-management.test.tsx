@@ -67,12 +67,14 @@ describe("LeaveManagement 请假审批区块（管理端）", () => {
     adminMock.loading = false;
     adminMock.error = null;
     adminMock.processing = false;
-    adminMock.approve.mockResolvedValue(true);
+    // approve 返回值形态：{ ok, warnings }（Issue #159 返工）
+    adminMock.approve.mockResolvedValue({ ok: true, warnings: [] });
     adminMock.reject.mockResolvedValue(true);
   });
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
   });
 
   it("待审批列表显示成员姓名+乐器、排练曲目+时间、原因摘要", () => {
@@ -124,6 +126,61 @@ describe("LeaveManagement 请假审批区块（管理端）", () => {
     await waitFor(() => expect(adminMock.approve).toHaveBeenCalledWith(["lr-1", "lr-2"]));
     // 确认弹窗关闭
     await waitFor(() => expect(screen.queryByText("确认批量通过")).toBeNull());
+  });
+
+  it("批量通过返回 warnings：alert 逐条展示（成员已实际签到、考勤未联动，Issue #159 返工）", async () => {
+    const alertSpy = vi.fn();
+    vi.stubGlobal("alert", alertSpy);
+    adminMock.approve.mockResolvedValue({
+      ok: true,
+      warnings: ["张三已实际签到，考勤未联动", "李四已实际签到，考勤未联动"],
+    });
+    adminMock.requests = [makeRequest({ id: "lr-1" }), makeRequest({ id: "lr-2" })];
+    render(<LeaveManagement />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /全选/ }));
+    fireEvent.click(screen.getByRole("button", { name: "批量通过" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认通过" }));
+
+    // warnings 逐条用换行连接展示
+    await waitFor(() =>
+      expect(alertSpy).toHaveBeenCalledWith(
+        "张三已实际签到，考勤未联动\n李四已实际签到，考勤未联动",
+      ),
+    );
+  });
+
+  it("批量通过无 warnings：不弹 alert（普通成功路径）", async () => {
+    const alertSpy = vi.fn();
+    vi.stubGlobal("alert", alertSpy);
+    adminMock.requests = [makeRequest({ id: "lr-1" })];
+    render(<LeaveManagement />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /全选/ }));
+    fireEvent.click(screen.getByRole("button", { name: "批量通过" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认通过" }));
+
+    await waitFor(() => expect(adminMock.approve).toHaveBeenCalledWith(["lr-1"]));
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it("详情弹窗 onApprove 透传 approve 结果（含 warnings，Issue #159 返工）", async () => {
+    adminMock.approve.mockResolvedValue({
+      ok: true,
+      warnings: ["成员已实际签到，考勤未联动"],
+    });
+    adminMock.requests = [makeRequest({ id: "lr-1" })];
+    render(<LeaveManagement />);
+
+    fireEvent.click(screen.getByText("张三"));
+
+    await waitFor(async () => {
+      const calls = (LeaveDetailModal as unknown as Mock).mock.calls;
+      const lastCall = calls[calls.length - 1];
+      const onApprove = lastCall[0].onApprove as (id: string) => Promise<unknown>;
+      const res = await onApprove("lr-1");
+      expect(res).toEqual({ ok: true, warnings: ["成员已实际签到，考勤未联动"] });
+    });
   });
 
   it("批量驳回：原因必填，空原因拦截，填写后调用 reject（同一原因应用到全部）", async () => {

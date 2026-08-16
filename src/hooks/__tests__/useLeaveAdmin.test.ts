@@ -83,14 +83,19 @@ describe("useLeaveAdmin", () => {
     expect(result.current.requests).toEqual([]);
   });
 
-  it("approve 批量通过：成功后本地移除已处理行", async () => {
+  it("approve 批量通过：成功后本地移除已处理行，warnings 透传为消息数组（Issue #159 返工）", async () => {
     // 前两次 GET（挂载 + 手动 fetch）返回列表，第三次 POST 返回审批结果
     global.fetch = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ requests: sampleRequests }))
       .mockResolvedValueOnce(jsonResponse({ requests: sampleRequests }))
       .mockResolvedValueOnce(
-        jsonResponse({ success: true, processed: ["lr-1"], failed: [] }),
+        jsonResponse({
+          success: true,
+          processed: ["lr-1"],
+          failed: [],
+          warnings: [{ id: "lr-1", message: "成员已实际签到，考勤未联动" }],
+        }),
       ) as never;
 
     const { result } = renderHook(() => useLeaveAdmin());
@@ -102,9 +107,34 @@ describe("useLeaveAdmin", () => {
     });
     expect(result.current.requests).toHaveLength(1);
 
-    const ok = await act(() => result.current.approve(["lr-1"]));
-    expect(ok).toBe(true);
+    const res = await act(() => result.current.approve(["lr-1"]));
+    expect(res).toEqual({ ok: true, warnings: ["成员已实际签到，考勤未联动"] });
     expect(result.current.requests).toEqual([]);
+  });
+
+  it("approve 无 warnings 响应：返回空数组（不报错）", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ success: true, processed: ["lr-1"], failed: [] })) as never;
+
+    const { result } = renderHook(() => useLeaveAdmin());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const res = await act(() => result.current.approve(["lr-1"]));
+    expect(res).toEqual({ ok: true, warnings: [] });
+  });
+
+  it("approve 失败：返回 { ok: false, warnings: [] } 并写入 error", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ error: "服务异常" }, false, 500)) as never;
+
+    const { result } = renderHook(() => useLeaveAdmin());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const res = await act(() => result.current.approve(["lr-1"]));
+    expect(res).toEqual({ ok: false, warnings: [] });
+    expect(result.current.error).toBe("服务异常");
   });
 
   it("approve 请求体包含 action 与 ids", async () => {

@@ -20,8 +20,9 @@ import type {
  * - 无申请 / 已撤回 / 已取消：表单模式，可提交新申请（target_status 固定 excused）；
  * - pending：只读展示 + 「待审批」chip，可「修改」内容（改内容不改状态），
  *   或进入编辑模式「取消请假」（状态 → canceled，取消后视同无申请，可重新提交）；
- * - approved：只读展示 + 「已通过」chip，可「撤回」；撤回后进入新申请模式，
- *   target_status 单选「正常出勤 / 缺勤」（用于调整已生效的考勤记录）；
+ * - approved：只读展示 + 「已通过」chip，可「撤回」；撤回不动考勤（Issue #155），
+ *   撤回后进入新申请模式，target_status 单选「正常出勤 / 缺勤」（重新提交后，
+ *   审批通过时按此记录考勤）；
  * - rejected：只读展示 + 「已驳回」chip + 驳回原因，可「重新申请」（内容预填，
  *   保存后状态回 pending 并清空驳回原因）。
  *
@@ -331,10 +332,11 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
     setIsWithdrawing(true);
     setError(null);
     try {
-      // 传入被撤回的申请行：hook 据此联动还原考勤（未签到时恢复缺勤，已签到锁定不动）
-      const ok = await withdraw(current.id, current);
+      // 撤回只改申请状态，不动考勤（Issue #155）
+      const ok = await withdraw(current.id);
       if (!ok) return;
-      // 撤回后进入新申请模式：选择目标出勤状态（正常出勤/缺勤）重新提交
+      // 撤回后进入新申请模式：选择目标出勤状态（正常出勤/缺勤）重新提交，
+      // 审批通过时按新 target_status 记录考勤
       setConfirmWithdraw(false);
       setCurrent(null);
       setEditing(null);
@@ -451,7 +453,7 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
           {confirmWithdraw && (
             <div className="rounded-xl border border-warning/30 bg-warning/5 p-3">
               <p className="mb-3 text-sm text-warning">
-                确认撤回该请假申请？撤回后考勤恢复为缺勤（未签到时），已签到状态不受影响，可重新提交申请。
+                确认撤回该请假申请？撤回不影响当前考勤状态，可重新提交申请。
               </p>
               <div className="flex gap-2">
                 <button
@@ -525,7 +527,7 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
           {afterWithdraw && (
             <div className="rounded-xl border border-border bg-surface p-3">
               <p className="mb-2 text-sm font-medium text-text">
-                目标出勤状态（已撤回原请假，考勤记录需调整）
+                目标出勤状态（撤回不影响考勤；重新提交后，审批通过时按此记录考勤）
               </p>
               <div className="flex gap-2">
                 {TARGET_STATUS_OPTIONS.map((opt) => (

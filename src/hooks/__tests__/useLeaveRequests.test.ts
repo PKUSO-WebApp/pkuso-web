@@ -6,40 +6,50 @@ import { useLeaveRequests } from "../useLeaveRequests";
 
 /**
  * 链式 mock 客户端：依次消费 responses（含挂载时的初始 fetch）。
- * 记录每次 update 的表名与载荷（calls），供断言 withdraw 的考勤还原逻辑；
+ * 记录每次 update 的表名与载荷（calls），供断言状态变更；
+ * 记录 eq/in 过滤参数（filters），供断言 cancelOnSignIn 的「已驳回不动」过滤（Issue #155）；
  * 记录 storage.remove 调用（removes），供断言附件删除（Issue #149）。
- * update 链（eq → eq → select）中仅首个 eq 消费响应，后续链式调用
- * （eq/select）返回同一 thenable，await 解开为对应响应——兼容有无 select 两种链。
+ * update 链（eq → eq）中仅首个 eq 消费响应，后续链式调用（eq/in/select）返回同一
+ * thenable，await 解开为对应响应——兼容有无 select 两种链。
  */
 function mockClient<T>(responses: T[]) {
   const calls: { table: string; op: "update"; payload: unknown }[] = [];
   const removes: { bucket: string; paths: string[] }[] = [];
+  const filters: { table: string; args: unknown[] }[] = [];
   let i = 0;
-  const c = (r: T) => ({
-    eq: () => c(r),
-    order: () => c(r),
-    maybeSingle: () => c(r),
-    select: () => c(r),
+  const chain = (r: T, table: string) => ({
+    eq: (...args: unknown[]) => {
+      filters.push({ table, args: ["eq", ...args] });
+      return chain(r, table);
+    },
+    in: (...args: unknown[]) => {
+      filters.push({ table, args: ["in", ...args] });
+      return chain(r, table);
+    },
+    order: () => chain(r, table),
+    maybeSingle: () => chain(r, table),
+    select: () => chain(r, table),
     then: (resolve: (v: T) => void) => resolve(r),
   });
   return {
     calls,
     removes,
+    filters,
     from: (table: string) => ({
-      select: () => c(responses[i++]),
-      insert: () => c(responses[i++]),
+      select: () => chain(responses[i++], table),
+      insert: () => chain(responses[i++], table),
       update: (payload: unknown) => {
         calls.push({ table, op: "update", payload });
-        return { eq: () => c(responses[i++]) };
+        return chain(responses[i++], table);
       },
     }),
     storage: {
       from: (bucket: string) => ({
-        upload: () => c(responses[i++]),
-        createSignedUrl: () => c(responses[i++]),
+        upload: () => chain(responses[i++], bucket),
+        createSignedUrl: () => chain(responses[i++], bucket),
         remove: (paths: string[]) => {
           removes.push({ bucket, paths });
-          return c(responses[i++]);
+          return chain(responses[i++], bucket);
         },
       }),
     },
@@ -125,119 +135,146 @@ describe("useLeaveRequests", () => {
     expect(ok).toBe(true);
   });
 
-  it("withdraw 撤回已通过申请（不带考勤参数：仅撤回申请不动考勤）", async () => {
+  it("withdraw 撤回已通过申请：仅撤回申请，不动考勤（Issue #155）", async () => {
     const c = mockClient([fetchOk, { error: null }, emptyOk]);
     const { result } = renderHook(() => useLeaveRequests(c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     const ok = await act(() => result.current.withdraw("lr-1"));
     expect(ok).toBe(true);
+    // 只更新 leave_requests，绝不触碰 attendances（移除 #149 的考勤还原逻辑）
     expect(c.calls.map((x) => x.table)).toEqual(["leave_requests"]);
+    expect(c.calls[0].payload).toEqual({ status: "withdrawn" });
+    // 撤回后刷新申请列表（卡片申请状态同步）
+    expect(result.current.data).toEqual([]);
   });
 
-  it("withdraw 未签到（sign_in_time 空）且考勤状态与 target_status 一致 → 考勤还原为 absent", async () => {
-    const c = mockClient([
-      fetchOk,
-      { error: null }, // 撤回申请 update
-      { data: { sign_in_time: null, status: "excused" }, error: null }, // 查考勤
-      { error: null }, // 考勤还原 update
-      emptyOk, // 撤回后 fetchMine
-    ]);
+  it("withdraw 更新失败返回 false 并写入 error", async () => {
+    const c = mockClient([fetchOk, { error: { message: "撤回失败" } }]);
     const { result } = renderHook(() => useLeaveRequests(c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    const ok = await act(() =>
-      result.current.withdraw("lr-1", {
-        rehearsal_id: 1,
-        user_id: "u1",
-        target_status: "excused",
-      }),
-    );
-    expect(ok).toBe(true);
-    expect(c.calls.map((x) => `${x.table}:${x.op}`)).toEqual([
-      "leave_requests:update",
-      "attendances:update",
-    ]);
-    expect(c.calls[1].payload).toEqual({ status: "absent" });
-  });
-
-  it("withdraw 已签到（sign_in_time 非空）：考勤锁定不动，仅撤回申请", async () => {
-    const c = mockClient([
-      fetchOk,
-      { error: null },
-      { data: { sign_in_time: "2026-08-16T13:05:00", status: "excused" }, error: null },
-      emptyOk,
-    ]);
-    const { result } = renderHook(() => useLeaveRequests(c as never));
-    await waitFor(() => expect(result.current.loading).toBe(false));
-
-    const ok = await act(() =>
-      result.current.withdraw("lr-1", {
-        rehearsal_id: 1,
-        user_id: "u1",
-        target_status: "excused",
-      }),
-    );
-    expect(ok).toBe(true);
-    expect(c.calls.map((x) => x.table)).toEqual(["leave_requests"]);
-  });
-
-  it("withdraw 考勤状态与 target_status 不一致（管理员另行改写）：不还原", async () => {
-    const c = mockClient([
-      fetchOk,
-      { error: null },
-      { data: { sign_in_time: null, status: "present" }, error: null },
-      emptyOk,
-    ]);
-    const { result } = renderHook(() => useLeaveRequests(c as never));
-    await waitFor(() => expect(result.current.loading).toBe(false));
-
-    const ok = await act(() =>
-      result.current.withdraw("lr-1", {
-        rehearsal_id: 1,
-        user_id: "u1",
-        target_status: "excused",
-      }),
-    );
-    expect(ok).toBe(true);
-    expect(c.calls.map((x) => x.table)).toEqual(["leave_requests"]);
-  });
-
-  it("withdraw 无考勤行（maybeSingle 返回 null）：不还原", async () => {
-    const c = mockClient([fetchOk, { error: null }, { data: null, error: null }, emptyOk]);
-    const { result } = renderHook(() => useLeaveRequests(c as never));
-    await waitFor(() => expect(result.current.loading).toBe(false));
-
-    const ok = await act(() =>
-      result.current.withdraw("lr-1", {
-        rehearsal_id: 1,
-        user_id: "u1",
-        target_status: "excused",
-      }),
-    );
-    expect(ok).toBe(true);
-    expect(c.calls.map((x) => x.table)).toEqual(["leave_requests"]);
-  });
-
-  it("withdraw 考勤还原失败返回 false（撤回已生效，调用方可重试）", async () => {
-    const c = mockClient([
-      fetchOk,
-      { error: null },
-      { data: { sign_in_time: null, status: "excused" }, error: null },
-      { error: { message: "还原失败" } },
-    ]);
-    const { result } = renderHook(() => useLeaveRequests(c as never));
-    await waitFor(() => expect(result.current.loading).toBe(false));
-
-    const ok = await act(() =>
-      result.current.withdraw("lr-1", {
-        rehearsal_id: 1,
-        user_id: "u1",
-        target_status: "excused",
-      }),
-    );
+    const ok = await act(() => result.current.withdraw("lr-1"));
     expect(ok).toBe(false);
-    expect(result.current.error).toBe("撤回成功，但考勤还原失败：还原失败");
+    expect(result.current.error).toBe("撤回失败");
+  });
+
+  // ---- cancelOnSignIn（覆盖请假签到，Issue #155）----
+
+  it("cancelOnSignIn 无有效申请（查询为空）：不更新、不删附件，直接成功", async () => {
+    const c = mockClient([fetchOk, { data: [], error: null }, emptyOk]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() => result.current.cancelOnSignIn(1));
+    expect(ok).toEqual({ ok: true });
+    expect(c.calls).toEqual([]);
+    expect(c.removes).toEqual([]);
+    // 查询按排练 + pending/approved 过滤（已驳回/已撤回/已取消不在撤销范围）
+    expect(c.filters).toContainEqual({
+      table: "leave_requests",
+      args: ["in", "status", ["pending", "approved"]],
+    });
+  });
+
+  it("cancelOnSignIn 撤销 pending+approved 申请：批量置 canceled、清理附件、刷新列表", async () => {
+    const c = mockClient([
+      fetchOk,
+      // 查询本排练 pending/approved 申请（含附件路径）
+      {
+        data: [
+          { id: "lr-1", attachment_url: "u1/1-a.jpg" },
+          { id: "lr-2", attachment_url: null },
+        ],
+        error: null,
+      },
+      updateOk, // 批量撤销 update（select 0 行检测通过）
+      { error: null }, // lr-1 附件删除 remove
+      emptyOk, // 撤销后 fetchMine
+    ]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() => result.current.cancelOnSignIn(1));
+    expect(ok).toEqual({ ok: true });
+    expect(c.calls).toEqual([
+      { table: "leave_requests", op: "update", payload: { status: "canceled" } },
+    ]);
+    expect(c.removes).toEqual([{ bucket: "leave-attachments", paths: ["u1/1-a.jpg"] }]);
+  });
+
+  it('cancelOnSignIn 查询失败返回 { ok:false, reason:"network" } 并写入 error', async () => {
+    const c = mockClient([fetchOk, { data: null, error: { message: "查询失败" } }]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() => result.current.cancelOnSignIn(1));
+    expect(ok).toEqual({ ok: false, reason: "network" });
+    expect(result.current.error).toBe("查询失败");
+    expect(c.calls).toEqual([]);
+  });
+
+  it('cancelOnSignIn 更新失败返回 { ok:false, reason:"network" } 并写入 error，附件不被误删', async () => {
+    const c = mockClient([
+      fetchOk,
+      { data: [{ id: "lr-1", attachment_url: "u1/1-a.jpg" }], error: null },
+      { error: { message: "更新失败" } },
+    ]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() => result.current.cancelOnSignIn(1));
+    expect(ok).toEqual({ ok: false, reason: "network" });
+    expect(result.current.error).toBe("更新失败");
+    expect(c.removes).toEqual([]);
+  });
+
+  it("cancelOnSignIn 并发处理后 0 行更新：返回 already-processed、跳过附件清理（防误删已驳回行附件，返工）", async () => {
+    // SELECT 时申请仍为 approved（查询命中），UPDATE 前管理员已驳回 → update 匹配 0 行；
+    // 此时附件属审批结果一部分，不得删除（已驳回申请仍需追溯）
+    const c = mockClient([
+      fetchOk,
+      { data: [{ id: "lr-1", attachment_url: "u1/1-a.jpg" }], error: null },
+      { data: [], error: null }, // 批量撤销 update 0 行
+    ]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() => result.current.cancelOnSignIn(1));
+    expect(ok).toEqual({ ok: false, reason: "already-processed" });
+    expect(result.current.error).toBe("申请已被处理，请刷新后重试");
+    expect(c.removes).toEqual([]); // 已驳回申请的附件不得被误删
+  });
+
+  it("cancelOnSignIn 多申请并发：UPDATE 精确到 SELECT 快照 id，只删实际被撤销行的附件（返工）", async () => {
+    // SELECT 快照 lr-1/lr-2 均为 pending 且带附件；UPDATE 间隙管理员并发驳回了 lr-2。
+    // UPDATE 按快照 id 集合精确过滤（不再 rehearsal_id + status 宽匹配），仅命中仍为
+    // pending/approved 的 lr-1 → 附件只删 lr-1 的，lr-2（已驳回）附件保留
+    const c = mockClient([
+      fetchOk,
+      {
+        data: [
+          { id: "lr-1", attachment_url: "u1/1-a.jpg" },
+          { id: "lr-2", attachment_url: "u2/2-b.jpg" },
+        ],
+        error: null,
+      },
+      { data: [{ id: "lr-1" }], error: null }, // 批量撤销 update 仅命中 lr-1（lr-2 已被并发驳回）
+      { error: null }, // lr-1 附件删除 remove
+      emptyOk, // 撤销后 fetchMine
+    ]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const ok = await act(() => result.current.cancelOnSignIn(1));
+    expect(ok).toEqual({ ok: true });
+    // UPDATE 按 SELECT 快照返回的 id 集合精确过滤
+    expect(c.filters).toContainEqual({
+      table: "leave_requests",
+      args: ["in", "id", ["lr-1", "lr-2"]],
+    });
+    // 附件只删实际被撤销行 lr-1 的，并发驳回行 lr-2 的附件不得被误删
+    expect(c.removes).toEqual([{ bucket: "leave-attachments", paths: ["u1/1-a.jpg"] }]);
   });
 
   // ---- cancelRequest（Issue #149）----

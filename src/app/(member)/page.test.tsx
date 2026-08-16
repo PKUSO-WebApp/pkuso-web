@@ -33,7 +33,13 @@ vi.mock("@/hooks/useAnnouncements", () => ({
 }));
 
 // mock useLeaveRequests（Issue #142）：避免触发真实 Supabase 网络请求；
-// 测试中默认无申请，卡片不显示请假状态小字
+// 测试中默认无申请，卡片不显示请假状态小字；
+// cancelOnSignIn 用 hoisted mock 暴露，供覆盖请假签到用例断言（Issue #155）
+const leaveRequestsHookMock = vi.hoisted(() => ({
+  // cancelOnSignIn 返回可区分结果（返工）：{ ok: true } 或 { ok: false, reason }
+  cancelOnSignIn: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
 vi.mock("@/hooks/useLeaveRequests", () => ({
   useLeaveRequests: vi.fn().mockReturnValue({
     data: [],
@@ -45,6 +51,8 @@ vi.mock("@/hooks/useLeaveRequests", () => ({
     updateReason: vi.fn().mockResolvedValue(true),
     reapply: vi.fn().mockResolvedValue(true),
     withdraw: vi.fn().mockResolvedValue(true),
+    cancelRequest: vi.fn().mockResolvedValue(true),
+    cancelOnSignIn: leaveRequestsHookMock.cancelOnSignIn,
     uploadAttachment: vi.fn(),
     getSignedUrl: vi.fn(),
   }),
@@ -103,8 +111,10 @@ vi.mock("@/components/ui/Card", () => ({
 // 导入 mock 的 hooks
 import { useRehearsals } from "@/hooks/useRehearsals";
 import { useAttendance } from "@/hooks/useAttendance";
+import { useLeaveRequests } from "@/hooks/useLeaveRequests";
 const mockUseRehearsals = vi.mocked(useRehearsals);
 const mockUseAttendance = vi.mocked(useAttendance);
+const mockUseLeaveRequests = vi.mocked(useLeaveRequests);
 
 /** useAttendance mock 默认返回值（map 为空：无任何考勤记录） */
 const defaultAttendanceMock = {
@@ -118,6 +128,26 @@ const defaultAttendanceMock = {
   batchInsert: vi.fn(),
   fetchStats: vi.fn(),
 };
+
+/** useLeaveRequests mock 默认返回值（默认无申请；overrides 覆盖 data 等字段，Issue #155） */
+function defaultLeaveRequestsMock(overrides: Record<string, unknown> = {}) {
+  return {
+    data: [],
+    loading: false,
+    error: null,
+    saving: false,
+    fetchMine: vi.fn().mockResolvedValue([]),
+    create: vi.fn().mockResolvedValue(true),
+    updateReason: vi.fn().mockResolvedValue(true),
+    reapply: vi.fn().mockResolvedValue(true),
+    withdraw: vi.fn().mockResolvedValue(true),
+    cancelRequest: vi.fn().mockResolvedValue(true),
+    cancelOnSignIn: leaveRequestsHookMock.cancelOnSignIn,
+    uploadAttachment: vi.fn(),
+    getSignedUrl: vi.fn(),
+    ...overrides,
+  } as unknown as ReturnType<typeof useLeaveRequests>;
+}
 
 // 辅助组件：在 UserProvider 内自动登录
 function WithLoggedInUser({
@@ -1000,13 +1030,18 @@ describe("Home 首页组件", () => {
       expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
     });
 
-    it("未签到但管理员显式设为请假（排练进行中）：显示请假 chip，不提供签到按钮", () => {
+    it("未签到 + 无请假申请 + 管理员手动设请假（排练进行中）：显示正常「签到」按钮（返工，Issue #159 方案 B）", () => {
+      // 无申请时 canOverrideLeave 不成立；但请假未签到 + 无有效申请时成员应可签到覆盖——
+      // 修复「撤回已通过申请后无法签到也无法重新申请」的死局（管理员手动设 excused 语义同构：
+      // 成员到场可覆盖）；与「有 approved 申请」场景（黄色覆盖按钮）区分，见 5.8.5 覆盖请假签到
+      mockUseLeaveRequests.mockReturnValue(defaultLeaveRequestsMock());
       renderWithAttendance({
         1: { status: "excused", sign_in_time: null },
       });
 
-      expect(screen.getByText(/请假/)).toBeTruthy();
-      expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+      expect(screen.getByRole("button", { name: "签到" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "覆盖请假" })).toBeNull();
+      expect(screen.queryByText(/⭕\s*请假/)).toBeNull();
     });
   });
 
@@ -1172,6 +1207,197 @@ describe("Home 首页组件", () => {
 
       expect(screen.getByRole("button", { name: "签到" })).toBeTruthy();
       expect(screen.queryByText("…")).toBeNull();
+    });
+  });
+
+  // ============================================================
+  // 5.8.5 覆盖请假签到（Issue #155）：签到成功后撤销 pending/approved 申请
+  // ============================================================
+  describe("覆盖请假签到（Issue #155）", () => {
+    beforeEach(() => {
+      // 固定系统时间 2026-08-15 21:00：当天 20:00-22:00 排练恒为"进行中"（签到窗口判定与真实运行时刻无关）
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 7, 15, 21, 0, 0));
+      vi.spyOn(window, "alert").mockImplementation(() => {});
+      mockUseAttendance.mockReturnValue({
+        ...defaultAttendanceMock,
+        upsert: vi.fn().mockResolvedValue(null),
+      });
+      mockUseLeaveRequests.mockReturnValue(defaultLeaveRequestsMock());
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+      // 复位 leave mock 默认值，避免本组用例的 data 覆盖泄漏到后续用例
+      mockUseLeaveRequests.mockReturnValue(defaultLeaveRequestsMock());
+    });
+
+    function makeOngoingRehearsal(
+      opts: { type?: "full" | "section"; signInCode?: string | null } = {},
+    ) {
+      return {
+        id: 1,
+        repertoire: "今晚排练",
+        type: opts.type ?? "full",
+        start_time: "2026-08-15T20:00:00",
+        end_time: "2026-08-15T22:00:00",
+        location: "排练厅",
+        title: null,
+        date: null,
+        time: null,
+        sign_in_code: opts.signInCode ?? null,
+        target_section: null,
+        created_at: null,
+        updated_at: "2026-08-14T00:00:00.000Z",
+      };
+    }
+
+    function renderLoggedInWithRehearsal(rehearsal: ReturnType<typeof makeOngoingRehearsal>) {
+      mockUseRehearsals.mockReturnValue({
+        data: [rehearsal],
+        loading: false,
+        error: null,
+        saving: false,
+        fetch: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      });
+      return render(
+        <UserProvider>
+          <WithLoggedInUser
+            user={{ id: "test-id", name: "张三", role: "member", section: "小提琴" }}
+          >
+            <Home />
+          </WithLoggedInUser>
+        </UserProvider>,
+      );
+    }
+
+    it("分排直签成功：签到后撤销该排练的 pending/approved 申请（cancelOnSignIn）", async () => {
+      renderLoggedInWithRehearsal(makeOngoingRehearsal({ type: "section" }));
+      fireEvent.click(screen.getByTestId("toggle-section"));
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "签到" }));
+      });
+      expect(leaveRequestsHookMock.cancelOnSignIn).toHaveBeenCalledWith(1);
+    });
+
+    it("合排签到码提交成功：同样撤销该排练的申请", async () => {
+      renderLoggedInWithRehearsal(makeOngoingRehearsal({ signInCode: "8848" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "签到" }));
+      fireEvent.change(screen.getByPlaceholderText("如：8848"), {
+        target: { value: "8848" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByRole("dialog").querySelector("form")!);
+      });
+      expect(leaveRequestsHookMock.cancelOnSignIn).toHaveBeenCalledWith(1);
+    });
+
+    it("签到失败（upsert 返回错误）：不撤销申请", async () => {
+      mockUseAttendance.mockReturnValue({
+        ...defaultAttendanceMock,
+        upsert: vi.fn().mockResolvedValue("签到失败"),
+      });
+      renderLoggedInWithRehearsal(makeOngoingRehearsal({ type: "section" }));
+      fireEvent.click(screen.getByTestId("toggle-section"));
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "签到" }));
+      });
+      expect(leaveRequestsHookMock.cancelOnSignIn).not.toHaveBeenCalled();
+    });
+
+    it("进行中 + 待审批申请：卡片签到按钮变黄「覆盖请假」（warning 色系）", () => {
+      mockUseLeaveRequests.mockReturnValue(
+        defaultLeaveRequestsMock({
+          data: [{ id: "lr-1", rehearsal_id: 1, status: "pending" }] as unknown as ReturnType<
+            typeof useLeaveRequests
+          >["data"],
+        }),
+      );
+      renderLoggedInWithRehearsal(makeOngoingRehearsal());
+
+      const btn = screen.getByRole("button", { name: "覆盖请假" });
+      expect(btn.className).toContain("bg-warning-bg");
+      expect(btn.className).toContain("text-warning");
+      expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+    });
+
+    it("进行中 + 已通过申请 + 出勤已写请假（excused）：黄色「覆盖请假」按钮替代请假 chip（返工）", () => {
+      // 审批通过会把考勤写成 excused（statusChip 命中「请假」chip），但已批准请假的成员
+      // 仍应可签到覆盖：页面经 leaveRequestMap 传入 approved 申请，卡片渲染覆盖按钮
+      mockUseLeaveRequests.mockReturnValue(
+        defaultLeaveRequestsMock({
+          data: [{ id: "lr-1", rehearsal_id: 1, status: "approved" }] as unknown as ReturnType<
+            typeof useLeaveRequests
+          >["data"],
+        }),
+      );
+      mockUseAttendance.mockReturnValue({
+        ...defaultAttendanceMock,
+        map: { 1: { status: "excused", sign_in_time: null } },
+      });
+      renderLoggedInWithRehearsal(makeOngoingRehearsal());
+
+      const btn = screen.getByRole("button", { name: "覆盖请假" });
+      expect(btn.className).toContain("bg-warning-bg");
+      expect(btn.className).toContain("text-warning");
+      expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
+      // 请假 chip 被覆盖按钮替代，申请状态 chip 仍在下方展示「已通过」
+      expect(screen.queryByText(/⭕\s*请假/)).toBeNull();
+      expect(screen.getByText("已通过")).toBeTruthy();
+    });
+
+    it("签到成功但撤销申请网络失败（reason: network）：提示联系管理员处理（返工）", async () => {
+      leaveRequestsHookMock.cancelOnSignIn.mockResolvedValueOnce({
+        ok: false,
+        reason: "network",
+      });
+      renderLoggedInWithRehearsal(makeOngoingRehearsal({ type: "section" }));
+      fireEvent.click(screen.getByTestId("toggle-section"));
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "签到" }));
+      });
+      expect(leaveRequestsHookMock.cancelOnSignIn).toHaveBeenCalledWith(1);
+      // 签到已成功，仅追加中性提示：approved 申请成员端无手动处理入口，指引联系管理员（返工）
+      expect(window.alert).toHaveBeenCalledWith("签到成功，但请假申请取消失败，请联系管理员处理");
+    });
+
+    it("签到成功但撤销申请已被管理员并发处理（reason: already-processed）：提示无需取消（返工）", async () => {
+      // SELECT 后 UPDATE 前管理员已驳回/审批全部申请 → 0 行更新；申请已不归成员掌控，
+      // 无需取消，仅中性告知（不再指引「稍后手动处理」——approved 申请成员端无入口）
+      leaveRequestsHookMock.cancelOnSignIn.mockResolvedValueOnce({
+        ok: false,
+        reason: "already-processed",
+      });
+      renderLoggedInWithRehearsal(makeOngoingRehearsal({ type: "section" }));
+      fireEvent.click(screen.getByTestId("toggle-section"));
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "签到" }));
+      });
+      expect(leaveRequestsHookMock.cancelOnSignIn).toHaveBeenCalledWith(1);
+      expect(window.alert).toHaveBeenCalledWith("签到成功，请假申请已被管理员处理，无需取消");
+    });
+
+    it("覆盖请假打开签到码弹窗：显示提醒文案", () => {
+      mockUseLeaveRequests.mockReturnValue(
+        defaultLeaveRequestsMock({
+          data: [{ id: "lr-1", rehearsal_id: 1, status: "approved" }] as unknown as ReturnType<
+            typeof useLeaveRequests
+          >["data"],
+        }),
+      );
+      renderLoggedInWithRehearsal(makeOngoingRehearsal({ signInCode: "8848" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "覆盖请假" }));
+      expect(screen.getByText("请假后签到会覆盖请假状态，并记录实际出勤")).toBeTruthy();
     });
   });
 

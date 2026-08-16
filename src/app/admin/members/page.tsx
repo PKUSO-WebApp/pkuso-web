@@ -8,9 +8,10 @@ import { useProfiles } from "@/hooks/useProfiles";
 import { useAttendanceEditor } from "@/hooks/useAttendanceEditor";
 import { AttendanceModal } from "@/app/(member)/schedule/components/attendance-modal";
 import { Toggle } from "@/components/ui/Toggle";
-import { parseLocalISO } from "@/lib/date-utils";
+import { parseLocalISO, getLocalDateString } from "@/lib/date-utils";
 import { groupProfilesByInstrument } from "@/lib/roster-utils";
 import { filterByName } from "@/lib/name-search";
+import { buildUniqueSheetNames } from "@/lib/sheet-utils";
 import type { ProfileRow, RehearsalRow } from "@/types/database";
 import * as XLSX from "xlsx";
 import { AdminMemberDetailModal } from "./components/member-detail-modal";
@@ -92,10 +93,11 @@ export default function MembersPage() {
     setExportingId(rehearsal.id);
     try {
       const { supabase } = await import("@/lib/supabase");
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("attendances")
         .select("*, profiles!inner(full_name, instrument, email)")
         .eq("rehearsal_id", rehearsal.id);
+      if (error) throw error;
       if (!data || data.length === 0) {
         alert("该排练暂无出勤记录");
         return;
@@ -111,9 +113,12 @@ export default function MembersPage() {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "考勤记录");
       const dateStr = rehearsal.start_time
-        ? parseLocalISO(rehearsal.start_time).toISOString().slice(0, 10)
+        ? getLocalDateString(parseLocalISO(rehearsal.start_time))
         : "";
       XLSX.writeFile(wb, `考勤记录_${rehearsal.repertoire ?? "排练"}_${dateStr}.xlsx`);
+    } catch (error) {
+      // 与导出全部对称：微信 XWeb 对 unhandled rejection 完全静默，必须显式 alert
+      alert(`导出失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setExportingId(null);
     }
@@ -121,18 +126,48 @@ export default function MembersPage() {
 
   // 导出区间内全部排练出勤记录（每个排练一个 sheet）
   const exportAllRehearsals = async () => {
-    if (filteredRehearsals.length === 0) return;
+    if (filteredRehearsals.length === 0) {
+      alert("当前区间暂无排练可导出");
+      return;
+    }
     setExportingAll(true);
     try {
       const { supabase } = await import("@/lib/supabase");
-      const wb = XLSX.utils.book_new();
+      // Issue #169：一次 .in 查询拉取区间内全部排练的出勤记录，代替逐场 N 次查询——
+      // 总耗时降为单次往返，避免微信浏览器「用户手势后 blob 下载」宽容窗口内
+      // 耗时过长导致 a.click() 被静默拦截。
+      const { data, error } = await supabase
+        .from("attendances")
+        .select("*, profiles!inner(full_name, instrument, email)")
+        .in(
+          "rehearsal_id",
+          filteredRehearsals.map((r) => r.id),
+        );
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        alert("该区间暂无出勤记录");
+        return;
+      }
 
-      for (const rehearsal of filteredRehearsals) {
-        const { data } = await supabase
-          .from("attendances")
-          .select("*, profiles!inner(full_name, instrument, email)")
-          .eq("rehearsal_id", rehearsal.id);
-        const rows = ((data ?? []) as Array<Record<string, unknown>>).map((r) => [
+      // 前端按 rehearsal_id 分组，逐场构建 sheet
+      const grouped = new Map<number, Array<Record<string, unknown>>>();
+      for (const row of data as Array<Record<string, unknown>>) {
+        const rehearsalId = row.rehearsal_id as number;
+        if (!grouped.has(rehearsalId)) grouped.set(rehearsalId, []);
+        grouped.get(rehearsalId)!.push(row);
+      }
+
+      // sheet 名清洗 + 重名去重（曲目_日期 可能含非法字符或重名，XLSX 会抛错）
+      const sheetNames = buildUniqueSheetNames(
+        filteredRehearsals.map((r) => {
+          const dateStr = r.start_time ? getLocalDateString(parseLocalISO(r.start_time)) : "";
+          return `${r.repertoire ?? "排练"}_${dateStr}`;
+        }),
+      );
+
+      const wb = XLSX.utils.book_new();
+      filteredRehearsals.forEach((rehearsal, index) => {
+        const rows = (grouped.get(rehearsal.id) ?? []).map((r) => [
           (r.profiles as { full_name?: string } | null)?.full_name ?? "—",
           (r.profiles as { email?: string } | null)?.email ?? "—",
           STATUS_LABEL[String(r.status ?? "")] ?? String(r.status ?? "—"),
@@ -140,18 +175,15 @@ export default function MembersPage() {
         ]);
         const sheetData = [["姓名", "邮箱", "出勤情况", "签到时间"], ...rows];
         const ws = XLSX.utils.aoa_to_sheet(sheetData);
-        const dateStr = rehearsal.start_time
-          ? parseLocalISO(rehearsal.start_time).toISOString().slice(0, 10)
-          : "";
-        const sheetName = `${rehearsal.repertoire ?? "排练"}_${dateStr}`.slice(0, 31);
-        XLSX.utils.book_append_sheet(wb, ws, sheetName);
-      }
+        XLSX.utils.book_append_sheet(wb, ws, sheetNames[index]);
+      });
 
-      const startStr = attendanceStartDate
-        ? attendanceStartDate.toISOString().slice(0, 10)
-        : "全部";
-      const endStr = attendanceEndDate ? attendanceEndDate.toISOString().slice(0, 10) : "全部";
+      const startStr = attendanceStartDate ? getLocalDateString(attendanceStartDate) : "全部";
+      const endStr = attendanceEndDate ? getLocalDateString(attendanceEndDate) : "全部";
       XLSX.writeFile(wb, `考勤记录_${startStr}_${endStr}.xlsx`);
+    } catch (error) {
+      // 微信 XWeb 对 unhandled rejection 完全静默，必须显式 alert 错误信息
+      alert(`导出失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setExportingAll(false);
     }
@@ -199,18 +231,17 @@ export default function MembersPage() {
               </div>
             </div>
 
-            {filteredRehearsals.length > 0 && (
-              <button
-                type="button"
-                onClick={exportAllRehearsals}
-                disabled={exportingAll}
-                className="mb-3 w-full rounded-2xl bg-primary px-4 py-3 text-sm font-medium text-primary-foreground shadow-md hover:opacity-90 disabled:opacity-50"
-              >
-                {exportingAll
-                  ? "导出中…"
-                  : `📥 导出区间全部考勤（${filteredRehearsals.length} 场排练）`}
-              </button>
-            )}
+            {/* 按钮常驻：区间为空时点击给出 alert 提示（Issue #169 空数据提示） */}
+            <button
+              type="button"
+              onClick={exportAllRehearsals}
+              disabled={exportingAll}
+              className="mb-3 w-full rounded-2xl bg-primary px-4 py-3 text-sm font-medium text-primary-foreground shadow-md hover:opacity-90 disabled:opacity-50"
+            >
+              {exportingAll
+                ? "导出中…"
+                : `📥 导出区间全部考勤（${filteredRehearsals.length} 场排练）`}
+            </button>
 
             <div className="max-h-[400px] space-y-2 overflow-y-auto">
               {filteredRehearsals.length === 0 ? (

@@ -47,3 +47,4 @@ next-env.d.ts
 
 # supabase cli 本地状态
 supabase/.temp/
+src/node_modules/

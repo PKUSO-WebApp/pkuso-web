@@ -4,13 +4,21 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import MembersPage from "./page";
 
+// 固定测试时区为 UTC+8：旧实现 parseLocalISO(...).toISOString().slice(0,10) 在
+// UTC+8 下会把凌晨的日期退回前一天（导出文件名/sheet 名日期偏移一天的回归）。
+// vitest 4 默认 forks pool，每文件独立子进程，本文件的 TZ 不会泄漏到其他测试。
+process.env.TZ = "Asia/Shanghai";
+
 // 通过 vi.hoisted 暴露可变 mock，方便测试内动态配置返回值
 const mocks = vi.hoisted(() => {
   const mockFetchByRehearsal = vi.fn();
   const mockUpdateStatus = vi.fn().mockResolvedValue(null);
   const mockWriteFile = vi.fn();
+  const mockAoaToSheet = vi.fn();
+  const mockBookNew = vi.fn(() => ({}));
+  const mockBookAppendSheet = vi.fn();
 
-  const mockRehearsals = [
+  const defaultRehearsals = [
     {
       id: 1,
       repertoire: "贝多芬第五交响曲",
@@ -26,6 +34,8 @@ const mocks = vi.hoisted(() => {
       location: "排练厅 201",
     },
   ];
+  // 可变副本：空区间测试会清空，beforeEach 中用 defaultRehearsals 恢复
+  const mockRehearsals = [...defaultRehearsals];
 
   // 考勤名单（fetchByRehearsal 返回；姓名取 3 字避免与弹窗头像首字文本重复）
   const mockAttendanceRows = [
@@ -47,12 +57,81 @@ const mocks = vi.hoisted(() => {
     },
   ];
 
+  // 导出全部：一次 .in 查询返回的全部出勤记录（覆盖两个排练）
+  const mockAllAttendanceRows = [
+    {
+      id: 1,
+      rehearsal_id: 1,
+      user_id: "u1",
+      status: "absent",
+      sign_in_time: null,
+      profiles: { full_name: "张小三", instrument: "小提琴", email: "zhangsan@example.com" },
+    },
+    {
+      id: 2,
+      rehearsal_id: 1,
+      user_id: "u2",
+      status: "present",
+      sign_in_time: "2026-08-20T19:05:00",
+      profiles: { full_name: "李小四", instrument: "大提琴", email: "lisi@example.com" },
+    },
+    {
+      id: 3,
+      rehearsal_id: 2,
+      user_id: "u3",
+      status: "late",
+      sign_in_time: "2026-08-21T14:10:00",
+      profiles: { full_name: "王小五", instrument: "长笛", email: "wangwu@example.com" },
+    },
+  ];
+
+  // 导出单场：.eq 查询返回
+  const mockSingleAttendanceRows = [
+    {
+      profiles: { full_name: "张三", email: "zhangsan@example.com" },
+      status: "present",
+      sign_in_time: "2026-08-20T19:05:00",
+    },
+  ];
+
+  // supabase 链式 mock：select/eq/in/order 返回链自身，then 由 beforeEach 按查询类型配置返回值
+  const mockSelect = vi.fn();
+  const mockEq = vi.fn();
+  const mockIn = vi.fn();
+  const mockOrder = vi.fn();
+  const mockThen = vi.fn();
+  const mockFrom = vi.fn();
+  const chain = {
+    select: mockSelect,
+    eq: mockEq,
+    in: mockIn,
+    order: mockOrder,
+    then: mockThen,
+  };
+  mockSelect.mockReturnValue(chain);
+  mockEq.mockReturnValue(chain);
+  mockIn.mockReturnValue(chain);
+  mockOrder.mockReturnValue(chain);
+
   return {
     mockFetchByRehearsal,
     mockUpdateStatus,
     mockWriteFile,
+    mockAoaToSheet,
+    mockBookNew,
+    mockBookAppendSheet,
+    defaultRehearsals,
     mockRehearsals,
     mockAttendanceRows,
+    mockAllAttendanceRows,
+    mockSingleAttendanceRows,
+    mockSelect,
+    mockEq,
+    mockIn,
+    mockOrder,
+    mockThen,
+    mockFrom,
+    chain,
   };
 });
 
@@ -98,38 +177,19 @@ vi.mock("@/hooks/useAttendance", () => ({
   }),
 }));
 
-// Mock supabase：导出单场考勤的查询链
-vi.mock("@/lib/supabase", () => {
-  const chain = {
-    select: vi.fn(() => chain),
-    eq: vi.fn(() => chain),
-    order: vi.fn(() => chain),
-    then: vi.fn((resolve: (v: unknown) => void) =>
-      resolve({
-        data: [
-          {
-            profiles: { full_name: "张三", email: "zhangsan@example.com" },
-            status: "present",
-            sign_in_time: "2026-08-20T19:05:00",
-          },
-        ],
-        error: null,
-      }),
-    ),
-  };
-  return {
-    supabase: {
-      from: vi.fn(() => chain),
-    },
-  };
-});
+// Mock supabase：链式查询，then 的返回值由 beforeEach 配置
+vi.mock("@/lib/supabase", () => ({
+  supabase: {
+    from: mocks.mockFrom,
+  },
+}));
 
 // Mock xlsx：避免测试真正写文件
 vi.mock("xlsx", () => ({
   utils: {
-    aoa_to_sheet: vi.fn(),
-    book_new: vi.fn(() => ({})),
-    book_append_sheet: vi.fn(),
+    aoa_to_sheet: mocks.mockAoaToSheet,
+    book_new: mocks.mockBookNew,
+    book_append_sheet: mocks.mockBookAppendSheet,
   },
   writeFile: mocks.mockWriteFile,
 }));
@@ -138,6 +198,19 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.mockFetchByRehearsal.mockResolvedValue(mocks.mockAttendanceRows);
+    mocks.mockFrom.mockReturnValue(mocks.chain);
+    // 恢复排练列表（空区间测试会清空）
+    mocks.mockRehearsals.splice(0, mocks.mockRehearsals.length, ...mocks.defaultRehearsals);
+    // 默认按查询类型返回数据：.in → 全部考勤；.eq → 单场考勤
+    mocks.mockThen.mockImplementation((resolve: (v: unknown) => void) => {
+      if (mocks.mockIn.mock.calls.length > 0) {
+        resolve({ data: mocks.mockAllAttendanceRows, error: null });
+      } else if (mocks.mockEq.mock.calls.length > 0) {
+        resolve({ data: mocks.mockSingleAttendanceRows, error: null });
+      } else {
+        resolve({ data: [], error: null });
+      }
+    });
   });
 
   // ==========================================
@@ -291,5 +364,193 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
     expect(html).toContain("text-text");
     expect(html).toContain("text-text-muted");
     expect(html).not.toMatch(/border-zinc|bg-zinc|text-zinc/);
+  });
+
+  // ==========================================
+  // Issue #169: 导出全部考勤在微信浏览器无效
+  // ==========================================
+  it("导出全部：一次 .in 查询拉取全部考勤，不逐场 .eq 查询", async () => {
+    render(<MembersPage />);
+    fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
+
+    await waitFor(() => {
+      expect(mocks.mockWriteFile).toHaveBeenCalled();
+    });
+    // 只发一次查询：.in 携带全部排练 id（按开始时间倒序），无逐场查询
+    expect(mocks.mockFrom).toHaveBeenCalledTimes(1);
+    expect(mocks.mockIn).toHaveBeenCalledTimes(1);
+    expect(mocks.mockIn).toHaveBeenCalledWith("rehearsal_id", [2, 1]);
+    expect(mocks.mockEq).not.toHaveBeenCalled();
+    // 每个排练一个 sheet，sheet 名为 曲目_日期（按列表顺序：8-21 在 8-20 之前）
+    expect(mocks.mockBookAppendSheet).toHaveBeenCalledTimes(2);
+    const sheetNames = mocks.mockBookAppendSheet.mock.calls.map((c) => c[2]);
+    expect(sheetNames).toEqual(["莫扎特协奏曲_2026-08-21", "贝多芬第五交响曲_2026-08-20"]);
+    // 无日期筛选时文件名区间为「全部」
+    expect(mocks.mockWriteFile).toHaveBeenCalledWith(expect.anything(), "考勤记录_全部_全部.xlsx");
+  });
+
+  it("导出全部：区间为空时 alert 提示（不再静默 return）", async () => {
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    mocks.mockRehearsals.splice(0, mocks.mockRehearsals.length);
+
+    render(<MembersPage />);
+    fireEvent.click(screen.getByText("📥 导出区间全部考勤（0 场排练）"));
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith("当前区间暂无排练可导出");
+    });
+    expect(mocks.mockWriteFile).not.toHaveBeenCalled();
+    expect(mocks.mockFrom).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
+
+  it("导出全部：区间内全部排练无出勤记录时 alert 提示", async () => {
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    mocks.mockThen.mockImplementation((resolve: (v: unknown) => void) =>
+      resolve({ data: [], error: null }),
+    );
+
+    render(<MembersPage />);
+    fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith("该区间暂无出勤记录");
+    });
+    expect(mocks.mockWriteFile).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
+
+  it("导出全部：查询失败时 alert 错误信息（微信 XWeb 静默防护）", async () => {
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    mocks.mockThen.mockImplementation((_resolve: unknown, reject: (e: Error) => void) =>
+      reject(new Error("网络中断")),
+    );
+
+    render(<MembersPage />);
+    fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith("导出失败：网络中断");
+    });
+    expect(mocks.mockWriteFile).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
+
+  it("导出单场：查询失败时 alert 错误信息（与导出全部对称）", async () => {
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    mocks.mockThen.mockImplementation((_resolve: unknown, reject: (e: Error) => void) =>
+      reject(new Error("网络中断")),
+    );
+
+    render(<MembersPage />);
+    fireEvent.click(screen.getAllByText("📥 导出")[0]);
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith("导出失败：网络中断");
+    });
+    expect(mocks.mockWriteFile).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
+
+  it("导出全部：sheet 名重名时追加序号（曲目_日期 去重）", async () => {
+    // 两场排练同曲目同日期 → sheet 名相同 → 第二个追加 (2)
+    mocks.mockRehearsals.splice(
+      0,
+      mocks.mockRehearsals.length,
+      {
+        id: 1,
+        repertoire: "贝多芬第五交响曲",
+        start_time: "2026-08-20T19:00:00",
+        end_time: "2026-08-20T21:00:00",
+        location: "新太阳活动中心",
+      },
+      {
+        id: 2,
+        repertoire: "贝多芬第五交响曲",
+        start_time: "2026-08-20T09:00:00",
+        end_time: "2026-08-20T11:00:00",
+        location: "排练厅 201",
+      },
+    );
+
+    render(<MembersPage />);
+    fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
+
+    await waitFor(() => {
+      expect(mocks.mockWriteFile).toHaveBeenCalled();
+    });
+    const sheetNames = mocks.mockBookAppendSheet.mock.calls.map((c) => c[2]);
+    expect(sheetNames).toEqual(["贝多芬第五交响曲_2026-08-20", "贝多芬第五交响曲_2026-08-20(2)"]);
+  });
+
+  // ==========================================
+  // 导出文件名/sheet 名日期偏移回归（UTC+8 下 toISOString 退回前一天）
+  // 测试时区已固定为 Asia/Shanghai：凌晨开始的排练，旧实现会输出前一天日期
+  // ==========================================
+  it("导出单场：文件名日期使用本地日期（UTC+8 不偏移一天）", async () => {
+    mocks.mockRehearsals.splice(0, mocks.mockRehearsals.length, {
+      id: 1,
+      repertoire: "贝多芬第五交响曲",
+      start_time: "2026-08-20T01:00:00",
+      end_time: "2026-08-20T03:00:00",
+      location: "新太阳活动中心",
+    });
+
+    render(<MembersPage />);
+    fireEvent.click(screen.getAllByText("📥 导出")[0]);
+
+    await waitFor(() => {
+      expect(mocks.mockWriteFile).toHaveBeenCalledWith(
+        expect.anything(),
+        "考勤记录_贝多芬第五交响曲_2026-08-20.xlsx",
+      );
+    });
+  });
+
+  it("导出全部：sheet 名日期使用本地日期（凌晨排练不退回前一天）", async () => {
+    mocks.mockRehearsals.splice(
+      0,
+      mocks.mockRehearsals.length,
+      {
+        id: 1,
+        repertoire: "贝多芬第五交响曲",
+        start_time: "2026-08-20T01:00:00",
+        end_time: "2026-08-20T03:00:00",
+        location: "新太阳活动中心",
+      },
+      {
+        id: 2,
+        repertoire: "莫扎特协奏曲",
+        start_time: "2026-08-21T14:00:00",
+        end_time: "2026-08-21T16:00:00",
+        location: "排练厅 201",
+      },
+    );
+
+    render(<MembersPage />);
+    fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
+
+    await waitFor(() => {
+      expect(mocks.mockWriteFile).toHaveBeenCalled();
+    });
+    const sheetNames = mocks.mockBookAppendSheet.mock.calls.map((c) => c[2]);
+    expect(sheetNames).toEqual(["莫扎特协奏曲_2026-08-21", "贝多芬第五交响曲_2026-08-20"]);
+  });
+
+  it("导出全部：文件名区间日期使用本地日期（选中日期筛选后不偏移）", async () => {
+    render(<MembersPage />);
+    const dateInputs = screen.getAllByPlaceholderText("选择日期");
+    fireEvent.change(dateInputs[0], { target: { value: "2026-08-20" } });
+    fireEvent.change(dateInputs[1], { target: { value: "2026-08-21" } });
+
+    // 日期筛选后两场排练仍都在区间内
+    fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
+
+    await waitFor(() => {
+      expect(mocks.mockWriteFile).toHaveBeenCalledWith(
+        expect.anything(),
+        "考勤记录_2026-08-20_2026-08-21.xlsx",
+      );
+    });
   });
 });

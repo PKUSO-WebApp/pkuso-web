@@ -17,7 +17,8 @@ import {
   type CreateFormState,
 } from "@/app/(member)/schedule/components/create-rehearsal-modal";
 import { AttendanceModal } from "@/app/(member)/schedule/components/attendance-modal";
-import type { RehearsalRow, AttendanceRowWithUser, AttendanceStatus } from "@/types/database";
+import { useAttendanceEditor } from "@/hooks/useAttendanceEditor";
+import type { RehearsalRow } from "@/types/database";
 import { formatLocalISO, parseLocalISO, getLocalDateString } from "@/lib/date-utils";
 
 type RehearsalType = "合排" | "分排";
@@ -35,14 +36,21 @@ const EMPTY_FORM: CreateFormState = {
 export default function AdminRehearsalsPage() {
   const router = useRouter();
   const { data: schedules, loading, create, update, remove } = useRehearsals();
-  const {
-    loading: attendanceLoading,
-    fetchByRehearsal,
-    updateStatus,
-    batchInsert,
-  } = useAttendance();
+  const { batchInsert } = useAttendance();
   const { checkConflict } = useSchedule();
   const { data: allProfiles } = useProfiles({ status: "approved" });
+
+  // 考勤查看/编辑（与 admin/members 共享同一套弹窗状态逻辑）
+  const {
+    attendanceRehearsal,
+    attendanceLoading,
+    attendanceList,
+    attendanceSaving,
+    openAttendance,
+    closeAttendance,
+    onAttendanceStatusChange,
+    saveAttendance,
+  } = useAttendanceEditor();
 
   const [currentType, setCurrentType] = React.useState<RehearsalType>("合排");
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -54,38 +62,6 @@ export default function AdminRehearsalsPage() {
   const [conflictModalOpen, setConflictModalOpen] = React.useState(false);
   const [startDateFilter, setStartDateFilter] = React.useState<Date | null>(null);
   const [endDateFilter, setEndDateFilter] = React.useState<Date | null>(null);
-
-  const [attendanceRehearsal, setAttendanceRehearsal] = React.useState<RehearsalRow | null>(null);
-  const [attendanceList, setAttendanceList] = React.useState<AttendanceRowWithUser[]>([]);
-  const [attendanceSaving, setAttendanceSaving] = React.useState(false);
-  const pendingAttendanceChanges = React.useRef<Map<string, string>>(new Map<string, string>());
-
-  // 管理员查看考勤
-  React.useEffect(() => {
-    if (!attendanceRehearsal) return;
-    pendingAttendanceChanges.current.clear();
-    void fetchByRehearsal(attendanceRehearsal.id).then((rows) => setAttendanceList(rows));
-  }, [attendanceRehearsal, fetchByRehearsal]);
-
-  const handleSaveAttendance = async () => {
-    if (!attendanceRehearsal) return;
-    const changes = pendingAttendanceChanges.current;
-    if (changes.size === 0) {
-      return;
-    }
-    setAttendanceSaving(true);
-    let hasError = false;
-    for (const [userId, status] of changes) {
-      const errMsg = await updateStatus(attendanceRehearsal.id, userId, status as AttendanceStatus);
-      if (errMsg) hasError = true;
-    }
-    setAttendanceSaving(false);
-    if (hasError) alert("部分出勤更新失败，请刷新后重试");
-    // 刷新列表
-    const rows = await fetchByRehearsal(attendanceRehearsal.id);
-    setAttendanceList(rows);
-    pendingAttendanceChanges.current.clear();
-  };
 
   const list = React.useMemo(
     () =>
@@ -313,7 +289,7 @@ export default function AdminRehearsalsPage() {
               item={item}
               onEdit={() => openEdit(item)}
               onDelete={() => handleDelete(item.id)}
-              onViewAttendance={() => setAttendanceRehearsal(item)}
+              onViewAttendance={() => openAttendance(item)}
             />
           ))}
         {!loading && list.length === 0 && (
@@ -346,17 +322,10 @@ export default function AdminRehearsalsPage() {
         loading={attendanceLoading}
         list={attendanceList}
         editable
-        onStatusChange={(userId, status) => {
-          pendingAttendanceChanges.current.set(userId, status);
-        }}
-        onSave={handleSaveAttendance}
+        onStatusChange={onAttendanceStatusChange}
+        onSave={saveAttendance}
         saving={attendanceSaving}
-        onClose={() => {
-          if (!attendanceSaving) {
-            pendingAttendanceChanges.current.clear();
-            setAttendanceRehearsal(null);
-          }
-        }}
+        onClose={closeAttendance}
       />
 
       <Modal

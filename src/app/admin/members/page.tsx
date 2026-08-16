@@ -5,6 +5,8 @@ import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { useRehearsals } from "@/hooks/useRehearsals";
 import { useProfiles } from "@/hooks/useProfiles";
+import { useAttendanceEditor } from "@/hooks/useAttendanceEditor";
+import { AttendanceModal } from "@/app/(member)/schedule/components/attendance-modal";
 import { Toggle } from "@/components/ui/Toggle";
 import { parseLocalISO } from "@/lib/date-utils";
 import { groupProfilesByInstrument } from "@/lib/roster-utils";
@@ -48,6 +50,18 @@ export default function MembersPage() {
   const [attendanceEndDate, setAttendanceEndDate] = React.useState<Date | null>(null);
   const [exportingId, setExportingId] = React.useState<number | null>(null);
   const [exportingAll, setExportingAll] = React.useState(false);
+
+  // 考勤查看/编辑弹窗（点击排练行打开，与 admin/rehearsals 共享同一套状态逻辑）
+  const {
+    attendanceRehearsal,
+    attendanceLoading,
+    attendanceList,
+    attendanceSaving,
+    openAttendance,
+    closeAttendance,
+    onAttendanceStatusChange,
+    saveAttendance,
+  } = useAttendanceEditor();
 
   // 按日期区间筛选排练（默认显示全部）
   const filteredRehearsals = React.useMemo(() => {
@@ -209,24 +223,46 @@ export default function MembersPage() {
                 const timeStr = `${String(startDate.getHours()).padStart(2, "0")}:${String(startDate.getMinutes()).padStart(2, "0")} - ${endDate ? `${String(endDate.getHours()).padStart(2, "0")}:${String(endDate.getMinutes()).padStart(2, "0")}` : "—"}`;
 
                 return (
-                  <div
-                    key={rehearsal.id}
-                    className="flex items-center justify-between rounded-2xl border border-border bg-card px-3 py-2.5 text-xs"
-                  >
-                    <div className="min-w-0 flex-1 space-y-0.5">
-                      <p className="truncate font-medium text-text">
-                        {rehearsal.repertoire ?? "未命名排练"}
-                      </p>
-                      <p className="text-text-muted">
-                        {dateStr} · {timeStr}
-                      </p>
-                      <p className="text-text-muted">📍 {rehearsal.location ?? "—"}</p>
+                  // 方案 A：可点击区（role="button"）只含文本信息，导出按钮为行外兄弟节点。
+                  // 嵌套交互元素（button 嵌在 role="button" 内）违反 ARIA 规则、读屏混乱，
+                  // 事件也无法靠 stopPropagation 拦截键盘冒泡，故改为兄弟结构。
+                  <div key={rehearsal.id} className="flex items-center gap-2">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        // 双保险：若未来在行内嵌入真实按钮，不拦截其点击。
+                        // 注意不能用 e.target !== e.currentTarget —— 点击文本时 target 是
+                        // 文本元素而非容器自身，会拦截核心交互（点击文本打开弹窗）。
+                        if ((e.target as HTMLElement).closest("button")) return;
+                        openAttendance(rehearsal);
+                      }}
+                      onKeyDown={(e) => {
+                        // 目标守卫：只响应行容器自身的键盘事件，
+                        // 子元素的键盘事件（如未来行内新增的可聚焦元素）不被行处理器劫持
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openAttendance(rehearsal);
+                        }
+                      }}
+                      className="min-w-0 flex-1 cursor-pointer rounded-2xl border border-border bg-card px-3 py-2.5 text-xs transition-colors hover:bg-muted"
+                    >
+                      <div className="min-w-0 space-y-0.5">
+                        <p className="truncate font-medium text-text">
+                          {rehearsal.repertoire ?? "未命名排练"}
+                        </p>
+                        <p className="text-text-muted">
+                          {dateStr} · {timeStr}
+                        </p>
+                        <p className="text-text-muted">📍 {rehearsal.location ?? "—"}</p>
+                      </div>
                     </div>
                     <button
                       type="button"
                       onClick={() => exportSingleRehearsal(rehearsal)}
                       disabled={exportingId === rehearsal.id}
-                      className="ml-2 flex-shrink-0 rounded-full bg-primary px-3 py-1.5 text-label font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                      className="flex-shrink-0 cursor-pointer rounded-full bg-primary px-3 py-1.5 text-label font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
                     >
                       {exportingId === rehearsal.id ? "导出中…" : "📥 导出"}
                     </button>
@@ -299,6 +335,18 @@ export default function MembersPage() {
         user={selectedUser}
         onClose={() => setSelectedUser(null)}
         onSave={updateProfile}
+      />
+
+      <AttendanceModal
+        open={!!attendanceRehearsal}
+        title={attendanceRehearsal?.repertoire ?? ""}
+        loading={attendanceLoading}
+        list={attendanceList}
+        editable
+        onStatusChange={onAttendanceStatusChange}
+        onSave={saveAttendance}
+        saving={attendanceSaving}
+        onClose={closeAttendance}
       />
     </div>
   );

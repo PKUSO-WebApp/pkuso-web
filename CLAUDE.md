@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 pnpm dev          # 开发服务器 http://localhost:3000
-pnpm build        # 生产构建(含 tsc 类型检查)
+pnpm build        # 生产构建(Next 16 默认**不含** tsc 类型检查,必须单独 pnpm typecheck)
 pnpm typecheck    # TypeScript 类型检查
 pnpm lint         # ESLint(flat config:eslint.config.mjs)
 pnpm format       # Prettier 格式检查
@@ -29,13 +29,13 @@ pnpm verify       # 一键:format → lint → typecheck → test
 
 - `src/lib/supabase.ts` —— 浏览器端客户端(anon key,受 RLS 约束):`import { supabase } from "@/lib/supabase"`
 - `src/lib/supabase-server.ts` —— `createServerSupabase()`,用 service role key,**绕过 RLS,只允许在 API route 中用于管理员操作**
-- 邮件通知走 Resend(notify API route)
+- 邮件通知走 notify API route:**SMTP 优先(默认 smtp.163.com),Resend 兜底**(`resolveTransporter` 双模式)
 
 ### 环境变量(`.env.local`,不入库)
 
 - `NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`(仅服务端)
-- `RESEND_API_KEY`
+- 邮件:`RESEND_API_KEY` 或 SMTP 系(`SMTP_USER`/`SMTP_PASS`/`SMTP_HOST`/`SMTP_PORT`/`SMTP_FROM`,SMTP 优先)
 
 ### 认证
 
@@ -45,25 +45,28 @@ pnpm verify       # 一键:format → lint → typecheck → test
 
 ```
 src/app/
-├── (auth)/           # route group, URL: /login, /signup
-├── (member)/         # route group, URL: /, /schedule, /community, /profile
-│   ├── layout.tsx    # member tab bar（首页/日程/社区/我的）
-│   ├── page.tsx      # 排练日程展示
-│   ├── schedule/     # 日程浏览+签到
-│   │   └── components/  # rehearsal-card, code-verify-modal, utils
-│   ├── community/    # 社区帖子
+├── (auth)/           # route group, URL: /login, /signup, /reset-password
+├── (member)/         # route group, URL: /, /schedule, /community, /members, /profile
+│   ├── layout.tsx    # member tab bar（首页/社区/日程/成员/我的）
+│   ├── page.tsx      # 排练日程展示（含历史合排 tab）+ 签到
+│   ├── schedule/     # 排练房预约（甘特图+预约）
+│   │   └── components/  # rehearsal-card, code-verify-modal, leave-request-modal, schedule-gantt 等
+│   ├── community/    # 社区帖子（重奏/团建）
+│   ├── members/      # 全团成员花名册（声部分组+拼音搜索）
 │   └── profile/      # 个人信息+密码修改
-├── admin/            # 普通目录, URL: /admin, /admin/rehearsals, /admin/schedule, /admin/members, /admin/profile
-│   ├── layout.tsx    # admin tab bar（控制台/排练/日程/成员/我的）+ 角色鉴权 + 守护页超时刷新
-│   ├── page.tsx      # 仪表盘（审批+公告）
-│   ├── components/   # admin 共享组件（announcement-list-modal 等）
+├── admin/            # 普通目录, URL: /admin, /admin/rehearsals, /admin/schedule, /admin/members, /admin/community, /admin/profile
+│   ├── layout.tsx    # admin tab bar（控制台/排练/社区/日程/成员/我的）+ 角色鉴权 + 守护页超时刷新
+│   ├── page.tsx      # 仪表盘（入团审批/请假审批/公告,tab 切换）
+│   ├── components/   # admin 共享组件（announcement-list-modal, leave-management, leave-detail-modal 等）
 │   ├── rehearsals/   # 排练管理（CRUD+考勤查看）
 │   │   └── components/  # rehearsal-card
 │   ├── schedule/     # 日程管理（甘特图+预约 CRUD）
 │   │   └── components/  # admin-schedule-gantt, create-schedule-modal, date-selector
-│   ├── members/      # 花名册+考勤统计
-│   └── profile/      # 个人设置（含邀请码管理）
-└── api/              # API routes（notify）
+│   ├── members/      # 花名册+考勤统计（排练行点击直达考勤编辑）
+│   ├── community/    # 社区帖子管理
+│   └── profile/      # 个人设置（含邀请码管理+邮件签名）
+└── api/              # API routes（notify, admin/approve, admin/approve-all, admin/reject,
+                      #            admin/reject-all, admin/announcement, admin/settings, admin/leave）
 ```
 
 ### 开发方式：admin/member 分端独立
@@ -92,11 +95,18 @@ src/app/
 
 ## 前端设计原则
 
-- **Token 优先**: `src/styles/tokens.css` 为设计令牌单一可信源。所有颜色通过 Tailwind 语义类使用(`bg-primary`/`text-text`/`border-border` 等),**禁止硬编码 `zinc-*`**。16 对语义色覆盖亮/暗双模式。
+- **Token 优先**: `src/styles/tokens.css` 为设计令牌单一可信源。所有颜色通过 Tailwind 语义类使用,**禁止硬编码调色板色**(`zinc-*`/`text-white` 等——`text-white` 应写 `text-primary-foreground`,暗色模式才不会低对比度)。21 对语义色覆盖亮/暗双模式,完整清单以 tokens.css 为准。
 - **移动端优先**: 页面宽 `max-w-md`(448px),Modal 默认底部弹出(`position="bottom"`),底部安全区 `pb-safe`。
-- **罗列内容必须可滚动**: 页面是固定视口(AuthGate `h-screen` 列 + 两端 layout `flex-1 overflow-hidden`,页面本身不可滚动)。所有罗列性质的组件(列表/卡片流)必须放在可滚动容器内(`flex-1 min-h-0 overflow-y-auto` 或 `max-h-[Npx] overflow-y-auto`),否则超出视口的内容被裁剪不可达(Issue #146 教训)。
-- **组件复用**: 写新 UI 前先查 `src/components/ui/`(Modal/Toggle/Card)和 `src/app/schedule/components/`(排练相关组件)。Button 暂不统一(20+ 变体,待设计系统定型)。
+- **罗列内容必须可滚动**: 页面是固定视口(AuthGate `h-screen` 列 + 两端 layout `flex-1 overflow-hidden`,页面本身不可滚动)。罗列性质的内容必须放可滚动容器(`flex-1 min-h-0 overflow-y-auto` 或 `max-h-[Npx] overflow-y-auto`);含筛选控件的列表页,根容器用 `flex h-full min-h-0 flex-col`,控件+列表整体放滚动区(矮屏可到达)。
+- **多行文本框可拉长**: textarea 保持默认可拖拽调整大小(resize: both),除全屏铺满等豁免场景外**不要加 `resize-none`**,且避免 `.input` 固定高度类覆盖 rows。
+- **组件复用**: 写新 UI 前先查 `src/components/ui/`(Modal/Toggle/Card/Toast)和 `src/app/(member)/schedule/components/`(排练相关组件)。Button 暂不统一(35+ 变体,待设计系统定型)。
 - **暗色模式**: `<html data-theme="dark">` 即可全局切换,所有组件应双模式可用。测试时亮/暗都过一遍。
+- **0 行更新必须检测**: 带状态守卫的 update 要链 `.select("id")`,0 行(RLS 静默失败/并发已处理)时 return false,且**在任何副作用(如删附件)之前检测**。
+- **附件路径提取**: storage 路径从 URL 提取统一用 `indexOf("bucket/")` + `decodeURIComponent`,try/catch 兜底(参考 `usePosts.remove`)。
+- **blob URL 必须 revoke**: `URL.createObjectURL` 生成的预览在关闭/换图/卸载时配对 `URL.revokeObjectURL`。
+- **竞态守卫用递增序号**: 快速切换的异步读取用 `const seq = ++ref.current` + 回调内比较(优于存 ID 模式,支持任意次快速切换)。
+- **状态机集中注释**: 复杂交互状态机(如请假流程、卡片按钮矩阵)在文件头集中注释声明规则,前后端一致。
+- **弹层焦点管理**: 叠加弹层(全屏层盖 Modal)时,底层加 `inert` 隔离;全屏层内用根节点 `tabIndex={-1}` + Tab 循环做 focus trap(参考 `admin/profile` 全屏签名编辑)。
 - **颜色语义表**:
 
 | 用途           | 类名                                        | 亮色                          | 暗色                          |

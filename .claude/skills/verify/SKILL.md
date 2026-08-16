@@ -30,4 +30,4 @@ description: 验证本项目代码改动是否真正可用。完成非平凡改�
    - 改了 API route(notify、delete-user 等)→ 从触发它的 UI 操作验证,或直接请求接口
    - UI 改动 → 亮/暗色模式都看一眼(项目有统一颜色系统)
 
-不要以 `npm run build` 通过作为"没问题"的依据(见 CLAUDE.md 构建陷阱一节)。
+不要以 `npm run build` 通过作为"没问题"的依据(CLAUDE.md 常用命令已注明 build 不含 tsc)。

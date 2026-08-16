@@ -21,6 +21,58 @@ export function isRehearsalUpdated(item: RehearsalRow): boolean {
 }
 
 /**
+ * 更新字段 → 文案映射（拼接顺序固定为 time/location/repertoire，与写入顺序无关）
+ *
+ * 'other' 是触发器写入的哨兵字段（仅改过 sign_in_code 等非细分字段时写入），
+ * 不参与文案拼接，由 getUpdateBadgeLabel 单独处理。
+ */
+const UPDATE_FIELD_LABEL: Record<string, string> = {
+  time: "时间",
+  location: "地点",
+  repertoire: "曲目",
+};
+
+/** 字段拼接的固定顺序（无论 updated_fields 中以何种顺序/次数写入，累积并集同理） */
+const UPDATE_FIELDS_ORDER = ["time", "location", "repertoire"] as const;
+
+/**
+ * 更新提示文案（Issue #171）
+ *
+ * updated_fields 为累积语义：触发器每次更新将本次变更字段并入既有值，即自创建以来
+ * 变更字段的并集（多次编辑不丢字段），故本函数只需对并集做一次拼接。
+ *
+ * - updated_fields 含细分字段（time/location/repertoire）：按固定顺序拼接
+ *   （time/location/repertoire，与写入顺序无关），忽略未知字段与 'other' 哨兵，
+ *   返回「更新排练时间/地点/…」；
+ * - updated_fields 仅含 'other' 哨兵（新触发器语义：只改过 sign_in_code 等
+ *   非细分字段、从未改过细分字段）：返回 null，调用方据此不渲染提示；
+ * - updated_fields 为 null/空（存量已更新数据，新触发器上线前从未写入）但
+ *   updated_at > created_at：兜底「更新排练时间/地点/曲目」；
+ * - 未更新：返回 null，调用方据此不渲染提示。
+ */
+export function getUpdateBadgeLabel(item: RehearsalRow): string | null {
+  const raw = item.updated_fields;
+  if (raw && raw.trim() !== "") {
+    const fields = new Set(raw.split(",").map((f) => f.trim()));
+    const labels = UPDATE_FIELDS_ORDER.filter((f) => fields.has(f)).map(
+      (f) => UPDATE_FIELD_LABEL[f],
+    );
+    if (labels.length > 0) {
+      return `更新排练${labels.join("/")}`;
+    }
+    // 仅改过非细分字段（'other' 哨兵）：无细分字段变更，不显示更新提示
+    if (fields.has("other")) {
+      return null;
+    }
+  }
+  // 存量已更新数据兜底
+  if (isRehearsalUpdated(item)) {
+    return "更新排练时间/地点/曲目";
+  }
+  return null;
+}
+
+/**
  * 已结束判定：now >= end（恰好等于 end 的时刻也算已结束，与"持续到排练结束"一致）
  *
  * 复用 parseRehearsalTimes 的解析逻辑（end_time 缺失按 start + 3 小时计）；

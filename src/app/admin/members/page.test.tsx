@@ -225,16 +225,19 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
     expect(screen.getByText("📥 导出区间全部考勤（2 场排练）")).toBeInTheDocument();
   });
 
-  it("根容器 flex 化（矮屏布局）：头部固定、筛选控件 + 列表整体独立滚动（审计批次 3）", () => {
+  it("根容器 flex 化（矮屏布局）：头部固定、外层无嵌套滚动（审计批次 3 + Issue #171）", () => {
     const { container } = render(<MembersPage />);
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain("h-full");
     expect(root.className).toContain("flex-col");
-    // Toggle + 考勤/花名册区块所在的滚动容器
-    const scrollArea = root.querySelector(
-      "div.flex-1.min-h-0.overflow-y-auto",
-    ) as HTMLElement | null;
-    expect(scrollArea).not.toBeNull();
+    // 外层不再带 overflow-y-auto（消除嵌套滚动），滚动下沉到内层列表（max-h + overflow-y-auto）
+    const outer = root.querySelector("div.flex-1.min-h-0") as HTMLElement | null;
+    expect(outer).not.toBeNull();
+    expect(outer!.className).not.toContain("overflow-y-auto");
+    // 内层考勤列表保留自己的滚动容器（默认视图为考勤 tab）
+    const innerList = root.querySelector("section div.max-h-\\[400px\\]") as HTMLElement | null;
+    expect(innerList).not.toBeNull();
+    expect(innerList!.className).toContain("overflow-y-auto");
   });
 
   // ==========================================

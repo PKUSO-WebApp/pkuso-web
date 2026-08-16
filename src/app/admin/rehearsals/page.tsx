@@ -20,8 +20,28 @@ import { AttendanceModal } from "@/app/(member)/schedule/components/attendance-m
 import { useAttendanceEditor } from "@/hooks/useAttendanceEditor";
 import type { RehearsalRow } from "@/types/database";
 import { formatLocalISO, parseLocalISO, getLocalDateString } from "@/lib/date-utils";
+import { sortRehearsalsForMember, sortEndedFullRehearsals } from "@/lib/rehearsal-sort";
 
-type RehearsalType = "合排" | "分排";
+type RehearsalType = "合排" | "分排" | "历史合排";
+
+/** 日期区间筛选（三个 tab 共用；历史合排同样受区间约束，与其余 tab 口径一致） */
+function filterByDateRange(
+  r: RehearsalRow,
+  startDateFilter: Date | null,
+  endDateFilter: Date | null,
+): boolean {
+  if (!r.start_time) return false;
+  const rehearsalDate = parseLocalISO(r.start_time);
+  if (startDateFilter && rehearsalDate < startDateFilter) {
+    return false;
+  }
+  if (endDateFilter) {
+    const endOfDay = new Date(endDateFilter);
+    endOfDay.setHours(23, 59, 59, 999);
+    if (rehearsalDate > endOfDay) return false;
+  }
+  return true;
+}
 
 const EMPTY_FORM: CreateFormState = {
   type: "full",
@@ -63,36 +83,41 @@ export default function AdminRehearsalsPage() {
   const [startDateFilter, setStartDateFilter] = React.useState<Date | null>(null);
   const [endDateFilter, setEndDateFilter] = React.useState<Date | null>(null);
 
-  const list = React.useMemo(
-    () =>
-      schedules.filter((r) => {
-        // 类型筛选
-        if (r.type === "full") {
-          if (currentType !== "合排") return false;
-        } else if (r.type === "section") {
-          if (currentType !== "分排") return false;
-        } else {
-          return false;
-        }
+  // 分钟级时钟 tick：跨排练结束时刻停留页面时，定时刷新「进行中/已结束」分组与排序
+  // （与用户端首页同模式，Issue #171）
+  const [nowTick, setNowTick] = React.useState(() => Date.now());
 
-        // 日期筛选
-        if (!r.start_time) return false;
-        const rehearsalDate = parseLocalISO(r.start_time);
+  React.useEffect(() => {
+    const timer = window.setInterval(() => setNowTick(Date.now()), 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
-        if (startDateFilter && rehearsalDate < startDateFilter) {
-          return false;
-        }
+  const list = React.useMemo(() => {
+    // 显式传入 nowTick 时刻，排序/已结束判定与真实运行时刻无关（可测试、跨时刻停留自动刷新）
+    const now = new Date(nowTick);
+    const byDate = (r: RehearsalRow) => filterByDateRange(r, startDateFilter, endDateFilter);
 
-        if (endDateFilter) {
-          const endOfDay = new Date(endDateFilter);
-          endOfDay.setHours(23, 59, 59, 999);
-          if (rehearsalDate > endOfDay) return false;
-        }
+    // 历史合排（Issue #171）：仅已结束的合排，按结束时刻近 → 远，不限一周窗口
+    if (currentType === "历史合排") {
+      return sortEndedFullRehearsals(schedules.filter(byDate), now);
+    }
 
-        return true;
-      }),
-    [schedules, currentType, startDateFilter, endDateFilter],
-  );
+    const filtered = schedules.filter((r) => {
+      // 类型筛选
+      if (r.type === "full") {
+        if (currentType !== "合排") return false;
+      } else if (r.type === "section") {
+        if (currentType !== "分排") return false;
+      } else {
+        return false;
+      }
+      return byDate(r);
+    });
+
+    // 排序与用户端一致（Issue #171）：进行中/未开始近 → 远、已结束组底部近 → 远、
+    // 更新过的排练置顶（最近一次排练之后）、无时间排最后。admin 不过滤一周窗口，仅排序规则复用。
+    return sortRehearsalsForMember(filtered, now);
+  }, [schedules, currentType, startDateFilter, endDateFilter, nowTick]);
 
   const resetForm = () => {
     setEditingId(null);
@@ -102,8 +127,8 @@ export default function AdminRehearsalsPage() {
 
   const openCreate = () => {
     resetForm();
-    // 创建类型跟随当前 toggle
-    setForm((prev) => ({ ...prev, type: currentType === "合排" ? "full" : "section" }));
+    // 创建类型跟随当前 toggle（历史合排 tab 已隐藏发布按钮，此处兜底按「合排」处理）
+    setForm((prev) => ({ ...prev, type: currentType === "分排" ? "section" : "full" }));
     setCreateOpen(true);
   };
 
@@ -244,20 +269,32 @@ export default function AdminRehearsalsPage() {
     <div className="flex h-full min-h-0 flex-col space-y-4">
       <header className="mb-2 flex items-center justify-between gap-2">
         <div>
-          <h1 className="text-lg font-semibold text-text">排练管理</h1>
-          <p className="mt-1 text-xs text-text-muted">发布、编辑、查看排练与出勤</p>
+          {/* 标题联动（Issue #171）：历史合排 tab 切换标题与副标题 */}
+          <h1 className="text-lg font-semibold text-text">
+            {currentType === "历史合排" ? "历史合排" : "排练管理"}
+          </h1>
+          <p className="mt-1 text-xs text-text-muted">
+            {currentType === "历史合排" ? "查看已结束的合排排练" : "发布、编辑、查看排练与出勤"}
+          </p>
         </div>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="rounded-full bg-primary px-3 py-1 text-label font-medium text-primary-foreground shadow-sm hover:opacity-90"
-        >
-          ➕ 发布新日程
-        </button>
+        {/* 历史合排 tab 不提供发布入口（创建类型跟随 toggle 在历史视图无意义） */}
+        {currentType !== "历史合排" && (
+          <button
+            type="button"
+            onClick={openCreate}
+            className="rounded-full bg-primary px-3 py-1 text-label font-medium text-primary-foreground shadow-sm hover:opacity-90"
+          >
+            ➕ 发布新日程
+          </button>
+        )}
       </header>
 
       <div className="flex-1 min-h-0 space-y-4 overflow-y-auto">
-        <Toggle options={["合排", "分排"] as const} value={currentType} onChange={setCurrentType} />
+        <Toggle
+          options={["合排", "分排", "历史合排"] as const}
+          value={currentType}
+          onChange={setCurrentType}
+        />
 
         <div className="flex items-center gap-2">
           <div className="flex-1">

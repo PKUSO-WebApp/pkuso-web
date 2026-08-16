@@ -2,6 +2,7 @@ import { Card } from "@/components/ui/Card";
 import { formatRehearsalRange } from "@/lib/date-utils";
 import { canSignIn, hasSignedIn } from "@/lib/attendance-utils";
 import { parseLocalISO } from "@/lib/date-utils";
+import { getUpdateBadgeLabel } from "@/lib/rehearsal-sort";
 import type { LeaveStatus, RehearsalRow } from "@/types/database";
 
 /** 出勤状态文案（与考勤名单/请假面板一致） */
@@ -101,6 +102,10 @@ export function RehearsalCard({
     }
   }
 
+  // 未开始（Issue #171）：chip1 位置留空不渲染「未开始」文字；签到触发时机不变——
+  // 未开始仍在签到窗口外不可签（blockReason 判定逻辑保持不变），仅不显示提示文字
+  const isNotStarted = blockReason === "not-started";
+
   // 签到锁定（Issue #141）：sign_in_time 非空即已签到，出勤状态固定，不可再签到/修改
   const signedIn = hasSignedIn(attendance?.sign_in_time);
   // 管理员显式设置的非默认状态（出席/迟到/请假，或签到后被改状态）：状态已确定；
@@ -161,6 +166,10 @@ export function RehearsalCard({
     }
   }
 
+  // 更新提示文案（Issue #171）：按 updated_fields 细分（存量数据兜底全量文案）；
+  // 显示条件沿用 isUpdated prop（编辑过且未结束，由父级计算），函数返回 null 时不渲染
+  const updateLabel = isUpdated ? getUpdateBadgeLabel(item) : null;
+
   const renderStatusChip = (status: string) => {
     const chipClass = `${CHIP_BASE_CLASS} ${
       STATUS_CHIP_CLASS[status] ?? "bg-muted text-text-subtle"
@@ -183,9 +192,9 @@ export function RehearsalCard({
               ? formatRehearsalRange(item.start_time, item.end_time ?? null)
               : "时间未设置"}
           </h2>
-          {isUpdated && (
+          {updateLabel && (
             <span className="inline-block rounded bg-warning-bg/80 px-1.5 py-0.5 text-xs text-warning">
-              更新排练时间/地点/曲目
+              {updateLabel}
             </span>
           )}
           <p className="text-xs text-text-muted">
@@ -231,9 +240,7 @@ export function RehearsalCard({
             ) : (
               renderStatusChip(statusChip)
             )
-          ) : blockReason === "not-started" ? (
-            <span className={`${CHIP_BASE_CLASS} bg-muted text-text-subtle`}>未开始</span>
-          ) : (
+          ) : isNotStarted ? null : (
             onSignIn && (
               <button
                 type="button"

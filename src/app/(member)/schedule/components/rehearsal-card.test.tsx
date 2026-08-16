@@ -21,6 +21,7 @@ function makeRehearsal(overrides: Partial<RehearsalRow> = {}): RehearsalRow {
     type: "full",
     created_at: "2026-08-01T00:00:00",
     updated_at: "2026-08-01T00:00:00",
+    updated_fields: null,
     ...overrides,
   };
 }
@@ -95,7 +96,8 @@ describe("RehearsalCard 操作按钮显示条件矩阵（Issue #155）", () => {
     );
     expect(screen.getByRole("button", { name: "请假" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
-    expect(screen.getByText("未开始")).toBeTruthy();
+    // chip1 位置留空：未开始不再显示「未开始」文字（Issue #171）
+    expect(screen.queryByText("未开始")).toBeNull();
   });
 
   it("进行中的排练（结束前）：显示「签到」与「请假」两个按钮", () => {
@@ -468,7 +470,7 @@ describe("RehearsalCard 覆盖请假签到按钮（Issue #155）", () => {
     expect(screen.queryByRole("button", { name: "覆盖请假" })).toBeNull();
   });
 
-  it("未开始 + 待审批：不在签到窗口，无黄色按钮（显示「未开始」）", () => {
+  it("未开始 + 待审批：不在签到窗口，无黄色按钮（chip1 留空不显示「未开始」，Issue #171）", () => {
     render(
       <RehearsalCard
         item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
@@ -478,7 +480,9 @@ describe("RehearsalCard 覆盖请假签到按钮（Issue #155）", () => {
     );
     expect(screen.queryByRole("button", { name: "覆盖请假" })).toBeNull();
     expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
-    expect(screen.getByText("未开始")).toBeTruthy();
+    // 未开始不可签的时机不变，仅不再显示「未开始」chip；申请状态 chip 仍在下方展示
+    expect(screen.queryByText("未开始")).toBeNull();
+    expect(screen.getByText("待审批")).toBeTruthy();
   });
 
   it("已结束 + 待审批：无黄色按钮（已结束不可签）", () => {
@@ -589,17 +593,19 @@ describe("RehearsalCard 右栏三 chip/按钮样式统一（Issue #164）", () =
     expect(btn.className).toContain("justify-center");
   });
 
-  it("「未开始」chip 统一 w-full + h-8 + 居中", () => {
+  it("未开始的排练 chip1 位置留空不渲染（Issue #171），请假按钮不受影响", () => {
     render(
       <RehearsalCard
         item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
         onLeaveRequest={vi.fn()}
       />,
     );
-    const notStarted = screen.getByText("未开始");
-    expect(notStarted.className).toContain("w-full");
-    expect(notStarted.className).toContain("h-8");
-    expect(notStarted.className).toContain("justify-center");
+    // 无「未开始」chip，也无状态 chip/签到按钮
+    expect(screen.queryByText("未开始")).toBeNull();
+    // 右栏第一个元素即「请假」按钮（chip1 位置留空后按钮上移）
+    const leaveBtn = screen.getByRole("button", { name: "请假" });
+    const column = leaveBtn.parentElement!;
+    expect(column.firstElementChild).toBe(leaveBtn);
   });
 
   it("考勤加载占位符统一 w-full + h-8（与 chip 等高）", () => {
@@ -607,5 +613,73 @@ describe("RehearsalCard 右栏三 chip/按钮样式统一（Issue #164）", () =
     const placeholder = screen.getByText("…");
     expect(placeholder.className).toContain("w-full");
     expect(placeholder.className).toContain("h-8");
+  });
+});
+
+describe("RehearsalCard 更新提示文案细分（Issue #171）", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 15, 13, 0, 0));
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  /** 已更新（updated_at > created_at）且进行中（12:00-15:00，now 13:00）的排练 */
+  function updatedItem(updatedFields: string | null) {
+    return makeRehearsal({
+      start_time: "2026-08-15T12:00:00",
+      end_time: "2026-08-15T15:00:00",
+      created_at: "2026-08-01T00:00:00",
+      updated_at: "2026-08-14T00:00:00",
+      updated_fields: updatedFields,
+    });
+  }
+
+  it("updated_fields=time → 「更新排练时间」", () => {
+    render(<RehearsalCard item={updatedItem("time")} isUpdated />);
+    expect(screen.getByText("更新排练时间")).toBeTruthy();
+    expect(screen.queryByText("更新排练时间/地点/曲目")).toBeNull();
+  });
+
+  it("updated_fields=location/repertoire → 对应细分文案", () => {
+    const { rerender } = render(<RehearsalCard item={updatedItem("location")} isUpdated />);
+    expect(screen.getByText("更新排练地点")).toBeTruthy();
+    rerender(<RehearsalCard item={updatedItem("repertoire")} isUpdated />);
+    expect(screen.getByText("更新排练曲目")).toBeTruthy();
+  });
+
+  it("多字段按 time/location/repertoire 顺序拼接（与写入顺序无关）", () => {
+    const { rerender } = render(<RehearsalCard item={updatedItem("time,location")} isUpdated />);
+    expect(screen.getByText("更新排练时间/地点")).toBeTruthy();
+    rerender(<RehearsalCard item={updatedItem("repertoire,time")} isUpdated />);
+    expect(screen.getByText("更新排练时间/曲目")).toBeTruthy();
+  });
+
+  it("updated_fields 为 null/空但已更新（存量数据）→ 兜底「更新排练时间/地点/曲目」", () => {
+    const { rerender } = render(<RehearsalCard item={updatedItem(null)} isUpdated />);
+    expect(screen.getByText("更新排练时间/地点/曲目")).toBeTruthy();
+    rerender(<RehearsalCard item={updatedItem("")} isUpdated />);
+    expect(screen.getByText("更新排练时间/地点/曲目")).toBeTruthy();
+  });
+
+  it("isUpdated 为 false（未更新或已结束）时不渲染更新 chip", () => {
+    const { rerender } = render(<RehearsalCard item={updatedItem("time")} />);
+    expect(screen.queryByText(/更新排练/)).toBeNull();
+    // 已结束（更新标识持续到排练结束，Issue #140）：isUpdated 由父级计算为 false
+    rerender(
+      <RehearsalCard
+        item={makeRehearsal({
+          start_time: "2026-08-15T08:00:00",
+          end_time: "2026-08-15T10:00:00",
+          created_at: "2026-08-01T00:00:00",
+          updated_at: "2026-08-14T00:00:00",
+          updated_fields: "time",
+        })}
+      />,
+    );
+    expect(screen.queryByText(/更新排练/)).toBeNull();
   });
 });

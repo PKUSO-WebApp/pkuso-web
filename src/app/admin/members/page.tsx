@@ -190,14 +190,15 @@ export default function MembersPage() {
   };
 
   return (
-    /* 根容器 flex 化（矮屏布局，审计批次 3）：头部固定，筛选控件 + 列表整体独立滚动 */
+    /* 根容器 flex 化（矮屏布局，审计批次 3）：头部固定；
+       Issue #171：外层不再 overflow-y-auto（消除嵌套滚动），滚动下沉到内层列表（max-h） */
     <div className="flex h-full min-h-0 flex-col space-y-4 pb-2">
       <header className="mt-1">
         <h1 className="text-lg font-semibold text-text">成员</h1>
         <p className="mt-1 text-xs text-text-muted">排练考勤与乐团花名册</p>
       </header>
 
-      <div className="flex-1 min-h-0 space-y-4 overflow-y-auto">
+      <div className="flex-1 min-h-0 space-y-4">
         <Toggle
           options={["排练考勤", "全团成员"] as const}
           value={currentView === "attendance" ? "排练考勤" : "全团成员"}

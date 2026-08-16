@@ -4,6 +4,7 @@ import type { RehearsalRow } from "@/types/database";
 import {
   isRehearsalUpdated,
   isRehearsalEnded,
+  getUpdateBadgeLabel,
   sortRehearsalsForMember,
   sortEndedFullRehearsals,
 } from "./rehearsal-sort";
@@ -29,6 +30,7 @@ function makeRehearsal(
     target_section: null,
     created_at: opts.created ?? null,
     updated_at: opts.updated ?? "2026-08-10T00:00:00.000Z",
+    updated_fields: null,
   };
 }
 
@@ -245,6 +247,86 @@ describe("sortRehearsalsForMember", () => {
 
   it("空数组返回空数组", () => {
     expect(sortRehearsalsForMember([], NOW)).toEqual([]);
+  });
+});
+
+describe("getUpdateBadgeLabel（Issue #171）", () => {
+  /** 已更新排练（updated_at > created_at）+ 指定 updated_fields */
+  function updatedItem(fields: string | null): RehearsalRow {
+    const item = makeRehearsal(1, "2026-08-15T20:00:00", null, {
+      created: "2026-08-10T00:00:00.000Z",
+      updated: "2026-08-15T12:00:00.000Z",
+    });
+    return { ...item, updated_fields: fields };
+  }
+
+  it("单个字段：time/location/repertoire → 对应文案", () => {
+    expect(getUpdateBadgeLabel(updatedItem("time"))).toBe("更新排练时间");
+    expect(getUpdateBadgeLabel(updatedItem("location"))).toBe("更新排练地点");
+    expect(getUpdateBadgeLabel(updatedItem("repertoire"))).toBe("更新排练曲目");
+  });
+
+  it("多字段按 time/location/repertoire 顺序拼接（与写入顺序无关）", () => {
+    expect(getUpdateBadgeLabel(updatedItem("time,location"))).toBe("更新排练时间/地点");
+    expect(getUpdateBadgeLabel(updatedItem("time,repertoire"))).toBe("更新排练时间/曲目");
+    expect(getUpdateBadgeLabel(updatedItem("time,location,repertoire"))).toBe(
+      "更新排练时间/地点/曲目",
+    );
+    // 触发器按字段比较写入固定顺序，但函数不依赖写入顺序
+    expect(getUpdateBadgeLabel(updatedItem("repertoire,time"))).toBe("更新排练时间/曲目");
+  });
+
+  it("仅含 'other' 哨兵（只改过 sign_in_code 等非细分字段）→ null，不显示更新提示", () => {
+    expect(getUpdateBadgeLabel(updatedItem("other"))).toBeNull();
+    // 防御：未知字段 + 'other'（仍无细分字段）同样不显示
+    expect(getUpdateBadgeLabel(updatedItem("sign_in_code,other"))).toBeNull();
+    // 含空格变体（逗号后带空格）
+    expect(getUpdateBadgeLabel(updatedItem("other, "))).toBeNull();
+  });
+
+  it("细分字段与 'other' 哨兵共存时忽略 'other'，正常拼接细分文案", () => {
+    expect(getUpdateBadgeLabel(updatedItem("time,other"))).toBe("更新排练时间");
+    expect(getUpdateBadgeLabel(updatedItem("other,time,repertoire"))).toBe("更新排练时间/曲目");
+  });
+
+  it("累积语义：多次编辑的字段并集同样正确拼接（顺序固定，与编辑次数无关）", () => {
+    // 第一次编辑改 time，第二次改 location（并集 time,location）
+    expect(getUpdateBadgeLabel(updatedItem("time,location"))).toBe("更新排练时间/地点");
+    // 编辑过细分字段后又只改过非细分字段（并入 'other'），细分文案不受影响
+    expect(getUpdateBadgeLabel(updatedItem("time,other,repertoire"))).toBe("更新排练时间/曲目");
+    // 细分字段全部改过 + 'other'：忽略 'other' 输出全量文案
+    expect(getUpdateBadgeLabel(updatedItem("time,location,repertoire,other"))).toBe(
+      "更新排练时间/地点/曲目",
+    );
+  });
+
+  it("updated_fields 为 null/空但已更新（存量数据）→ 兜底全量文案", () => {
+    expect(getUpdateBadgeLabel(updatedItem(null))).toBe("更新排练时间/地点/曲目");
+    expect(getUpdateBadgeLabel(updatedItem(""))).toBe("更新排练时间/地点/曲目");
+  });
+
+  it("未更新（updated_at <= created_at）→ null", () => {
+    const notUpdated = makeRehearsal(1, "2026-08-15T20:00:00", null, {
+      created: "2026-08-10T00:00:00.000Z",
+      updated: "2026-08-10T00:00:00.000Z",
+    });
+    expect(getUpdateBadgeLabel(notUpdated)).toBeNull();
+  });
+
+  it("updated_fields 含未知字段时忽略未知字段；仅未知字段时回退到 isRehearsalUpdated 判定", () => {
+    // 已知 + 未知混合：只拼已知字段
+    expect(getUpdateBadgeLabel(updatedItem("time,sign_in_code"))).toBe("更新排练时间");
+    // 仅未知字段（非 'other' 哨兵，新触发器不会产出，纯防御路径）：视为无字段信息，
+    // 回退 isRehearsalUpdated（该排练已更新 → 兜底文案）
+    expect(getUpdateBadgeLabel(updatedItem("sign_in_code"))).toBe("更新排练时间/地点/曲目");
+  });
+
+  it("created_at/updated_at 缺失且 updated_fields 为空 → null（无更新时间可判定）", () => {
+    const noTimes = makeRehearsal(1, "2026-08-15T20:00:00", null, {
+      created: null,
+      updated: "2026-08-15T12:00:00.000Z",
+    });
+    expect(getUpdateBadgeLabel(noTimes)).toBeNull();
   });
 });
 

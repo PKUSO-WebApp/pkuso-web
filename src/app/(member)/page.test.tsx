@@ -418,6 +418,7 @@ describe("Home 首页组件", () => {
         target_section: null,
         created_at: null,
         updated_at: "2026-08-14T00:00:00.000Z",
+        updated_fields: null,
       };
     }
 
@@ -504,6 +505,7 @@ describe("Home 首页组件", () => {
         target_section: null,
         created_at: null,
         updated_at: "2026-08-14T00:00:00.000Z",
+        updated_fields: null,
       };
     }
 
@@ -655,6 +657,7 @@ describe("Home 首页组件", () => {
         target_section: null,
         created_at: null,
         updated_at: "2026-08-14T00:00:00.000Z",
+        updated_fields: null,
       };
     }
 
@@ -706,7 +709,7 @@ describe("Home 首页组件", () => {
       id: number,
       startISO: string,
       repertoire: string,
-      opts?: { created?: string | null; updated?: string | null },
+      opts?: { created?: string | null; updated?: string | null; updatedFields?: string | null },
     ): RehearsalRow {
       const end = new Date(parseLocalISO(startISO).getTime() + 2 * 60 * 60 * 1000);
       return {
@@ -723,6 +726,7 @@ describe("Home 首页组件", () => {
         target_section: null,
         created_at: opts?.created ?? null,
         updated_at: opts?.updated ?? "2026-08-14T00:00:00.000Z",
+        updated_fields: opts?.updatedFields ?? null,
       };
     }
 
@@ -753,8 +757,24 @@ describe("Home 首页组件", () => {
       // 明天排练（最近）保持第一位，已更新的后天排练提到其后，大后天排练最后
       const rendered = screen.getAllByText(/(明天|后天|大后天)排练/).map((el) => el.textContent);
       expect(rendered).toEqual(["明天排练", "后天排练", "大后天排练"]);
-      // 仅已更新的排练渲染「更新」标识（warning 色系语义 token）
+      // 仅已更新的排练渲染「更新」标识（warning 色系语义 token）；
+      // 该 fixture updated_fields 为 null（存量数据语义）→ 兜底全量文案
       expect(screen.getByText("更新排练时间/地点/曲目")).toBeTruthy();
+    });
+
+    it("更新提示文案按 updated_fields 细分（Issue #171）", () => {
+      renderWithRehearsals([
+        // 已更新（created < updated）且 updated_fields=time,location → 细分文案
+        makeRehearsalAt(1, "2026-08-17T20:00:00", "后天排练", {
+          created: "2026-08-10T00:00:00.000Z",
+          updated: "2026-08-15T12:00:00.000Z",
+          updatedFields: "time,location",
+        }),
+        makeRehearsalAt(2, "2026-08-16T20:00:00", "明天排练"),
+      ]);
+
+      expect(screen.getByText("更新排练时间/地点")).toBeTruthy();
+      expect(screen.queryByText("更新排练时间/地点/曲目")).toBeNull();
     });
 
     it("未编辑过的排练不显示更新标识", () => {
@@ -807,6 +827,7 @@ describe("Home 首页组件", () => {
         target_section: null,
         created_at: null,
         updated_at: "2026-08-14T00:00:00.000Z",
+        updated_fields: null,
       };
     }
 
@@ -848,8 +869,8 @@ describe("Home 首页组件", () => {
       // 排练次日 00:30 开始（签到窗口 00:00 开启），tick 前（23:59:30）处于"未开始"状态
       renderWithRehearsals([makeRehearsalAt(1, "2026-08-15T00:30:00", "凌晨排练")]);
 
-      // tick 前：未到签到窗口，显示"未开始"，无签到按钮
-      expect(screen.getByText("未开始")).toBeTruthy();
+      // tick 前：未到签到窗口，chip1 留空不显示「未开始」（Issue #171），无签到按钮
+      expect(screen.queryByText("未开始")).toBeNull();
       expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
 
       // 推进 60 秒：interval 触发 → nowTick 更新 → RehearsalCard 用最新时间重新判断
@@ -907,6 +928,7 @@ describe("Home 首页组件", () => {
         target_section: null,
         created_at: null,
         updated_at: "2026-08-14T00:00:00.000Z",
+        updated_fields: null,
       };
     }
 
@@ -1086,6 +1108,7 @@ describe("Home 首页组件", () => {
         target_section: null,
         created_at: null,
         updated_at: "2026-08-14T00:00:00.000Z",
+        updated_fields: null,
       };
     }
 
@@ -1251,6 +1274,7 @@ describe("Home 首页组件", () => {
         target_section: null,
         created_at: null,
         updated_at: "2026-08-14T00:00:00.000Z",
+        updated_fields: null,
       };
     }
 

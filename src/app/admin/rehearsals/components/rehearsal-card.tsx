@@ -1,5 +1,6 @@
 import { Card } from "@/components/ui/Card";
 import { formatRehearsalRange, isRehearsalExpired } from "@/lib/date-utils";
+import { getUpdateBadgeLabel } from "@/lib/rehearsal-sort";
 import type { RehearsalRow } from "@/types/database";
 
 type Props = {
@@ -11,6 +12,8 @@ type Props = {
 
 export function AdminRehearsalCard({ item, onEdit, onDelete, onViewAttendance }: Props) {
   const expired = isRehearsalExpired(item.start_time!, item.end_time ?? null);
+  // 更新提示文案（Issue #171）：与用户端共用 getUpdateBadgeLabel，按 updated_fields 细分
+  const updateLabel = getUpdateBadgeLabel(item);
 
   return (
     <Card>
@@ -23,6 +26,12 @@ export function AdminRehearsalCard({ item, onEdit, onDelete, onViewAttendance }:
           <h2 className="text-base font-semibold text-text">
             {formatRehearsalRange(item.start_time!, item.end_time ?? null)}
           </h2>
+          {/* 更新提示 chip（与用户端同一语义 token 与文案，Issue #171） */}
+          {updateLabel && (
+            <span className="inline-block rounded bg-warning-bg/80 px-1.5 py-0.5 text-xs text-warning">
+              {updateLabel}
+            </span>
+          )}
           <p className="text-xs text-text-muted">
             地点：{item.location}
             {item.type === "section" && item.target_section

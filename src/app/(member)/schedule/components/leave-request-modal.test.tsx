@@ -51,6 +51,7 @@ const rehearsal: RehearsalRow = {
   type: "full",
   created_at: "2026-08-01T00:00:00",
   updated_at: "2026-08-01T00:00:00",
+  updated_fields: null,
 };
 
 function makeRequest(overrides: Record<string, unknown> = {}) {

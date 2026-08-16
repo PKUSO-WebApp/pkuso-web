@@ -11,6 +11,9 @@ import type { LeaveRequestWithDetails } from "@/types/database";
 /**
  * 管理端「请假审批」区块（Issue #142），位于入团审批区块下方。
  * - Toggle 切换 待审批 / 已处理；
+ * - 二级筛选 Toggle「全部/请假/补请假」（Issue #156）：与 待审批/已处理 正交，
+ *   不新增 DB 字段，按关联排练是否已结束分类（未结束=请假，已结束=补请假），
+ *   切换任一方筛选都会清空勾选，避免批量操作误伤隐藏行；
  * - 待审批 tab：checkbox 勾选 + 全选，批量操作栏「批量通过」（二次确认）/
  *   「批量驳回」（原因必填弹窗，同一原因应用到全部勾选）；
  * - 点击列表项打开详情弹窗（审批/驳回/附件查看）。
@@ -38,6 +41,34 @@ function rehearsalName(r: LeaveRequestWithDetails["rehearsals"]): string {
   return r?.repertoire ?? r?.title ?? "排练";
 }
 
+/** 请假分类标签（Issue #156）：按关联排练是否已结束判断，不新增 DB 字段 */
+const CATEGORY_LABEL = { leave: "请假", retro: "补请假" } as const;
+const CATEGORY_CHIP = {
+  leave: "bg-muted text-text-muted",
+  retro: "bg-warning-bg text-warning",
+} as const;
+type LeaveCategory = keyof typeof CATEGORY_LABEL;
+
+/**
+ * 排练是否已结束：end_time 优先；缺失时按 start_time+3h 兜底（排练通常 2-3 小时）；
+ * 两者都缺失（或解析失败）视为未结束。now 与存储的本地时间比较（无时区字符串按本地解析）。
+ */
+function isRehearsalEnded(r: LeaveRequestWithDetails["rehearsals"], now = Date.now()): boolean {
+  if (!r) return false;
+  const end = r.end_time
+    ? Date.parse(r.end_time)
+    : r.start_time
+      ? Date.parse(r.start_time) + 3 * 60 * 60 * 1000
+      : Number.NaN;
+  if (Number.isNaN(end)) return false;
+  return now > end;
+}
+
+/** 申请分类：关联排练已结束 → 补请假；否则 → 请假 */
+function getLeaveCategory(r: LeaveRequestWithDetails): LeaveCategory {
+  return isRehearsalEnded(r.rehearsals) ? "retro" : "leave";
+}
+
 type LeaveManagementProps = {
   /** 待审批数量变化回调（admin 控制台 tab 红点计数用，Issue #150） */
   onPendingCountChange?: (count: number) => void;
@@ -55,6 +86,8 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
     getSignedUrl,
   } = useLeaveAdmin();
   const [tab, setTab] = React.useState<"pending" | "processed">("pending");
+  // 分类二级筛选（Issue #156）：全部/请假/补请假，与 待审批/已处理 正交
+  const [categoryFilter, setCategoryFilter] = React.useState<LeaveCategory | "all">("all");
   const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
   const [detailId, setDetailId] = React.useState<string | null>(null);
   // 批量操作弹窗
@@ -67,7 +100,12 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
 
   const pendingList = requests.filter((r) => r.status === "pending");
   const processedList = requests.filter((r) => r.status !== "pending");
-  const list = tab === "pending" ? pendingList : processedList;
+  const tabList = tab === "pending" ? pendingList : processedList;
+  // 分类筛选只作用于当前 status tab 内部（全部/请假/补请假）
+  const list =
+    categoryFilter === "all"
+      ? tabList
+      : tabList.filter((r) => getLeaveCategory(r) === categoryFilter);
   const detailRequest = requests.find((r) => r.id === detailId) ?? null;
 
   // 待审批数实时上报给父组件（控制台 tab 红点，Issue #150）；
@@ -76,15 +114,15 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
     onPendingCountChange?.(pendingList.length);
   }, [pendingList.length, onPendingCountChange]);
 
-  const allSelected =
-    pendingList.length > 0 && pendingList.every((r) => selectedIds.includes(r.id));
+  // 全选仅作用于当前分类筛选后可见的行（与「全选（n/m）」计数一致）
+  const allSelected = list.length > 0 && list.every((r) => selectedIds.includes(r.id));
 
   const toggleSelection = (id: string) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
   const toggleAll = () => {
-    setSelectedIds(allSelected ? [] : pendingList.map((r) => r.id));
+    setSelectedIds(allSelected ? [] : list.map((r) => r.id));
   };
 
   const handleBatchApprove = async () => {
@@ -161,6 +199,21 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
         </div>
       </div>
 
+      {/* 二级筛选：请假/补请假分类（与上方 待审批/已处理 正交，Issue #156）。
+          切换筛选清空勾选，避免批量操作误伤被筛选隐藏的行 */}
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <Toggle
+          options={["all", "leave", "retro"] as const}
+          value={categoryFilter}
+          onChange={(v) => {
+            setCategoryFilter(v);
+            setSelectedIds([]);
+          }}
+          getLabel={(k) => (k === "all" ? "全部" : CATEGORY_LABEL[k])}
+        />
+        <span className="text-xs text-text-subtle">分类按排练是否已结束判断</span>
+      </div>
+
       {error && (
         <div className="mb-3 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">{error}</div>
       )}
@@ -169,7 +222,12 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
         <p className="py-4 text-center text-xs text-text-subtle">加载中…</p>
       ) : list.length === 0 ? (
         <p className="py-4 text-center text-xs text-text-muted">
-          {tab === "pending" ? "暂无待审批申请" : "暂无已处理申请"}
+          {/* 分类筛选下无匹配但与 status tab 下仍有数据时，提示更精确（Issue #156） */}
+          {categoryFilter !== "all" && tabList.length > 0
+            ? "该分类下暂无申请"
+            : tab === "pending"
+              ? "暂无待审批申请"
+              : "暂无已处理申请"}
         </p>
       ) : (
         <>
@@ -182,13 +240,14 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
                   onChange={toggleAll}
                   className="accent-primary"
                 />
-                全选（{selectedIds.length}/{pendingList.length}）
+                全选（{selectedIds.length}/{list.length}）
               </label>
             </div>
           )}
-          <div className="max-h-[240px] space-y-2 overflow-y-auto">
+          <div className="max-h-[400px] space-y-2 overflow-y-auto">
             {list.map((item) => {
               const selected = selectedIds.includes(item.id);
+              const cat = getLeaveCategory(item);
               return (
                 <div
                   key={item.id}
@@ -228,6 +287,14 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
                     </p>
                     <p className="mt-0.5 truncate text-xs text-text-subtle">{item.reason}</p>
                   </div>
+                  {/* 分类 chip：未结束排练=请假、已结束=补请假（Issue #156） */}
+                  <span
+                    className={`mt-0.5 shrink-0 rounded-full px-2 py-1 text-label ${
+                      CATEGORY_CHIP[cat]
+                    }`}
+                  >
+                    {CATEGORY_LABEL[cat]}
+                  </span>
                   {tab === "processed" && (
                     <span
                       className={`mt-0.5 shrink-0 rounded-full px-2.5 py-1 text-label ${

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
-import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, cleanup, within } from "@testing-library/react";
 import { LeaveManagement } from "./leave-management";
 import type { LeaveRequestWithDetails } from "@/types/database";
 
@@ -253,14 +253,14 @@ describe("LeaveManagement 请假审批区块（管理端）", () => {
     expect(screen.getByText("网络错误")).toBeInTheDocument();
   });
 
-  it("列表高度自适应：max-h 封顶 + overflow-y-auto，无固定高度（Issue #150）", () => {
+  it("列表高度自适应：max-h-[400px] 封顶 + overflow-y-auto，无固定高度（Issue #156）", () => {
     adminMock.requests = [makeRequest({ id: "lr-1" })];
     const { container } = render(<LeaveManagement />);
 
-    const scrollBox = container.querySelector("div.max-h-\\[240px\\]") as HTMLElement;
+    const scrollBox = container.querySelector("div.max-h-\\[400px\\]") as HTMLElement;
     expect(scrollBox).not.toBeNull();
     expect(scrollBox.className).toContain("overflow-y-auto");
-    expect(scrollBox.className.split(" ")).not.toContain("h-[240px]");
+    expect(scrollBox.className.split(" ")).not.toContain("h-[400px]");
   });
 
   it("待审批数变化时回调 onPendingCountChange（供控制台 tab 红点计数，Issue #150）", () => {
@@ -273,5 +273,195 @@ describe("LeaveManagement 请假审批区块（管理端）", () => {
 
     // 只有 pending 状态计入
     expect(onChange).toHaveBeenCalledWith(1);
+  });
+
+  // ---- 请假/补请假分类筛选（Issue #156） ----
+  // 排练时间用相对 now 的时间戳构造，避免测试随运行日期漂移
+
+  it("分类筛选：未结束排练的申请=请假、已结束排练=补请假，全部/请假/补请假正确分组", () => {
+    const futureEnd = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    const pastEnd = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    adminMock.requests = [
+      makeRequest({
+        id: "lr-1",
+        reason: "未来排练请假",
+        rehearsals: {
+          repertoire: "未来曲目",
+          title: null,
+          start_time: futureEnd,
+          end_time: futureEnd,
+          location: "排练厅",
+        },
+      }),
+      makeRequest({
+        id: "lr-2",
+        reason: "已结束排练补请",
+        rehearsals: {
+          repertoire: "历史曲目",
+          title: null,
+          start_time: pastEnd,
+          end_time: pastEnd,
+          location: "排练厅",
+        },
+      }),
+    ];
+    render(<LeaveManagement />);
+
+    // 默认「全部」：两条都显示
+    expect(screen.getByText(/未来排练请假/)).toBeInTheDocument();
+    expect(screen.getByText(/已结束排练补请/)).toBeInTheDocument();
+
+    // 「补请假」：只剩已结束排练的申请
+    fireEvent.click(screen.getByRole("button", { name: "补请假" }));
+    expect(screen.queryByText(/未来排练请假/)).toBeNull();
+    expect(screen.getByText(/已结束排练补请/)).toBeInTheDocument();
+
+    // 「请假」：只剩未结束排练的申请
+    fireEvent.click(screen.getByRole("button", { name: "请假" }));
+    expect(screen.getByText(/未来排练请假/)).toBeInTheDocument();
+    expect(screen.queryByText(/已结束排练补请/)).toBeNull();
+
+    // 切回「全部」：两条都显示
+    fireEvent.click(screen.getByRole("button", { name: "全部" }));
+    expect(screen.getByText(/未来排练请假/)).toBeInTheDocument();
+    expect(screen.getByText(/已结束排练补请/)).toBeInTheDocument();
+  });
+
+  it("end_time 缺失时按 start_time+3h 兜底判断分类", () => {
+    // 5 小时前开始、无 end_time → start+3h 已过 → 补请假
+    const olderStart = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
+    // 1 小时前开始、无 end_time → start+3h 未到 → 请假
+    const recentStart = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    adminMock.requests = [
+      makeRequest({
+        id: "lr-1",
+        reason: "较早开始",
+        rehearsals: {
+          repertoire: "曲目A",
+          title: null,
+          start_time: olderStart,
+          end_time: null,
+          location: "排练厅",
+        },
+      }),
+      makeRequest({
+        id: "lr-2",
+        reason: "较晚开始",
+        rehearsals: {
+          repertoire: "曲目B",
+          title: null,
+          start_time: recentStart,
+          end_time: null,
+          location: "排练厅",
+        },
+      }),
+    ];
+    render(<LeaveManagement />);
+
+    fireEvent.click(screen.getByRole("button", { name: "补请假" }));
+    expect(screen.getByText(/较早开始/)).toBeInTheDocument();
+    expect(screen.queryByText(/较晚开始/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "请假" }));
+    expect(screen.queryByText(/较早开始/)).toBeNull();
+    expect(screen.getByText(/较晚开始/)).toBeInTheDocument();
+  });
+
+  it("每条申请显示分类 chip：未结束=请假、已结束=补请假", () => {
+    const futureEnd = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    const pastEnd = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    adminMock.requests = [
+      makeRequest({
+        id: "lr-1",
+        rehearsals: {
+          repertoire: "曲目A",
+          title: null,
+          start_time: futureEnd,
+          end_time: futureEnd,
+          location: "排练厅",
+        },
+      }),
+      makeRequest({
+        id: "lr-2",
+        rehearsals: {
+          repertoire: "曲目B",
+          title: null,
+          start_time: pastEnd,
+          end_time: pastEnd,
+          location: "排练厅",
+        },
+      }),
+    ];
+    render(<LeaveManagement />);
+
+    // checkboxes[0] 是「全选」，[1]/[2] 是列表行；行内应含对应分类 chip
+    const checkboxes = screen.getAllByRole("checkbox");
+    const futureRow = checkboxes[1].closest("div") as HTMLElement;
+    const pastRow = checkboxes[2].closest("div") as HTMLElement;
+    expect(within(futureRow).getByText("请假")).toBeInTheDocument();
+    expect(within(pastRow).getByText("补请假")).toBeInTheDocument();
+  });
+
+  it("切换分类筛选清空勾选；全选仅选中当前筛选下的行", () => {
+    const futureEnd = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    const pastEnd = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    adminMock.requests = [
+      makeRequest({
+        id: "lr-1",
+        rehearsals: {
+          repertoire: "曲目A",
+          title: null,
+          start_time: futureEnd,
+          end_time: futureEnd,
+          location: "排练厅",
+        },
+      }),
+      makeRequest({
+        id: "lr-2",
+        rehearsals: {
+          repertoire: "曲目B",
+          title: null,
+          start_time: pastEnd,
+          end_time: pastEnd,
+          location: "排练厅",
+        },
+      }),
+    ];
+    render(<LeaveManagement />);
+
+    // 勾选第一行 → 批量操作栏出现
+    const checkboxes = screen.getAllByRole("checkbox");
+    fireEvent.click(checkboxes[1]);
+    expect(screen.getByRole("button", { name: "批量通过" })).toBeTruthy();
+
+    // 切换分类 → 勾选清空（批量操作栏消失）
+    fireEvent.click(screen.getByRole("button", { name: "补请假" }));
+    expect(screen.queryByRole("button", { name: "批量通过" })).toBeNull();
+
+    // 「补请假」下全选 → 只选中该分类下的 1 行
+    fireEvent.click(screen.getByRole("checkbox", { name: /全选/ }));
+    expect(screen.getByText(/全选（1\/1）/)).toBeTruthy();
+  });
+
+  it("分类筛选无匹配时提示「该分类下暂无申请」", () => {
+    const pastEnd = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    adminMock.requests = [
+      makeRequest({
+        id: "lr-1",
+        rehearsals: {
+          repertoire: "曲目A",
+          title: null,
+          start_time: pastEnd,
+          end_time: pastEnd,
+          location: "排练厅",
+        },
+      }),
+    ];
+    render(<LeaveManagement />);
+
+    // 「请假」分类下无匹配（只有补请假），提示区别于「暂无待审批申请」
+    fireEvent.click(screen.getByRole("button", { name: "请假" }));
+    expect(screen.getByText("该分类下暂无申请")).toBeInTheDocument();
+    expect(screen.queryByText("暂无待审批申请")).toBeNull();
   });
 });

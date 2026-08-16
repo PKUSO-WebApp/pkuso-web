@@ -412,12 +412,20 @@ describe("AdminPage", () => {
     expect(within(leaveTab).getByText("1")).toBeInTheDocument();
   });
 
-  it("待审批列表高度自适应：max-h 封顶、无固定高度（Issue #150）", () => {
+  it("控制台三个可滚动容器统一 max-h-[400px]（Issue #156）", () => {
     const { container } = render(<AdminPage />);
 
-    const scrollBox = container.querySelector("div.max-h-\\[200px\\]") as HTMLElement;
-    expect(scrollBox).not.toBeNull();
-    expect(scrollBox.className).toContain("overflow-y-auto");
-    expect(scrollBox.className.split(" ")).not.toContain("h-[200px]");
+    // 入团审批列表：max-h-[400px] 封顶 + overflow-y-auto，无固定高度
+    // （leave 区块列表在同组件测试内断言；此处 mock 无申请不渲染，selector 唯一命中入团审批）
+    const approvalBox = container.querySelector("section div.max-h-\\[400px\\]") as HTMLElement;
+    expect(approvalBox).not.toBeNull();
+    expect(approvalBox.className).toContain("overflow-y-auto");
+    expect(approvalBox.className.split(" ")).not.toContain("h-[400px]");
+
+    // 公告撰写输入框：textarea 同样 max-h-[400px] 封顶
+    const announcementTextarea = container.querySelector(
+      "textarea.max-h-\\[400px\\]",
+    ) as HTMLElement;
+    expect(announcementTextarea).not.toBeNull();
   });
 });

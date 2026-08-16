@@ -223,7 +223,7 @@ export default function AdminPage() {
         ) : pendingRows.length === 0 ? (
           <p className="py-4 text-center text-xs text-text-muted">暂无待审批用户</p>
         ) : (
-          <div className="max-h-[200px] space-y-2 overflow-y-auto">
+          <div className="max-h-[400px] space-y-2 overflow-y-auto">
             {pendingRows.map((r) => (
               <div
                 key={r.id}
@@ -297,7 +297,7 @@ export default function AdminPage() {
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={6}
-            className="input resize-none max-h-[200px] overflow-y-auto leading-[1.5] p-3"
+            className="input resize-none max-h-[400px] overflow-y-auto leading-[1.5] p-3"
             placeholder="输入公告内容…"
             style={{ minHeight: "120px" }}
           />

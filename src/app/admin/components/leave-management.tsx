@@ -211,7 +211,6 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
           }}
           getLabel={(k) => (k === "all" ? "全部" : CATEGORY_LABEL[k])}
         />
-        <span className="text-xs text-text-subtle">分类按排练是否已结束判断</span>
       </div>
 
       {error && (

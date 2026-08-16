@@ -524,3 +524,88 @@ describe("RehearsalCard 覆盖请假签到按钮（Issue #155）", () => {
     expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
   });
 });
+
+describe("RehearsalCard 右栏三 chip/按钮样式统一（Issue #164）", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 15, 13, 0, 0));
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  /** 已结束排练（上午 08:00-10:00） */
+  const ended = () =>
+    makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" });
+
+  it("已结束排练不再显示「已结束」灰标签，只显示状态 chip", () => {
+    render(<RehearsalCard item={ended()} attendance={{ status: "absent", sign_in_time: null }} />);
+    expect(screen.queryByText("已结束")).toBeNull();
+    expect(screen.getByText(/❌\s*缺勤/)).toBeTruthy();
+  });
+
+  it("状态 chip 与操作按钮：w-full、等高 h-8、文字居中", () => {
+    render(<RehearsalCard item={ended()} onLeaveRequest={vi.fn()} />);
+    const chip = screen.getByText(/❌\s*缺勤/);
+    expect(chip.className).toContain("w-full");
+    expect(chip.className).toContain("h-8");
+    expect(chip.className).toContain("justify-center");
+    expect(chip.className).toContain("text-center");
+
+    const btn = screen.getByRole("button", { name: "补请假" });
+    expect(btn.className).toContain("w-full");
+    expect(btn.className).toContain("h-8");
+    expect(btn.className).toContain("justify-center");
+    expect(btn.className).toContain("text-center");
+  });
+
+  it("申请状态 chip：同样 w-full、等高 h-8、文字居中", () => {
+    render(
+      <RehearsalCard
+        item={ended()}
+        onLeaveRequest={vi.fn()}
+        leaveRequest={{ status: "pending" }}
+      />,
+    );
+    const leaveChip = screen.getByText("待审批");
+    expect(leaveChip.className).toContain("w-full");
+    expect(leaveChip.className).toContain("h-8");
+    expect(leaveChip.className).toContain("justify-center");
+  });
+
+  it("签到按钮统一 w-full + h-8 + 居中（与 chip 等高）", () => {
+    render(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" })}
+        onSignIn={vi.fn()}
+        onLeaveRequest={vi.fn()}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: "签到" });
+    expect(btn.className).toContain("w-full");
+    expect(btn.className).toContain("h-8");
+    expect(btn.className).toContain("justify-center");
+  });
+
+  it("「未开始」chip 统一 w-full + h-8 + 居中", () => {
+    render(
+      <RehearsalCard
+        item={makeRehearsal({ start_time: "2026-08-16T10:00:00", end_time: "2026-08-16T12:00:00" })}
+        onLeaveRequest={vi.fn()}
+      />,
+    );
+    const notStarted = screen.getByText("未开始");
+    expect(notStarted.className).toContain("w-full");
+    expect(notStarted.className).toContain("h-8");
+    expect(notStarted.className).toContain("justify-center");
+  });
+
+  it("考勤加载占位符统一 w-full + h-8（与 chip 等高）", () => {
+    render(<RehearsalCard item={ended()} attendanceLoading />);
+    const placeholder = screen.getByText("…");
+    expect(placeholder.className).toContain("w-full");
+    expect(placeholder.className).toContain("h-8");
+  });
+});

@@ -583,7 +583,9 @@ describe("Home 首页组件", () => {
       renderWithRehearsals([makeRehearsalAt(1, "2026-08-15T08:00:00", "上午合排")]);
       fireEvent.click(screen.getByTestId("toggle-history"));
 
-      expect(screen.getByText("已结束")).toBeTruthy();
+      // 「已结束」灰标签已移除（Issue #164）：只显示缺勤状态 chip 与补请假入口
+      expect(screen.queryByText("已结束")).toBeNull();
+      expect(screen.getByText(/❌\s*缺勤/)).toBeTruthy();
       expect(screen.getByRole("button", { name: "补请假" })).toBeTruthy();
     });
 
@@ -967,7 +969,7 @@ describe("Home 首页组件", () => {
       expect(screen.queryByText(/缺勤/)).toBeNull();
     });
 
-    it("排练已结束 + 已签到（出席）：显示已结束标签与出席 chip", () => {
+    it("排练已结束 + 已签到（出席）：只显示出席 chip（「已结束」标签已移除，Issue #164）", () => {
       mockUseRehearsals.mockReturnValue({
         data: [makeRehearsalAt(1, "2026-08-15T08:00:00", "上午排练")],
         loading: false,
@@ -984,12 +986,12 @@ describe("Home 首页组件", () => {
       });
       render(<Home />, { wrapper: UserProvider });
 
-      expect(screen.getByText("已结束")).toBeTruthy();
+      expect(screen.queryByText("已结束")).toBeNull();
       expect(screen.getByText(/出席/)).toBeTruthy();
       expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
     });
 
-    it("排练已结束 + 未签到（无考勤记录）：显示已结束标签与缺勤 chip", () => {
+    it("排练已结束 + 未签到（无考勤记录）：只显示缺勤 chip（「已结束」标签已移除，Issue #164）", () => {
       mockUseRehearsals.mockReturnValue({
         data: [makeRehearsalAt(1, "2026-08-15T08:00:00", "上午排练")],
         loading: false,
@@ -1003,11 +1005,11 @@ describe("Home 首页组件", () => {
       mockUseAttendance.mockReturnValue({ ...defaultAttendanceMock });
       render(<Home />, { wrapper: UserProvider });
 
-      expect(screen.getByText("已结束")).toBeTruthy();
+      expect(screen.queryByText("已结束")).toBeNull();
       expect(screen.getByText(/缺勤/)).toBeTruthy();
     });
 
-    it("排练已结束 + 管理员设为请假（未签到）：显示已结束标签与请假 chip", () => {
+    it("排练已结束 + 管理员设为请假（未签到）：只显示请假 chip（「已结束」标签已移除，Issue #164）", () => {
       mockUseRehearsals.mockReturnValue({
         data: [makeRehearsalAt(1, "2026-08-15T08:00:00", "上午排练")],
         loading: false,
@@ -1024,7 +1026,7 @@ describe("Home 首页组件", () => {
       });
       render(<Home />, { wrapper: UserProvider });
 
-      expect(screen.getByText("已结束")).toBeTruthy();
+      expect(screen.queryByText("已结束")).toBeNull();
       // 已请假（excused）不可再补请假（Issue #148）：仅渲染请假 chip，无「补请假」按钮
       expect(screen.getByText(/⭕\s*请假/)).toBeTruthy();
       expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
@@ -1183,10 +1185,9 @@ describe("Home 首页组件", () => {
       mockUseAttendance.mockReturnValue({ ...defaultAttendanceMock, loading: true });
       render(<Home />, { wrapper: UserProvider });
 
-      // 不渲染签到按钮、不出勤状态 chip、不显示已结束标签
+      // 不渲染签到按钮、不出勤状态 chip（「已结束」标签已随 Issue #164 移除）
       expect(screen.queryByRole("button", { name: "签到" })).toBeNull();
       expect(screen.queryByText(/出席|迟到|缺勤|请假/)).toBeNull();
-      expect(screen.queryByText("已结束")).toBeNull();
       // 两张卡片均以占位符示意加载中
       expect(screen.getAllByText("…")).toHaveLength(2);
     });

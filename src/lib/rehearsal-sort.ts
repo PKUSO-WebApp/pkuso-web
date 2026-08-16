@@ -124,7 +124,7 @@ export function sortRehearsalsForMember(items: RehearsalRow[], now: Date): Rehea
  * 历史合排列表（Issue #154）：筛选 type=full 且已结束的排练，按结束时刻近 → 远排序
  *
  * - 已结束判定与 isRehearsalEnded 一致（now >= end，恰在结束时刻也算已结束；
- *   end_time 缺失按 start + 3 小时计），与卡片「已结束」chip 的判定口径统一
+ *   end_time 缺失按 start + 3 小时计），与卡片状态判定口径统一
  * - 不限一周窗口：完整历史，不应用 isRehearsalWithinNextWeek 的窗口过滤
  * - 分排（type=section）、未结束、无有效 start_time（无法解析结束时刻）的排练不出现
  * - 不修改原数组；相同结束时刻保持原相对顺序（Array.prototype.sort 稳定）

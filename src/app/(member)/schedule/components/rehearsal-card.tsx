@@ -46,6 +46,15 @@ const LEAVE_STATUS_CHIP: Record<LeaveStatus, string> = {
   canceled: "bg-muted text-text-subtle",
 };
 
+/** 右栏 chip 统一基础样式（Issue #164）：w-full 不随内容撑宽、h-8 与按钮等高、文字居中。
+    保持 span（纯展示非交互，语义正确）；inline-flex 使 emoji+文字整体垂直居中，与按钮对齐 */
+const CHIP_BASE_CLASS =
+  "inline-flex h-8 w-full items-center justify-center rounded-full px-3 text-center text-label";
+
+/** 右栏按钮统一基础样式（Issue #164）：与 chip 等高 h-8、w-full、文字居中 */
+const BUTTON_BASE_CLASS =
+  "inline-flex h-8 w-full items-center justify-center rounded-full px-3 text-center text-xs font-medium shadow-sm";
+
 type AttendanceInfo = {
   status: string;
   sign_in_time: string | null;
@@ -105,12 +114,6 @@ export function RehearsalCard({
       ? (attendance?.status ?? "absent")
       : explicitStatus;
 
-  // 已结束灰标签：与状态 chip 并存，标注时间窗已关闭
-  const endedLabel =
-    blockReason === "ended" && statusChip ? (
-      <span className="rounded-full bg-muted px-3 py-1 text-label text-text-subtle">已结束</span>
-    ) : null;
-
   // 有效申请（待审批/已通过/已驳回）：卡片显示申请状态 chip；已撤回/已取消视同无申请
   const leaveStatus = leaveRequest?.status ?? null;
   const hasLeaveRequest =
@@ -159,7 +162,7 @@ export function RehearsalCard({
   }
 
   const renderStatusChip = (status: string) => {
-    const chipClass = `rounded-full px-3 py-1 text-label ${
+    const chipClass = `${CHIP_BASE_CLASS} ${
       STATUS_CHIP_CLASS[status] ?? "bg-muted text-text-subtle"
     }`;
     const content = `${STATUS_ICON[status] ?? ""} ${STATUS_LABEL[status] ?? status}`;
@@ -199,10 +202,7 @@ export function RehearsalCard({
           {/* 1. 签到/出勤状态 */}
           {attendanceLoading ? (
             // 考勤加载中：map 未就绪时既不渲染状态 chip 也不渲染签到按钮，以占位符示意（防首屏闪错）
-            <span
-              aria-hidden="true"
-              className="rounded-full bg-muted px-3 py-1 text-label text-text-subtle"
-            >
+            <span aria-hidden="true" className={`${CHIP_BASE_CLASS} bg-muted text-text-subtle`}>
               …
             </span>
           ) : statusChip ? (
@@ -214,7 +214,7 @@ export function RehearsalCard({
               <button
                 type="button"
                 onClick={onSignIn}
-                className="inline-flex w-full items-center justify-center rounded-full bg-warning-bg px-3 py-1 text-xs font-medium text-warning shadow-sm"
+                className={`${BUTTON_BASE_CLASS} bg-warning-bg text-warning`}
               >
                 覆盖请假
               </button>
@@ -224,26 +224,21 @@ export function RehearsalCard({
               <button
                 type="button"
                 onClick={onSignIn}
-                className="inline-flex w-full items-center justify-center rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium text-text shadow-sm"
+                className={`${BUTTON_BASE_CLASS} border border-border bg-surface text-text`}
               >
                 签到
               </button>
             ) : (
-              <div className="flex flex-wrap items-center gap-1.5">
-                {renderStatusChip(statusChip)}
-                {endedLabel}
-              </div>
+              renderStatusChip(statusChip)
             )
           ) : blockReason === "not-started" ? (
-            <span className="rounded-full bg-muted px-3 py-1 text-label text-text-subtle">
-              未开始
-            </span>
+            <span className={`${CHIP_BASE_CLASS} bg-muted text-text-subtle`}>未开始</span>
           ) : (
             onSignIn && (
               <button
                 type="button"
                 onClick={onSignIn}
-                className={`inline-flex w-full items-center justify-center rounded-full px-3 py-1 text-xs font-medium shadow-sm ${
+                className={`${BUTTON_BASE_CLASS} ${
                   canOverrideLeave
                     ? "bg-warning-bg text-warning"
                     : "border border-border bg-surface text-text"
@@ -257,7 +252,7 @@ export function RehearsalCard({
           {/* 2. 申请状态 chip（待审批/已通过/已驳回，有有效申请时显示） */}
           {hasLeaveRequest && (
             <span
-              className={`rounded-full px-2.5 py-1 text-center text-label ${
+              className={`${CHIP_BASE_CLASS} ${
                 LEAVE_STATUS_CHIP[leaveStatus as LeaveStatus] ?? "bg-muted text-text-subtle"
               }`}
             >
@@ -270,7 +265,7 @@ export function RehearsalCard({
             <button
               type="button"
               onClick={onLeaveRequest}
-              className="inline-flex w-full items-center justify-center rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium text-text shadow-sm"
+              className={`${BUTTON_BASE_CLASS} border border-border bg-surface text-text`}
             >
               {leaveActionLabel}
             </button>

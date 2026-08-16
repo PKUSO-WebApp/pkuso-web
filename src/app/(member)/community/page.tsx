@@ -36,6 +36,11 @@ const TYPE_LABEL: Record<PostType, string> = {
   gathering: "团建",
 };
 
+// 回收图片预览的 blob URL，避免内存泄漏；非 blob（原图 URL）时无操作
+function revokeBlobUrl(url: string | null) {
+  if (url && url.startsWith("blob:")) URL.revokeObjectURL(url);
+}
+
 export default function CommunityPage() {
   const { user } = useUser();
   const [view, setView] = React.useState<PostType>("ensemble");
@@ -43,6 +48,9 @@ export default function CommunityPage() {
   const [publishOpen, setPublishOpen] = React.useState(false);
   const [editId, setEditId] = React.useState<string | null>(null);
   const submittingRef = React.useRef(false);
+  // 页面级提交锁定：覆盖「上传 + 建帖/更新」全程（usePosts 的 saving 只覆盖
+  // create/update，uploadImage 期间不置位，否则上传中取消/遮罩/关闭会误关弹窗）
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [zoomImageUrl, setZoomImageUrl] = React.useState<string | null>(null);
   const [form, setForm] = React.useState<FormState>({
@@ -56,16 +64,7 @@ export default function CommunityPage() {
   });
   const [imagePreviewUrl, setImagePreviewUrl] = React.useState<string | null>(null);
 
-  const {
-    data: rawPosts,
-    loading,
-    saving: submitting,
-    error,
-    create,
-    update,
-    remove,
-    uploadImage,
-  } = usePosts();
+  const { data: rawPosts, loading, error, create, update, remove, uploadImage } = usePosts();
 
   // normalize Supabase join: profiles → single object
   const posts = React.useMemo(() => {
@@ -120,7 +119,8 @@ export default function CommunityPage() {
   };
 
   const closePublish = () => {
-    if (submitting) return;
+    if (isSubmitting) return;
+    revokeBlobUrl(imagePreviewUrl);
     setPublishOpen(false);
     setEditId(null);
     setForm({
@@ -138,6 +138,8 @@ export default function CommunityPage() {
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // 换图：先回收旧 blob URL，再生成新预览
+    revokeBlobUrl(imagePreviewUrl);
     setForm((prev) => ({ ...prev, imageFile: file }));
     const url = URL.createObjectURL(file);
     setImagePreviewUrl(url);
@@ -146,7 +148,7 @@ export default function CommunityPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     // 同步 + 异步双重防重复提交
-    if (submittingRef.current || submitting) return;
+    if (submittingRef.current || isSubmitting) return;
     if (!form.title.trim()) {
       alert("请填写标题。");
       return;
@@ -157,6 +159,7 @@ export default function CommunityPage() {
     }
 
     submittingRef.current = true;
+    setIsSubmitting(true);
 
     try {
       let imageUrl: string | null = null;
@@ -220,6 +223,7 @@ export default function CommunityPage() {
       closePublish();
     } finally {
       submittingRef.current = false;
+      setIsSubmitting(false);
     }
   };
 
@@ -321,7 +325,7 @@ export default function CommunityPage() {
                       e.stopPropagation();
                       void handleDelete(post.id);
                     }}
-                    className="text-text-subtle hover:text-red-500"
+                    className="text-text-subtle hover:text-danger"
                   >
                     删除
                   </button>
@@ -356,7 +360,7 @@ export default function CommunityPage() {
           setForm={setForm}
           imagePreviewUrl={imagePreviewUrl}
           onImageChange={handleImageChange}
-          submitting={submitting}
+          submitting={isSubmitting}
           editId={editId}
           onClose={closePublish}
           onSubmit={handleSubmit}
@@ -610,6 +614,7 @@ function PublishModal({
               type="file"
               accept="image/*"
               onChange={onImageChange}
+              disabled={submitting}
               className="w-full text-label text-text-muted file:mr-2 file:rounded-full file:border-0 file:bg-muted file:px-3 file:py-1 file:text-xs"
             />
             {imagePreviewUrl && (

@@ -11,6 +11,8 @@ function mockClient<T>(responses: T[]) {
     eq: () => c(r),
     maybeSingle: () => c(r),
     order: () => c(r),
+    // update().eq().select("id") 的 0 行检测链（usePosts.update）
+    select: () => c(r),
     then: (resolve: (v: T) => void) => resolve(r),
   });
   return {
@@ -54,6 +56,47 @@ describe("usePosts", () => {
       await result.current.create({ title: "新帖子", author_id: "u1" });
     });
     await waitFor(() => expect(result.current.data).toHaveLength(1));
+  });
+
+  it("update 更新帖子：命中 1 行返回 true 并乐观更新本地数据", async () => {
+    const c = mockClient([
+      { data: [{ id: "1", title: "原标题" }], error: null }, // fetch
+      { data: [{ id: "1" }], error: null }, // update .select("id") 命中 1 行
+    ]);
+    const { result } = renderHook(() => usePosts({ client: c as never }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let ok = false;
+    await act(async () => {
+      ok = await result.current.update("1", { title: "新标题" });
+    });
+    expect(ok).toBe(true);
+    expect(result.current.data[0]).toMatchObject({ title: "新标题" });
+  });
+
+  it("update 0 行（RLS 静默失败/记录已被删除）返回 false，不乐观更新且清理旧 error", async () => {
+    const c = mockClient([
+      { data: [{ id: "1", title: "原标题" }], error: null }, // fetch
+      { data: null, error: { message: "网络错误" } }, // 第一次 update：dbError
+      { data: [], error: null }, // 第二次 update：0 行
+    ]);
+    const { result } = renderHook(() => usePosts({ client: c as never }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      const ok = await result.current.update("1", { title: "A" });
+      expect(ok).toBe(false);
+    });
+    expect(result.current.error).toBe("网络错误");
+
+    await act(async () => {
+      const ok = await result.current.update("1", { title: "B" });
+      expect(ok).toBe(false);
+    });
+    // 0 行分支不报新错，并清理旧 error（避免后续 alert 误导文案）
+    expect(result.current.error).toBeNull();
+    // 0 行时本地数据不被乐观更新，避免假成功
+    expect(result.current.data[0]).toMatchObject({ title: "原标题" });
   });
 
   it("remove 删除帖子", async () => {

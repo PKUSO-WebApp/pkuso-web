@@ -1,10 +1,10 @@
 /** @vitest-environment jsdom */
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
+import { render, screen, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
 import React from "react";
 import AdminCommunityPage from "./page";
 import { usePosts } from "@/hooks/usePosts";
-import { supabase } from "@/lib/supabase";
+import { formatDateTimeInChina } from "@/lib/date-utils";
 
 vi.mock("@/hooks/usePosts", () => ({
   usePosts: vi.fn(),
@@ -14,29 +14,7 @@ vi.mock("@/components/ui/Toggle", () => ({
   Toggle: vi.fn(() => <div data-testid="toggle" />),
 }));
 
-vi.mock("@/context/user-context", () => ({
-  useUser: () => ({ user: { id: "admin-id", role: "admin" }, logout: vi.fn() }),
-}));
-
-vi.mock("@/lib/supabase", () => ({
-  supabase: {
-    storage: {
-      from: vi.fn().mockReturnValue({
-        remove: vi.fn().mockResolvedValue({ error: null }),
-      }),
-    },
-  },
-}));
-
 const mockUsePosts = vi.mocked(usePosts);
-const storageFromMock = vi.mocked(supabase.storage.from);
-
-// jsdom 未实现 blob URL API，手动补齐（closeEdit/换图回收 blob URL 时调用）
-URL.revokeObjectURL = vi.fn();
-
-const UPLOAD_URL = "https://mock.supabase.co/storage/v1/object/public/community-images/new.png";
-const OLD_IMAGE_URL =
-  "https://mock.supabase.co/storage/v1/object/public/community-images/old-qr.png";
 
 function makePost(overrides: Record<string, unknown> = {}) {
   return {
@@ -56,24 +34,69 @@ function makePost(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function renderPage(data: unknown[] = []) {
-  mockUsePosts.mockReturnValue({
+type UpdateFn = (id: string, payload: Record<string, unknown>) => Promise<boolean>;
+type RemoveFn = (id: string) => Promise<boolean>;
+
+type PostsApi = {
+  update: Mock<UpdateFn>;
+  remove: Mock<RemoveFn>;
+};
+
+/**
+ * 渲染页面。用 mockImplementation 每次渲染返回闭包持有的最新列表，
+ * 模拟真实 usePosts 的乐观更新：update/remove 成功后 data 引用变化，
+ * 驱动页面 useMemo 重算、派生详情弹窗自动刷新/关闭（与真实 hook 行为一致）。
+ * 传入 hooks.update/remove 可覆盖（如挂起模拟 busy 态）。
+ */
+function renderPage(
+  initialData: unknown[] = [],
+  hooks: Partial<PostsApi> = {},
+): PostsApi & { container: HTMLElement } {
+  let data: unknown[] = initialData;
+  const update =
+    hooks.update ??
+    vi.fn<UpdateFn>().mockImplementation(async (id, payload) => {
+      // 乐观更新：原地合并修改内容（同 usePosts.update）
+      data = data.map((p) =>
+        (p as { id?: string })?.id === id ? { ...(p as Record<string, unknown>), ...payload } : p,
+      );
+      return true;
+    });
+  const remove =
+    hooks.remove ??
+    vi.fn<RemoveFn>().mockImplementation(async (id) => {
+      // 乐观移除：从本地列表剔除（同 usePosts.remove）
+      data = data.filter((p) => (p as { id?: string })?.id !== id);
+      return true;
+    });
+  mockUsePosts.mockImplementation(() => ({
     data,
     loading: false,
     error: null,
     saving: false,
     fetch: vi.fn(),
     create: vi.fn(),
-    update: vi.fn().mockResolvedValue(true),
-    remove: vi.fn(),
-    uploadImage: vi.fn().mockResolvedValue({ url: UPLOAD_URL }),
-  });
-  return render(<AdminCommunityPage />);
+    update,
+    remove,
+    uploadImage: vi.fn(),
+  }));
+  const { container } = render(<AdminCommunityPage />);
+  return { update, remove, container };
 }
 
 describe("AdminCommunityPage 社区管理", () => {
-  afterEach(() => {
+  let confirmSpy: ReturnType<typeof vi.spyOn>;
+  let alertSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
     vi.clearAllMocks();
+    // jsdom 未实现 alert/confirm，spy 并配置默认行为
+    alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
     cleanup();
   });
 
@@ -92,183 +115,170 @@ describe("AdminCommunityPage 社区管理", () => {
     expect(section!.className).toContain("overflow-y-auto");
   });
 
-  it("编辑弹窗显示当前图片（Issue #157）", () => {
-    const imageUrl =
-      "https://mock.supabase.co/storage/v1/object/public/community-images/old-qr.png";
-    renderPage([makePost({ image_url: imageUrl })]);
-    fireEvent.click(screen.getByText("编辑"));
-    const img = screen.getByAltText("图片预览") as HTMLImageElement;
-    expect(img.getAttribute("src")).toBe(imageUrl);
+  // ============================================================
+  // 卡片去按钮化（Issue #179）：操作入口收敛到详情弹窗
+  // ============================================================
+  it("卡片无「编辑/删除/锁定」操作按钮，点击整卡打开详情弹窗", () => {
+    renderPage([makePost()]);
+    expect(screen.queryByText("编辑")).toBeNull();
+    expect(screen.queryByText("删除")).toBeNull();
+    expect(screen.queryByText("锁定")).toBeNull();
+    // 点击卡片标题打开详情弹窗
+    fireEvent.click(screen.getByText("测试公告"));
+    expect(screen.getByText("联系方式")).toBeTruthy();
+    expect(screen.getByText("wx-id")).toBeTruthy();
   });
 
-  it("更换图片：选新文件后保存，先上传再以新 URL 提交（Issue #157）", async () => {
-    // jsdom 未实现 createObjectURL，手动补齐
-    URL.createObjectURL = vi.fn(() => "blob:mock-url");
-    const mockUpdate = vi.fn().mockResolvedValue(true);
-    const mockUploadImage = vi.fn().mockResolvedValue({ url: UPLOAD_URL });
-    mockUsePosts.mockReturnValue({
-      data: [makePost()],
-      loading: false,
-      error: null,
-      saving: false,
-      fetch: vi.fn(),
-      create: vi.fn(),
-      update: mockUpdate,
-      remove: vi.fn(),
-      uploadImage: mockUploadImage,
-    });
-    const { container } = render(<AdminCommunityPage />);
-    fireEvent.click(screen.getByText("编辑"));
-
-    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File(["x"], "qr.png", { type: "image/png" });
-    Object.defineProperty(fileInput, "files", { value: [file] });
-    fireEvent.change(fileInput);
-
-    fireEvent.click(screen.getByText("保存"));
-    await waitFor(() => {
-      expect(mockUploadImage).toHaveBeenCalledWith(file, "admin-id");
-      expect(mockUpdate).toHaveBeenCalledWith(
-        "post-1",
-        expect.objectContaining({ image_url: UPLOAD_URL }),
-      );
-    });
+  it("详情弹窗完整展示帖子信息（类型/作者/时间/内容/图片/联系方式/锁定徽章）", () => {
+    renderPage([
+      makePost({
+        is_locked: true,
+        image_url: "https://mock.supabase.co/storage/v1/object/public/community-images/qr.png",
+      }),
+    ]);
+    fireEvent.click(screen.getByText("测试公告")); // 打开详情弹窗
+    // 类型徽章：卡片与弹窗各一个
+    expect(screen.getAllByText("重奏").length).toBeGreaterThanOrEqual(2);
+    // 创建者与时间（时间用与页面相同的格式化函数计算期望值，避免时区依赖）
+    expect(screen.getByText("创建者：张三")).toBeTruthy();
+    const expectedTime = formatDateTimeInChina("2026-01-01T00:00:00+08:00");
+    expect(screen.getByText(`时间：${expectedTime}`)).toBeTruthy();
+    // 内容：卡片预览 + 弹窗正文
+    expect(screen.getAllByText("测试内容").length).toBeGreaterThanOrEqual(2);
+    // 图片（只读展示，无放大浮层）
+    expect(screen.getByAltText("公告图片")).toBeTruthy();
+    // 联系方式
+    expect(screen.getByText("wx-id")).toBeTruthy();
+    // 已锁定徽章：卡片与弹窗各一个
+    expect(screen.getAllByText("🔒 已锁定").length).toBeGreaterThanOrEqual(2);
   });
 
-  it("更换图片：保存成功后以旧路径清理 storage 附件（换图删旧，同 Issue #149 语义）", async () => {
-    // jsdom 未实现 createObjectURL，手动补齐
-    URL.createObjectURL = vi.fn(() => "blob:mock-url");
-    const encodedName = encodeURIComponent("旧图.png");
-    const oldImageUrl = `https://mock.supabase.co/storage/v1/object/public/community-images/${encodedName}`;
-    const mockUpdate = vi.fn().mockResolvedValue(true);
-    const mockUploadImage = vi.fn().mockResolvedValue({ url: UPLOAD_URL });
-    mockUsePosts.mockReturnValue({
-      data: [makePost({ image_url: oldImageUrl })],
-      loading: false,
-      error: null,
-      saving: false,
-      fetch: vi.fn(),
-      create: vi.fn(),
-      update: mockUpdate,
-      remove: vi.fn(),
-      uploadImage: mockUploadImage,
-    });
-    const { container } = render(<AdminCommunityPage />);
-    fireEvent.click(screen.getByText("编辑"));
-
-    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File(["x"], "qr.png", { type: "image/png" });
-    Object.defineProperty(fileInput, "files", { value: [file] });
-    fireEvent.change(fileInput);
-
-    fireEvent.click(screen.getByText("保存"));
+  it("点「锁定」：调用 update 切换 is_locked，弹窗内状态刷新（乐观更新）", async () => {
+    const { update } = renderPage([makePost()]);
+    fireEvent.click(screen.getByText("测试公告")); // 打开详情弹窗
+    expect(screen.getByText("锁定")).toBeTruthy();
+    fireEvent.click(screen.getByText("锁定"));
     await waitFor(() => {
-      expect(mockUpdate).toHaveBeenCalledWith(
-        "post-1",
-        expect.objectContaining({ image_url: UPLOAD_URL }),
-      );
+      expect(update).toHaveBeenCalledWith("post-1", { is_locked: true });
     });
-    // storage 附件清理：旧路径被删除（decodeURIComponent 解出原始文件名）
+    // 乐观更新后：弹窗内按钮变为「解锁」，已锁定徽章出现（卡片 + 弹窗）
     await waitFor(() => {
-      expect(storageFromMock).toHaveBeenCalledWith("community-images");
-      const removeMock = storageFromMock.mock.results[0].value.remove as ReturnType<typeof vi.fn>;
-      expect(removeMock).toHaveBeenCalledWith(["旧图.png"]);
+      expect(screen.getByText("解锁")).toBeTruthy();
     });
+    expect(screen.getAllByText("🔒 已锁定").length).toBeGreaterThanOrEqual(2);
   });
 
-  it("上传期间取消/保存按钮禁用，遮罩与关闭请求被拦截（上传阶段纳入提交锁定）", async () => {
-    // jsdom 未实现 createObjectURL，手动补齐
-    URL.createObjectURL = vi.fn(() => "blob:mock-url");
-    // 上传挂起（pending），模拟上传中阶段
-    let resolveUpload: ((v: { url: string }) => void) | undefined;
-    const mockUploadImage = vi.fn(
+  it("点「删除」：confirm 后调用 remove，列表刷新后派生弹窗自动关闭", async () => {
+    const { remove } = renderPage([makePost()]);
+    fireEvent.click(screen.getByText("测试公告")); // 打开详情弹窗
+    expect(screen.getByText("联系方式")).toBeTruthy(); // 弹窗已打开
+    fireEvent.click(screen.getByText("删除"));
+    expect(confirmSpy).toHaveBeenCalledWith("确定删除？");
+    await waitFor(() => {
+      expect(remove).toHaveBeenCalledWith("post-1");
+    });
+    // 删除成功后列表刷新，派生详情弹窗自动关闭（无需显式关闭）
+    await waitFor(() => {
+      expect(screen.queryByText("联系方式")).toBeNull();
+    });
+    expect(screen.queryByText("测试公告")).toBeNull(); // 帖子已从列表移除
+  });
+
+  it("锁定 busy 态：显示「处理中…」并禁用，完成后恢复", async () => {
+    let resolveUpdate!: (ok: boolean) => void;
+    const update = vi.fn<UpdateFn>().mockImplementation(
       () =>
-        new Promise<{ url: string }>((resolve) => {
-          resolveUpload = resolve;
+        new Promise<boolean>((resolve) => {
+          resolveUpdate = resolve;
         }),
     );
-    const mockUpdate = vi.fn().mockResolvedValue(true);
-    mockUsePosts.mockReturnValue({
-      // 帖子带原图：编辑弹窗需渲染「删除图片」按钮，才能断言其上传期间禁用
-      data: [makePost({ image_url: OLD_IMAGE_URL })],
-      loading: false,
-      error: null,
-      saving: false,
-      fetch: vi.fn(),
-      create: vi.fn(),
-      update: mockUpdate,
-      remove: vi.fn(),
-      uploadImage: mockUploadImage,
+    renderPage([makePost()], { update });
+    fireEvent.click(screen.getByText("测试公告")); // 打开详情弹窗
+    fireEvent.click(screen.getByText("锁定"));
+    // busy：显示「处理中…」且禁用；「删除」同步禁用
+    expect((screen.getByText("处理中…") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText("删除") as HTMLButtonElement).disabled).toBe(true);
+    // 完成后恢复为「锁定」
+    await act(async () => {
+      resolveUpdate(true);
     });
-    const { container } = render(<AdminCommunityPage />);
-    fireEvent.click(screen.getByText("编辑"));
-
-    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File(["x"], "qr.png", { type: "image/png" });
-    Object.defineProperty(fileInput, "files", { value: [file] });
-    fireEvent.change(fileInput);
-
-    fireEvent.click(screen.getByText("保存"));
-    await waitFor(() => {
-      expect(mockUploadImage).toHaveBeenCalled();
-    });
-
-    // 上传挂起期间：取消/保存按钮均禁用（双重 guard 防止中途退出误清表单）
-    expect((screen.getByText("取消") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByText("保存中…") as HTMLButtonElement).disabled).toBe(true);
-    // 上传挂起期间：file input 与「删除图片」按钮同样禁用，杜绝上传中换图/删图
-    expect((container.querySelector('input[type="file"]') as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByText("删除图片") as HTMLButtonElement).disabled).toBe(true);
-    // 遮罩关闭被禁用：关闭按钮（aria-label="关闭弹窗"）不再渲染
-    expect(screen.queryByLabelText("关闭弹窗")).toBeNull();
-    // 标题栏「关闭」按钮点击被 closeEdit 拦截，弹窗保持打开
-    fireEvent.click(screen.getByText("关闭"));
-    expect(screen.getByText("编辑公告")).toBeTruthy();
-
-    // 上传完成后正常收尾：update 提交成功并关闭弹窗
-    resolveUpload!({ url: UPLOAD_URL });
-    await waitFor(() => {
-      expect(mockUpdate).toHaveBeenCalledWith(
-        "post-1",
-        expect.objectContaining({ image_url: UPLOAD_URL }),
-      );
-    });
-    await waitFor(() => {
-      expect(screen.queryByText("编辑公告")).toBeNull();
-    });
+    expect(screen.queryByText("处理中…")).toBeNull();
+    expect(screen.getByText("锁定")).toBeTruthy();
   });
 
-  it("删除图片：保存后 image_url 置 null 且清理 storage 附件（Issue #157）", async () => {
-    const encodedName = encodeURIComponent("杨图.png");
-    const oldImageUrl = `https://mock.supabase.co/storage/v1/object/public/community-images/${encodedName}`;
-    const mockUpdate = vi.fn().mockResolvedValue(true);
-    mockUsePosts.mockReturnValue({
-      data: [makePost({ image_url: oldImageUrl })],
-      loading: false,
-      error: null,
-      saving: false,
-      fetch: vi.fn(),
-      create: vi.fn(),
-      update: mockUpdate,
-      remove: vi.fn(),
-      uploadImage: vi.fn(),
+  it("删除 busy 态：显示「删除中…」并禁用，完成后恢复", async () => {
+    let resolveRemove!: (ok: boolean) => void;
+    const remove = vi.fn<RemoveFn>().mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveRemove = resolve;
+        }),
+    );
+    renderPage([makePost()], { remove });
+    fireEvent.click(screen.getByText("测试公告")); // 打开详情弹窗
+    fireEvent.click(screen.getByText("删除"));
+    // busy：显示「删除中…」且禁用；「锁定」同步禁用
+    expect((screen.getByText("删除中…") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText("锁定") as HTMLButtonElement).disabled).toBe(true);
+    // 完成后恢复为「删除」
+    await act(async () => {
+      resolveRemove(true);
     });
-    render(<AdminCommunityPage />);
-    fireEvent.click(screen.getByText("编辑"));
-    fireEvent.click(screen.getByText("删除图片"));
-    fireEvent.click(screen.getByText("保存"));
+    expect(screen.queryByText("删除中…")).toBeNull();
+    expect(screen.getByText("删除")).toBeTruthy();
+  });
 
-    await waitFor(() => {
-      expect(mockUpdate).toHaveBeenCalledWith(
-        "post-1",
-        expect.objectContaining({ image_url: null }),
-      );
+  // ============================================================
+  // 对抗修复回归：busy 期间弹窗关闭拦截 + 失败路径反馈
+  // ============================================================
+  it("锁定进行中：弹窗关闭被拦截（遮罩按钮不渲染、关闭按钮守卫），完成后可关闭", async () => {
+    let resolveUpdate!: (ok: boolean) => void;
+    const update = vi.fn<UpdateFn>().mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveUpdate = resolve;
+        }),
+    );
+    renderPage([makePost()], { update });
+    fireEvent.click(screen.getByText("测试公告")); // 打开详情弹窗
+    fireEvent.click(screen.getByText("锁定"));
+    // busy：遮罩关闭按钮不再渲染，标题栏「关闭」点击被守卫拦截
+    expect(screen.queryByLabelText("关闭弹窗")).toBeNull();
+    fireEvent.click(screen.getByText("关闭"));
+    expect(screen.getByText("联系方式")).toBeTruthy(); // 弹窗保持打开
+    // 完成后弹窗可正常关闭
+    await act(async () => {
+      resolveUpdate(true);
     });
-    // storage 附件清理：路径提取方式同 usePosts.remove（decodeURIComponent）
+    fireEvent.click(screen.getByText("关闭"));
+    expect(screen.queryByText("联系方式")).toBeNull();
+  });
+
+  it("锁定失败：alert 提示、弹窗保持、按钮恢复可重试", async () => {
+    const update = vi.fn<UpdateFn>().mockResolvedValue(false);
+    renderPage([makePost()], { update });
+    fireEvent.click(screen.getByText("测试公告")); // 打开详情弹窗
+    fireEvent.click(screen.getByText("锁定"));
     await waitFor(() => {
-      expect(storageFromMock).toHaveBeenCalledWith("community-images");
-      const removeMock = storageFromMock.mock.results[0].value.remove as ReturnType<typeof vi.fn>;
-      expect(removeMock).toHaveBeenCalledWith(["杨图.png"]);
+      expect(update).toHaveBeenCalledWith("post-1", { is_locked: true });
     });
+    expect(alertSpy).toHaveBeenCalledWith("操作失败");
+    // 弹窗保持，busy 解除后按钮恢复可点击
+    expect(screen.getByText("联系方式")).toBeTruthy();
+    expect((screen.getByText("锁定") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("删除失败：alert 提示、弹窗保持、按钮恢复可重试", async () => {
+    const remove = vi.fn<RemoveFn>().mockResolvedValue(false);
+    renderPage([makePost()], { remove });
+    fireEvent.click(screen.getByText("测试公告")); // 打开详情弹窗
+    fireEvent.click(screen.getByText("删除"));
+    await waitFor(() => {
+      expect(remove).toHaveBeenCalledWith("post-1");
+    });
+    expect(alertSpy).toHaveBeenCalledWith("删除失败");
+    // 弹窗保持，busy 解除后按钮恢复可点击
+    expect(screen.getByText("联系方式")).toBeTruthy();
+    expect((screen.getByText("删除") as HTMLButtonElement).disabled).toBe(false);
   });
 });

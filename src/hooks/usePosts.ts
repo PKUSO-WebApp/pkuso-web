@@ -65,13 +65,21 @@ export function usePosts(options?: { client?: typeof defaultClient; includeLocke
   const update = React.useCallback(
     async (id: string, payload: Record<string, unknown>) => {
       setSaving(true);
-      const { error: dbError } = await client
+      // 链 .select("id") 检测 0 行更新（CLAUDE.md）：RLS 静默失败或记录已被并发删除时
+      // 返回 false，避免上层假成功（如对已删帖子编辑保存导致内容静默丢失）
+      const { data: updated, error: dbError } = await client
         .from("posts")
         .update(payload as never)
-        .eq("id", id);
+        .eq("id", id)
+        .select("id");
       setSaving(false);
       if (dbError) {
         setError(dbError.message);
+        return false;
+      }
+      if (!updated || updated.length === 0) {
+        // 0 行（RLS 静默失败/记录已被删除）：清理旧 error，避免误导上层提示文案
+        setError(null);
         return false;
       }
       // 乐观更新：原地合并修改内容，不依赖 fetch 刷新

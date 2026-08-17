@@ -228,7 +228,11 @@ export default function CommunityPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (deletingId) return;
+    // 全局 guard 兜底：正常 UI 下 busy 已禁用按钮并拦截弹窗关闭（纯防御路径）
+    if (deletingId) {
+      alert("请等待当前操作完成");
+      return;
+    }
     if (!window.confirm("确定要删除这条公告吗？")) return;
     setDeletingId(id);
     const ok = await remove(id);
@@ -308,30 +312,6 @@ export default function CommunityPage() {
                   </div>
                 </div>
               </button>
-              {(user?.id === post.author_id || user?.role === "admin") && (
-                <div className="mt-2 flex gap-2 text-label">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openPublish(post);
-                    }}
-                    className="text-text-muted hover:text-text"
-                  >
-                    编辑
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void handleDelete(post.id);
-                    }}
-                    className="text-text-subtle hover:text-danger"
-                  >
-                    删除
-                  </button>
-                </div>
-              )}
             </Card>
           ))}
         {!loading && list.length === 0 && (
@@ -344,9 +324,18 @@ export default function CommunityPage() {
       {detailPost && (
         <DetailModal
           post={detailPost}
+          canManage={user?.id === detailPost.author_id || user?.role === "admin"}
+          // 删除进行中禁用操作行：防止慢网下删除 pending 期间点「编辑」
+          // 打开对已删帖子的编辑弹窗（对抗修复，配合 usePosts.update 0 行检测）
+          busy={deletingId !== null}
           onClose={() => setDetailPost(null)}
           onSaveQr={handleSaveQr}
           onZoomImage={setZoomImageUrl}
+          onEdit={() => {
+            setDetailPost(null);
+            openPublish(detailPost);
+          }}
+          onDelete={() => void handleDelete(detailPost.id)}
         />
       )}
 
@@ -427,14 +416,26 @@ function ZoomImageOverlay({ url, onClose }: { url: string; onClose: () => void }
 
 function DetailModal({
   post,
+  canManage,
+  busy,
   onClose,
   onSaveQr,
   onZoomImage,
+  onEdit,
+  onDelete,
 }: {
   post: PostRowWithAuthor;
+  /** 是否可管理（帖主或管理员）：控制底部「编辑/删除」操作行（Issue #179） */
+  canManage: boolean;
+  /** 删除进行中：操作按钮禁用（防删除 pending 期间点「编辑」操作已删帖子） */
+  busy: boolean;
   onClose: () => void;
   onSaveQr: (url: string) => void;
   onZoomImage: (url: string) => void;
+  /** 点「编辑」：关闭详情并打开发布弹窗（编辑模式预填） */
+  onEdit: () => void;
+  /** 点「删除」：confirm 后删除（成功后关闭详情） */
+  onDelete: () => void;
 }) {
   const p = post.profiles;
   const author = p?.full_name ? `创建者：${p.full_name}` : "未知";
@@ -450,8 +451,15 @@ function DetailModal({
     );
   };
 
+  // busy（删除进行中）期间禁止关闭弹窗（遮罩关闭禁用 + 关闭按钮守卫），
+  // 与操作行互斥对齐管理端 post-detail-modal 的做法
+  const handleClose = () => {
+    if (busy) return;
+    onClose();
+  };
+
   return (
-    <Modal open onClose={onClose} title={post.title}>
+    <Modal open onClose={handleClose} closeOnOverlay={!busy} title={post.title}>
       <p className="text-label text-text-muted flex-shrink-0">
         {TYPE_LABEL[post.type as PostType]} · {author}
       </p>
@@ -509,6 +517,27 @@ function DetailModal({
               一键复制
             </button>
           </Card>
+        )}
+        {/* 底部操作行：仅帖主或管理员可见（Issue #179：卡片去按钮化，操作入口收敛到详情弹窗） */}
+        {canManage && (
+          <div className="flex items-center gap-3 text-label">
+            <button
+              type="button"
+              onClick={onEdit}
+              disabled={busy}
+              className="text-text-muted hover:text-text disabled:opacity-50"
+            >
+              编辑
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={busy}
+              className="text-text-subtle hover:text-danger disabled:opacity-50"
+            >
+              {busy ? "删除中…" : "删除"}
+            </button>
+          </div>
         )}
       </div>
     </Modal>

@@ -7,6 +7,8 @@ type ModalProps = {
   onClose: () => void;
   title?: string;
   children?: React.ReactNode;
+  /** 标题行右侧附加内容（位于标题与「关闭」按钮之间）；不传时行为与现状一致 */
+  headerExtra?: React.ReactNode;
   /** 底部弹出(默认)｜居中 */
   position?: "bottom" | "center";
   /** 点击遮罩关闭,默认 true */
@@ -18,6 +20,7 @@ export function Modal({
   onClose,
   title,
   children,
+  headerExtra,
   position = "bottom",
   closeOnOverlay = true,
 }: ModalProps) {
@@ -46,13 +49,16 @@ export function Modal({
         {title && (
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-base font-semibold text-text">{title}</h2>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-full bg-muted px-3 py-1 text-label text-text-muted hover:bg-border"
-            >
-              关闭
-            </button>
+            <div className="flex items-center gap-2">
+              {headerExtra}
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-full bg-muted px-3 py-1 text-label text-text-muted hover:bg-border"
+              >
+                关闭
+              </button>
+            </div>
           </div>
         )}
         {children}

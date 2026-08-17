@@ -269,9 +269,14 @@ describe("AdminRehearsalsPage 详情弹窗（Issue #173）", () => {
     // 签到码（卡片已移除展示，仅详情弹窗出现）
     expect(screen.getByText("签到码")).toBeTruthy();
     expect(screen.getByText("8848")).toBeTruthy();
-    // 底部操作按钮
-    expect(screen.getByRole("button", { name: "删除" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "编辑" })).toBeTruthy();
+    // 底部操作按钮：删除在前、编辑在后，并列右下角（Issue #182）
+    const deleteBtn = screen.getByRole("button", { name: "删除" });
+    const editBtn = screen.getByRole("button", { name: "编辑" });
+    expect(editBtn.parentElement).toBe(deleteBtn.parentElement);
+    expect(deleteBtn.parentElement!.className).toContain("justify-end");
+    expect(
+      deleteBtn.compareDocumentPosition(editBtn) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("删除流：window.confirm「确认删除？」通过 → 调用 remove 并关闭弹窗", () => {

@@ -6,41 +6,36 @@ import { useUser } from "@/context/user-context";
 import { useLeaveRequests } from "@/hooks/useLeaveRequests";
 import { formatDateTimeInChina } from "@/lib/date-utils";
 import { formatRehearsalRange } from "@/lib/date-utils";
-import type {
-  AttendanceStatus,
-  LeaveRequestRow,
-  LeaveStatus,
-  RehearsalRow,
-} from "@/types/database";
+import type { LeaveRequestRow, LeaveStatus, RehearsalRow } from "@/types/database";
 
 /**
  * 成员端请假/补请假弹窗（Issue #142）。
  *
  * 状态机规则（集中注释，前后端一致）：
  * - 无申请 / 已撤回 / 已取消：表单模式，可提交新申请（target_status 固定 excused）；
- * - pending：只读展示 + 「待审批」chip（底部操作行左侧），底部「编辑申请」进入
- *   编辑模式改内容（改内容不改状态），或编辑模式底部左侧「取消请假」（状态 →
- *   canceled，取消后视同无申请，可重新提交）；
- * - approved：只读展示 + 「已通过」chip（底部操作行左侧），可「撤回」；撤回不动
- *   考勤（Issue #155），撤回后进入新申请模式，target_status 单选
- *   「正常出勤 / 缺勤」（重新提交后，审批通过时按此记录考勤）；
- * - rejected：只读展示 + 「已驳回」chip（底部操作行左侧）+ 驳回原因，底部
- *   「重新申请」（内容预填，保存后状态回 pending 并清空驳回原因）。
- * - 底部操作行（Issue #173/#175 重构）：表单模式左侧「取消」（pending 编辑模式为
- *   「取消请假」，无底色）+ 右侧提交有底色；只读视图左侧展示申请状态 chip
- *   （待审批/已通过/已驳回，替代原「已提交」与左上角独立状态区——状态只保留这一处），
- *   右侧按状态分流（编辑申请 / 关闭 / 重新申请）。
+ * - pending：只读展示（状态 chip 在标题栏右侧），底部「编辑申请」进入编辑模式
+ *   改内容（改内容不改状态），或编辑模式底部「取消请假」（状态 → canceled，
+ *   取消后视同无申请，可重新提交）；
+ * - approved：只读展示（状态 chip 在标题栏右侧），无底部操作行、无撤回
+ *   （Issue #182 移除撤回；撤回能力已下线，历史 withdrawn 数据仅列表过滤兼容）；
+ * - rejected：只读展示（状态 chip 在标题栏右侧）+ 驳回原因，底部「重新申请」
+ *   （内容预填，保存后状态回 pending 并清空驳回原因）。
+ * - 底部操作行（Issue #173/#175/#182）：表单模式「取消」（pending 编辑模式为
+ *   「取消请假」，无底色）+ 右侧提交有底色；只读视图状态 chip 在标题栏右侧
+ *   （非交互 span，替代原「已提交」与独立状态区——状态只保留这一处），底部
+ *   仅按状态分流单个主操作且右对齐：pending → 编辑申请、rejected → 重新申请；
+ *   approved 无底部操作行。
  *
  * 附件：私有桶，保存 storage 路径；查看时经 getSignedUrl 换 60s 临时链接。
  * 编辑模式展示当前附件（签名 URL 预览），可「更换图片」（替换后保存时由 hook 删除旧附件）。
- * 防重复提交：同步 ref + state 双重 guard；提交/撤回/取消中禁关闭。
+ * 防重复提交：同步 ref + state 双重 guard；提交/取消中禁关闭。
  */
 
 type Props = {
   open: boolean;
   rehearsal: RehearsalRow | null;
   onClose: () => void;
-  /** 保存/撤回成功后通知父级刷新卡片上的申请状态 */
+  /** 保存成功后通知父级刷新卡片上的申请状态 */
   onSaved: () => void;
 };
 
@@ -62,11 +57,6 @@ const LEAVE_STATUS_CHIP: Record<LeaveStatus, string> = {
   canceled: "bg-muted text-text-subtle",
 };
 
-const TARGET_STATUS_OPTIONS: { value: AttendanceStatus; label: string }[] = [
-  { value: "present", label: "正常出勤" },
-  { value: "absent", label: "缺勤" },
-];
-
 export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) {
   const { user } = useUser();
   const {
@@ -74,7 +64,6 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
     create,
     updateReason,
     reapply,
-    withdraw,
     cancelRequest,
     uploadAttachment,
     getSignedUrl,
@@ -87,9 +76,6 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
   const [current, setCurrent] = React.useState<LeaveRequestRow | null>(null);
   /** 正在编辑的申请（pending 修改 / rejected 重新申请）；null = 新申请 */
   const [editing, setEditing] = React.useState<LeaveRequestRow | null>(null);
-  /** 撤回已通过申请后进入的新申请模式：需选择目标出勤状态 */
-  const [afterWithdraw, setAfterWithdraw] = React.useState(false);
-  const [targetStatus, setTargetStatus] = React.useState<AttendanceStatus | "">("excused");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -108,9 +94,6 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
   // ---- 操作状态 ----
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const submittingRef = React.useRef(false);
-  const [isWithdrawing, setIsWithdrawing] = React.useState(false);
-  const withdrawingRef = React.useRef(false);
-  const [confirmWithdraw, setConfirmWithdraw] = React.useState(false);
   /** 取消请假（pending 编辑模式）：确认内联块 + 防重复提交 guard */
   const [confirmCancel, setConfirmCancel] = React.useState(false);
   const [isCanceling, setIsCanceling] = React.useState(false);
@@ -128,7 +111,8 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
     void (async () => {
       const rows = await fetchMine();
       if (cancelled) return;
-      // 有效申请：未撤回且未取消（已取消视同无申请，表单模式可重新提交，Issue #149）
+      // 有效申请：未撤回且未取消（已取消视同无申请，表单模式可重新提交，Issue #149；
+      // withdrawn 为历史数据过滤，撤回功能已下线 Issue #182）
       const found =
         (rows ?? []).find(
           (r) =>
@@ -138,15 +122,12 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
         setCurrent(found);
         setMode(found ? "view" : "form");
         setEditing(null);
-        setAfterWithdraw(false);
-        setTargetStatus("excused");
         setReason("");
         setAttachmentFile(null);
         setAttachmentPreviewUrl(null);
         setKeepOldAttachment(false);
         setViewAttachmentUrl(null);
         setEditAttachmentUrl(null);
-        setConfirmWithdraw(false);
         setConfirmCancel(false);
         setLoading(false);
       }
@@ -199,8 +180,8 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
   }, [open, mode, editing?.id, editing?.attachment_url, keepOldAttachment, getSignedUrl]);
 
   const handleClose = () => {
-    // 提交/撤回/取消中禁关闭（防重复操作与数据中途丢失）
-    if (isSubmitting || isWithdrawing || isCanceling) return;
+    // 提交/取消中禁关闭（防重复操作与数据中途丢失）
+    if (isSubmitting || isCanceling) return;
     if (attachmentPreviewUrl) URL.revokeObjectURL(attachmentPreviewUrl);
     onClose();
   };
@@ -249,10 +230,6 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
       setError("请填写请假原因");
       return;
     }
-    if (afterWithdraw && !targetStatus) {
-      setError("请选择目标出勤状态");
-      return;
-    }
     if (!user?.id) {
       setError("登录状态失效，请重新登录");
       return;
@@ -290,13 +267,13 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
             ? await reapply(editing.id, editPayload)
             : await updateReason(editing.id, editPayload);
       } else {
-        // 新申请：撤回已通过申请后需显式选择目标状态，否则固定请假（excused）
+        // 新申请：固定请假（excused）目标状态（撤回后重新选择目标状态的流程已下线，Issue #182）
         ok = await create({
           rehearsal_id: rehearsal.id,
           user_id: user.id,
           reason: trimmed,
           attachment_url: attachmentUrl,
-          target_status: afterWithdraw ? (targetStatus as AttendanceStatus) : "excused",
+          target_status: "excused",
         });
       }
       if (!ok) return; // hook 已写入 error
@@ -313,8 +290,6 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
       setCurrent(found);
       setMode(found ? "view" : "form");
       setEditing(null);
-      setAfterWithdraw(false);
-      setTargetStatus("excused");
       setReason("");
       setAttachmentFile(null);
       setAttachmentPreviewUrl(null);
@@ -327,38 +302,6 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
     } finally {
       submittingRef.current = false;
       setIsSubmitting(false);
-    }
-  };
-
-  const handleWithdraw = async () => {
-    // 双重防重复提交
-    if (withdrawingRef.current || isWithdrawing || !current) return;
-    withdrawingRef.current = true;
-    setIsWithdrawing(true);
-    setError(null);
-    try {
-      // 撤回只改申请状态，不动考勤（Issue #155）
-      const ok = await withdraw(current.id);
-      if (!ok) return;
-      // 撤回后进入新申请模式：选择目标出勤状态（正常出勤/缺勤）重新提交，
-      // 审批通过时按新 target_status 记录考勤
-      setConfirmWithdraw(false);
-      setCurrent(null);
-      setEditing(null);
-      setMode("form");
-      setAfterWithdraw(true);
-      setTargetStatus("");
-      setReason("");
-      setAttachmentFile(null);
-      setAttachmentPreviewUrl(null);
-      setKeepOldAttachment(false);
-      setViewAttachmentUrl(null);
-      setEditAttachmentUrl(null);
-      setError(null);
-      onSaved();
-    } finally {
-      withdrawingRef.current = false;
-      setIsWithdrawing(false);
     }
   };
 
@@ -384,7 +327,7 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
     }
   };
 
-  const busy = isSubmitting || isWithdrawing || isCanceling || saving;
+  const busy = isSubmitting || isCanceling || saving;
 
   return (
     <Modal
@@ -393,13 +336,25 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
       title="请假申请"
       position="bottom"
       closeOnOverlay={!busy}
+      headerExtra={
+        /* 状态 chip（非交互 span，Issue #175/#182）：只读视图时位于标题栏右侧 */
+        mode === "view" && current ? (
+          <span
+            className={`rounded-full px-3 py-1 text-label ${
+              LEAVE_STATUS_CHIP[current.status as LeaveStatus] ?? "bg-muted text-text-subtle"
+            }`}
+          >
+            {LEAVE_STATUS_LABEL[current.status as LeaveStatus] ?? current.status}
+          </span>
+        ) : null
+      }
     >
       {loading ? (
         <p className="py-8 text-center text-xs text-text-muted">加载中…</p>
       ) : mode === "view" && current ? (
         /* ---------------- 只读视图 ---------------- */
         <div className="space-y-3">
-          {/* 申请时间（右对齐；状态 chip 移至底部操作行左侧，状态只保留一处，Issue #175） */}
+          {/* 申请时间（右对齐；状态 chip 在标题栏右侧，状态只保留一处，Issue #175/#182） */}
           <div className="flex justify-end">
             <span className="text-label text-text-subtle">
               申请于 {formatDateTimeInChina(current.created_at)}
@@ -447,89 +402,20 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
             </div>
           )}
 
-          {/* 撤回确认（内联，不叠加 Modal） */}
-          {confirmWithdraw && (
-            <div className="rounded-xl border border-warning/30 bg-warning/5 p-3">
-              <p className="mb-3 text-sm text-warning">
-                确认撤回该请假申请？撤回不影响当前考勤状态，可重新提交申请。
-              </p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setConfirmWithdraw(false)}
-                  className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-muted hover:bg-muted disabled:opacity-60"
-                >
-                  取消
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={handleWithdraw}
-                  className="flex-1 rounded-lg bg-danger px-3 py-2 text-sm text-danger-foreground hover:opacity-90 disabled:opacity-60"
-                >
-                  {isWithdrawing ? "撤回中…" : "确认撤回"}
-                </button>
-              </div>
+          {/* 底部操作行（Issue #173/#175/#182）：仅 pending/rejected 有单个主操作
+              （右对齐）；approved 无底部操作行（撤回能力已下线） */}
+          {(current.status === "pending" || current.status === "rejected") && (
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={handleEdit}
+                className="rounded-full bg-primary px-4 py-1.5 text-label font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+              >
+                {current.status === "pending" ? "编辑申请" : "重新申请"}
+              </button>
             </div>
           )}
-
-          {/* 撤回（仅已通过，Issue #155）：保留现有撤销状态机，撤回后进入新申请模式；
-              降级为次级按钮，主操作收敛到底部「状态 + 后续操作」行（Issue #173） */}
-          {current.status === "approved" && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => setConfirmWithdraw(true)}
-              className="w-full rounded-xl border border-border bg-surface py-2.5 text-sm font-medium text-danger hover:bg-muted disabled:opacity-60"
-            >
-              撤回申请
-            </button>
-          )}
-
-          {/* 底部操作行（Issue #173/#175 重构）：左侧申请状态 chip（非交互 span，替代
-              原「已提交」与左上角状态区），右侧按申请状态分流后续操作：
-              pending → 编辑申请（编辑模式内底部左侧即「取消请假」）；
-              approved → 关闭；rejected → 重新申请 */}
-          <div className="flex items-center justify-between pt-1">
-            <span
-              className={`rounded-full px-3 py-1 text-label ${
-                LEAVE_STATUS_CHIP[current.status as LeaveStatus] ?? "bg-muted text-text-subtle"
-              }`}
-            >
-              {LEAVE_STATUS_LABEL[current.status as LeaveStatus] ?? current.status}
-            </span>
-            {current.status === "pending" && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={handleEdit}
-                className="rounded-full bg-primary px-4 py-1.5 text-label font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
-              >
-                编辑申请
-              </button>
-            )}
-            {current.status === "approved" && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={handleClose}
-                className="rounded-full bg-primary px-4 py-1.5 text-label font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
-              >
-                关闭
-              </button>
-            )}
-            {current.status === "rejected" && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={handleEdit}
-                className="rounded-full bg-primary px-4 py-1.5 text-label font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
-              >
-                重新申请
-              </button>
-            )}
-          </div>
         </div>
       ) : (
         /* ---------------- 表单模式 ---------------- */
@@ -545,34 +431,6 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
               {rehearsal?.repertoire} · 地点：{rehearsal?.location ?? "未设置"}
             </p>
           </div>
-
-          {/* 撤回已通过申请后的目标状态选择 */}
-          {afterWithdraw && (
-            <div className="rounded-xl border border-border bg-surface p-3">
-              <p className="mb-2 text-sm font-medium text-text">
-                目标出勤状态（撤回不影响考勤；重新提交后，审批通过时按此记录考勤）
-              </p>
-              <div className="flex gap-2">
-                {TARGET_STATUS_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => {
-                      setTargetStatus(opt.value);
-                      setError(null);
-                    }}
-                    className={`flex-1 rounded-full px-3 py-2 text-sm font-medium transition-colors ${
-                      targetStatus === opt.value
-                        ? "bg-primary text-primary-foreground"
-                        : "border border-border bg-surface text-text-muted"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
 
           <div>
             <label className="mb-1 block text-label text-text-muted" htmlFor="leave-reason">
@@ -661,7 +519,35 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
 
           {error && <p className="text-sm text-danger">{error}</p>}
 
-          {/* 底部操作（Issue #173/#175 重构）：左侧「取消」/「取消请假」+ 右侧提交
+          {/* 取消请假内联确认（仅 pending 编辑模式，Issue #149/#175/#182）：入口在底部
+              操作行左侧，确认块位于操作行上方（先确认、后操作） */}
+          {editing?.status === "pending" && confirmCancel && (
+            <div className="rounded-xl border border-danger/30 bg-danger/5 p-3">
+              <p className="mb-3 text-sm text-danger">
+                确认取消该请假申请？取消后视为无申请，可重新提交申请。
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setConfirmCancel(false)}
+                  className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-muted hover:bg-muted disabled:opacity-60"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={handleCancelRequest}
+                  className="flex-1 rounded-lg bg-danger px-3 py-2 text-sm text-danger-foreground hover:opacity-90 disabled:opacity-60"
+                >
+                  {isCanceling ? "取消中…" : "确认取消"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 底部操作（Issue #173/#175/#182）：左侧「取消」/「取消请假」+ 右侧提交
               （无底色小按钮，对齐 community 编辑弹窗的取消/保存样式）；pending 编辑
               模式左侧为「取消请假」（原独立整行入口并入此位，状态 → canceled），
               其余场景「取消」关闭弹窗（含编辑模式，原「返回」按钮随之移除——
@@ -700,35 +586,6 @@ export function LeaveRequestModal({ open, rehearsal, onClose, onSaved }: Props) 
                     : "提交申请"}
             </button>
           </div>
-
-          {/* 取消请假内联确认（仅 pending 编辑模式，Issue #149/#175）：入口在底部操作行
-              左侧，此处只保留确认块（位置不变，仍在表单底部）；取消后视同无申请，
-              可重新提交申请 */}
-          {editing?.status === "pending" && confirmCancel && (
-            <div className="rounded-xl border border-danger/30 bg-danger/5 p-3">
-              <p className="mb-3 text-sm text-danger">
-                确认取消该请假申请？取消后视为无申请，可重新提交申请。
-              </p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setConfirmCancel(false)}
-                  className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-muted hover:bg-muted disabled:opacity-60"
-                >
-                  取消
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={handleCancelRequest}
-                  className="flex-1 rounded-lg bg-danger px-3 py-2 text-sm text-danger-foreground hover:opacity-90 disabled:opacity-60"
-                >
-                  {isCanceling ? "取消中…" : "确认取消"}
-                </button>
-              </div>
-            </div>
-          )}
         </form>
       )}
 

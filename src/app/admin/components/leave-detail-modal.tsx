@@ -10,6 +10,7 @@ import type { LeaveRequestWithDetails } from "@/types/database";
  * 请假申请详情弹窗（管理端，Issue #142）。
  * - 完整表单内容 + 附件图片（私有桶签名 URL，点击放大）+ 状态 chip；
  * - pending 时底部固定「通过」「驳回」按钮，驳回需填写原因（必填）；
+ *   点「驳回」展开输入块时隐藏底部通过/驳回行（Issue #182 布局统一）；
  * - 审批成功后父级从列表移除本行，弹窗随之自动关闭（open 由 request 是否存在控制）。
  * 防重复提交：同步 ref + state 双重 guard，操作中禁关闭。
  */
@@ -266,8 +267,8 @@ export function LeaveDetailModal({
             </div>
           )}
 
-          {/* pending：底部固定通过/驳回 */}
-          {request.status === "pending" && (
+          {/* pending：底部固定通过/驳回（驳回输入展开时隐藏，Issue #182） */}
+          {request.status === "pending" && !rejectOpen && (
             <div className="flex gap-2 border-t border-border pt-3">
               <button
                 type="button"
@@ -275,7 +276,7 @@ export function LeaveDetailModal({
                 onClick={handleApprove}
                 className="flex-1 rounded-xl bg-success py-2.5 text-sm font-medium text-success-foreground hover:opacity-90 disabled:opacity-60"
               >
-                {acting && !rejectOpen ? "处理中…" : "通过"}
+                {acting ? "处理中…" : "通过"}
               </button>
               <button
                 type="button"

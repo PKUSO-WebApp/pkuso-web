@@ -66,8 +66,8 @@ export function RehearsalDetailModal({ item, onClose, onEdit, onDelete }: Props)
         ) : null}
       </div>
 
-      {/* 底部操作：左删除（danger 语义色）右编辑 */}
-      <div className="mt-4 flex items-center justify-between text-xs">
+      {/* 底部操作（Issue #182）：删除在前、编辑在后，并列右下角 */}
+      <div className="mt-4 flex items-center justify-end gap-2 text-xs">
         <button
           type="button"
           onClick={handleDelete}

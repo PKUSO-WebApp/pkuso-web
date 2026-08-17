@@ -133,6 +133,23 @@ describe("LeaveDetailModal 请假详情弹窗（管理端）", () => {
     await waitFor(() => expect(onReject).toHaveBeenCalledWith("lr-1", "理由不充分"));
   });
 
+  it("驳回输入展开时：底部通过/驳回按钮隐藏，关闭输入后恢复（Issue #182）", async () => {
+    renderModal();
+    expect(screen.getByRole("button", { name: "通过" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "驳回" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "驳回" }));
+    await screen.findByLabelText(/驳回原因/);
+    // 底部操作行隐藏（避免与输入块内的取消/确认驳回重复）
+    expect(screen.queryByRole("button", { name: "通过" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "驳回" })).toBeNull();
+
+    // 取消驳回输入 → 底部操作行恢复
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.getByRole("button", { name: "通过" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "驳回" })).toBeTruthy();
+  });
+
   it("approved：无通过/驳回按钮，显示已通过 chip", () => {
     renderModal({ request: makeRequest({ status: "approved" }) });
     expect(screen.getByText("已通过")).toBeInTheDocument();

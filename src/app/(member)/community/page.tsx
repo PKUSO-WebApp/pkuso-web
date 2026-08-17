@@ -518,9 +518,9 @@ function DetailModal({
             </button>
           </Card>
         )}
-        {/* 底部操作行：仅帖主或管理员可见（Issue #179：卡片去按钮化，操作入口收敛到详情弹窗） */}
+        {/* 底部操作行：仅帖主或管理员可见（Issue #179：卡片去按钮化，操作入口收敛到详情弹窗；#182：右下角） */}
         {canManage && (
-          <div className="flex items-center gap-3 text-label">
+          <div className="flex items-center justify-end gap-3 text-label">
             <button
               type="button"
               onClick={onEdit}

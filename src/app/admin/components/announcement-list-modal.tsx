@@ -48,6 +48,8 @@ export function AnnouncementListModal({
     if (selectedAnnouncement) {
       setEditContent(selectedAnnouncement.content || "");
       setEditingId(selectedAnnouncement.id);
+      // 编辑模式不保留删除确认（防返回查看模式时确认块突兀重现误删，对抗返工）
+      setConfirmDeleteId(null);
     }
   };
 
@@ -57,11 +59,13 @@ export function AnnouncementListModal({
     if (ok) {
       setEditingId(null);
       setEditContent("");
+      setConfirmDeleteId(null);
     }
   };
 
   const handleCancelEdit = () => {
     setEditingId(null);
+    setConfirmDeleteId(null);
   };
 
   return (
@@ -77,37 +81,13 @@ export function AnnouncementListModal({
       title="管理发布的公告"
       position="bottom"
     >
-      {/* 删除确认对话框 */}
-      {confirmDeleteId && (
-        <div className="mb-4 rounded-xl border border-danger/30 bg-danger/5 p-4">
-          <p className="mb-3 text-sm text-danger">确认删除这条公告？</p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setConfirmDeleteId(null)}
-              className="flex-1 rounded-lg bg-border px-3 py-2 text-sm text-text-muted hover:bg-muted"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDelete(confirmDeleteId)}
-              disabled={deletingId === confirmDeleteId}
-              className="flex-1 rounded-lg bg-danger px-3 py-2 text-sm text-danger-foreground hover:bg-danger/90 disabled:opacity-60"
-            >
-              {deletingId === confirmDeleteId ? "删除中…" : "确认删除"}
-            </button>
-          </div>
-        </div>
-      )}
-
       {selectedAnnouncement ? (
         // 详情视图
         <div className="space-y-3">
           {editingId === selectedAnnouncement.id ? (
             // 编辑模式
             <>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={handleCancelEdit}
@@ -136,12 +116,49 @@ export function AnnouncementListModal({
               </div>
             </>
           ) : (
-            // 查看模式
+            // 查看模式（Issue #182 重排：发布时间 → 内容框 → 删除确认(若有) → 按钮行）
             <>
+              <p className="text-xs text-text-muted">
+                发布时间：{formatDateTimeInChina(selectedAnnouncement.created_at)}
+              </p>
+              <div className="max-h-[40vh] overflow-y-auto rounded-xl border border-border bg-surface p-4">
+                <p className="text-sm text-text leading-relaxed whitespace-pre-wrap break-words">
+                  {selectedAnnouncement.content || "无内容"}
+                </p>
+              </div>
+              {/* 删除确认块（保持全宽平分样式；位于内容框之后、按钮行之前）。
+                  渲染条件绑定当前选中项：确认块永远只属于当前详情中的公告，
+                  切换选中（含返回列表）不残留上一条的确认块（对抗返工） */}
+              {confirmDeleteId === selectedAnnouncement.id && (
+                <div className="rounded-xl border border-danger/30 bg-danger/5 p-4">
+                  <p className="mb-3 text-sm text-danger">确认删除这条公告？</p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteId(null)}
+                      className="flex-1 rounded-lg bg-border px-3 py-2 text-sm text-text-muted hover:bg-muted"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(confirmDeleteId)}
+                      disabled={deletingId === confirmDeleteId}
+                      className="flex-1 rounded-lg bg-danger px-3 py-2 text-sm text-danger-foreground hover:bg-danger/90 disabled:opacity-60"
+                    >
+                      {deletingId === confirmDeleteId ? "删除中…" : "确认删除"}
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <button
                   type="button"
-                  onClick={() => setSelectedId(null)}
+                  onClick={() => {
+                    setSelectedId(null);
+                    // 返回列表同步清除删除确认，避免下一条选中的详情误显示确认块（对抗返工）
+                    setConfirmDeleteId(null);
+                  }}
                   className="rounded-full bg-muted px-3 py-1 text-label text-text-muted hover:bg-border"
                 >
                   返回列表
@@ -163,14 +180,6 @@ export function AnnouncementListModal({
                     删除公告
                   </button>
                 </div>
-              </div>
-              <p className="text-xs text-text-muted">
-                发布时间：{formatDateTimeInChina(selectedAnnouncement.created_at)}
-              </p>
-              <div className="max-h-[40vh] overflow-y-auto rounded-xl border border-border bg-surface p-4">
-                <p className="text-sm text-text leading-relaxed whitespace-pre-wrap break-words">
-                  {selectedAnnouncement.content || "无内容"}
-                </p>
               </div>
             </>
           )}
@@ -202,6 +211,8 @@ export function AnnouncementListModal({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
+                      // 删除确认块已移入查看模式（Issue #182）：先进入详情再展示确认
+                      setSelectedId(item.id);
                       setConfirmDeleteId(item.id);
                     }}
                     disabled={deletingId === item.id}

@@ -118,7 +118,7 @@ describe("AnnouncementListModal", () => {
     );
     expect(deleteButtons.length).toBeGreaterThan(0);
 
-    // 点击第一个删除按钮
+    // 点击第一个删除按钮（确认块已移入查看模式 Issue #182：点击后进入详情并展示确认）
     fireEvent.click(deleteButtons[0]);
 
     await waitFor(() => {
@@ -131,6 +131,155 @@ describe("AnnouncementListModal", () => {
     // 内联确认块使用 danger 样式
     const confirmBlock = screen.getByText(/确认删除这条公告/).closest("div");
     expect(confirmBlock).toHaveClass("border-danger/30");
+  });
+
+  it("查看模式：删除确认块位于内容框之后、按钮行之前（Issue #182）", async () => {
+    render(
+      <AnnouncementListModal
+        open={true}
+        onClose={() => {}}
+        announcements={sampleAnnouncements}
+        loading={false}
+        deletingId={null}
+        updatingId={null}
+        onDelete={vi.fn()}
+        onUpdate={vi.fn()}
+      />,
+    );
+
+    // 进入详情后点「删除公告」展开确认块
+    fireEvent.click(screen.getByText(/欢迎来到新学期/));
+    fireEvent.click(screen.getByRole("button", { name: /删除公告/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/确认删除这条公告/)).toBeInTheDocument();
+    });
+
+    // DOM 顺序：内容框 → 确认块 → 按钮行（返回列表/修改公告/删除公告）
+    const contentBox = screen.getByText(/欢迎来到新学期/).closest("div")!;
+    const confirmBlock = screen.getByText(/确认删除这条公告/).closest("div")!;
+    const actionRow = screen.getByRole("button", { name: /返回列表/ }).parentElement!;
+    expect(
+      contentBox.compareDocumentPosition(confirmBlock) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      confirmBlock.compareDocumentPosition(actionRow) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("确认块与选中项绑定：A 行确认块未确认时返回列表再进 B，不显示 A 的确认块（对抗返工）", async () => {
+    render(
+      <AnnouncementListModal
+        open={true}
+        onClose={() => {}}
+        announcements={sampleAnnouncements}
+        loading={false}
+        deletingId={null}
+        updatingId={null}
+        onDelete={vi.fn()}
+        onUpdate={vi.fn()}
+      />,
+    );
+
+    // 列表点 A 行（ann-1）删除按钮 → 进入详情 A + 确认块
+    const deleteButtons = screen.getAllByRole("button").filter((btn) => btn.querySelector("svg"));
+    fireEvent.click(deleteButtons[0]);
+    await waitFor(() => expect(screen.getByText(/确认删除这条公告/)).toBeInTheDocument());
+
+    // 返回列表：确认块随之消失（返回列表同时清除确认状态）
+    fireEvent.click(screen.getByRole("button", { name: /返回列表/ }));
+    expect(screen.queryByText(/确认删除这条公告/)).toBeNull();
+
+    // 进入 B 行（ann-2）详情：不显示 A 的确认块
+    fireEvent.click(screen.getByText(/本周六举行音乐会/));
+    expect(screen.getByText(/发布时间/)).toBeInTheDocument();
+    expect(screen.queryByText(/确认删除这条公告/)).toBeNull();
+  });
+
+  it("详情删除确认块：进入编辑模式后保存回查看模式，确认块不重现（对抗返工）", async () => {
+    const onUpdateMock = vi.fn().mockResolvedValue(true);
+    render(
+      <AnnouncementListModal
+        open={true}
+        onClose={() => {}}
+        announcements={sampleAnnouncements}
+        loading={false}
+        deletingId={null}
+        updatingId={null}
+        onDelete={vi.fn()}
+        onUpdate={onUpdateMock}
+      />,
+    );
+
+    fireEvent.click(screen.getByText(/欢迎来到新学期/));
+    fireEvent.click(screen.getByRole("button", { name: /删除公告/ }));
+    await waitFor(() => expect(screen.getByText(/确认删除这条公告/)).toBeInTheDocument());
+
+    // 修改公告 → 编辑模式（确认块消失）
+    fireEvent.click(screen.getByRole("button", { name: /修改公告/ }));
+    expect(screen.queryByText(/确认删除这条公告/)).toBeNull();
+
+    // 保存成功 → 回查看模式，确认块不重现
+    fireEvent.change(screen.getByPlaceholderText(/输入公告内容/), {
+      target: { value: "新内容" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(onUpdateMock).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: /返回列表/ })).toBeTruthy();
+    expect(screen.queryByText(/确认删除这条公告/)).toBeNull();
+  });
+
+  it("详情删除确认块：进入编辑模式后取消回查看模式，确认块不重现（对抗返工）", async () => {
+    render(
+      <AnnouncementListModal
+        open={true}
+        onClose={() => {}}
+        announcements={sampleAnnouncements}
+        loading={false}
+        deletingId={null}
+        updatingId={null}
+        onDelete={vi.fn()}
+        onUpdate={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByText(/欢迎来到新学期/));
+    fireEvent.click(screen.getByRole("button", { name: /删除公告/ }));
+    await waitFor(() => expect(screen.getByText(/确认删除这条公告/)).toBeInTheDocument());
+
+    // 修改公告 → 编辑模式（确认块消失）
+    fireEvent.click(screen.getByRole("button", { name: /修改公告/ }));
+    expect(screen.queryByText(/确认删除这条公告/)).toBeNull();
+
+    // 取消编辑 → 回查看模式，确认块不重现
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.getByRole("button", { name: /返回列表/ })).toBeTruthy();
+    expect(screen.queryByText(/确认删除这条公告/)).toBeNull();
+  });
+
+  it("编辑模式：[取消][保存] 并列右下角（justify-end，Issue #182）", async () => {
+    render(
+      <AnnouncementListModal
+        open={true}
+        onClose={() => {}}
+        announcements={sampleAnnouncements}
+        loading={false}
+        deletingId={null}
+        updatingId={null}
+        onDelete={vi.fn()}
+        onUpdate={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByText(/欢迎来到新学期/));
+    fireEvent.click(screen.getByRole("button", { name: /修改公告/ }));
+    await screen.findByPlaceholderText(/输入公告内容/);
+
+    // 取消在前、保存在后，同一行右对齐（右下角）
+    const cancelBtn = screen.getByRole("button", { name: "取消" });
+    const saveBtn = screen.getByRole("button", { name: "保存" });
+    expect(saveBtn.parentElement).toBe(cancelBtn.parentElement);
+    expect(cancelBtn.parentElement!.className).toContain("justify-end");
   });
 
   it("确认删除成功后列表移除该公告", async () => {
@@ -163,6 +312,16 @@ describe("AnnouncementListModal", () => {
     await waitFor(() => {
       expect(onDeleteMock).toHaveBeenCalledWith("ann-1");
     });
+
+    // 删除成功（resolve true）后：确认块消失
+    await waitFor(() => {
+      expect(screen.queryByText(/确认删除这条公告/)).toBeNull();
+    });
+
+    // UI 回到列表视图：详情视图不渲染（无"发布时间"），列表项可见
+    expect(screen.queryByText(/发布时间/)).toBeNull();
+    expect(screen.getByText(/欢迎来到新学期/)).toBeInTheDocument();
+    expect(screen.getByText(/本周六举行音乐会/)).toBeInTheDocument();
   });
 
   it("删除中禁用按钮防止重复操作", async () => {

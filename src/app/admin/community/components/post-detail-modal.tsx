@@ -92,8 +92,8 @@ export function PostDetailModal({
           </Card>
         )}
 
-        {/* 底部操作行：锁定/解锁 + 删除（busy 期间互相禁用） */}
-        <div className="flex items-center gap-4 pt-1 text-label">
+        {/* 底部操作行：锁定/解锁 + 删除（busy 期间互相禁用；Issue #182：右下角） */}
+        <div className="flex items-center justify-end gap-4 pt-1 text-label">
           <button
             type="button"
             onClick={onToggleLock}

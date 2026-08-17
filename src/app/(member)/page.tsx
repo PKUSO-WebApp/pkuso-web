@@ -428,7 +428,7 @@ export default function Home() {
         onClose={() => setLeaveRehearsal(null)}
         onSaved={() => {
           void fetchLeaveMine();
-          // 保存/撤回/取消后同步刷新考勤（撤回不动考勤，刷新仅保证 chip 与数据库一致，Issue #155）
+          // 保存/取消后同步刷新考勤（取消不动考勤，刷新仅保证 chip 与数据库一致，Issue #155）
           if (user?.id && rehearsals) {
             void fetchMyAttendances(
               user.id,

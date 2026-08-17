@@ -194,35 +194,9 @@ export function useLeaveRequests(client: typeof defaultClient = defaultClient) {
   );
 
   /**
-   * 撤回已通过的申请（状态 → withdrawn，Issue #155）。
-   * 撤回只改申请状态，考勤保持现状：审批时按 target_status 写入的考勤记录不再还原为缺勤
-   * （移除 #149 的考勤联动逻辑）。成员如需调整考勤，可在撤回后的新申请中选择目标状态
-   * 重新提交，待管理端审批通过后按新 target_status 记录。
-   */
-  const withdraw = React.useCallback(
-    async (id: string) => {
-      setSaving(true);
-      const { error: dbError } = await client
-        .from("leave_requests")
-        .update({ status: "withdrawn" })
-        .eq("id", id)
-        .eq("status", "approved");
-      setSaving(false);
-      if (dbError) {
-        setError(dbError.message);
-        return false;
-      }
-      await fetchMine();
-      setError(null);
-      return true;
-    },
-    [client, fetchMine],
-  );
-
-  /**
    * 取消待审批的申请（状态 → canceled，Issue #149）。
-   * 与 withdraw 不同：pending 申请尚未生效（考勤未改写），取消无需考勤联动；
-   * 取消后卡片视同无申请，成员可重新提交。
+   * 与已下线的撤回（withdraw，Issue #182 移除）不同：pending 申请尚未生效
+   * （考勤未改写），取消无需考勤联动；取消后卡片视同无申请，成员可重新提交。
    * 附件处理：若申请带附件，顺带删除私有桶中的附件——删除失败不影响状态取消
    * （已取消的申请仍可追溯，仅遗留孤儿文件）。
    * 0 行更新检测：管理员并发审批通过后 status 已非 pending，update 匹配 0 行——
@@ -372,7 +346,6 @@ export function useLeaveRequests(client: typeof defaultClient = defaultClient) {
     create,
     updateReason,
     reapply,
-    withdraw,
     cancelRequest,
     cancelOnSignIn,
     uploadAttachment,

@@ -140,30 +140,6 @@ describe("useLeaveRequests", () => {
     expect(ok).toBe(true);
   });
 
-  it("withdraw 撤回已通过申请：仅撤回申请，不动考勤（Issue #155）", async () => {
-    const c = mockClient([fetchOk, { error: null }, emptyOk]);
-    const { result } = renderHook(() => useLeaveRequests(c as never));
-    await waitFor(() => expect(result.current.loading).toBe(false));
-
-    const ok = await act(() => result.current.withdraw("lr-1"));
-    expect(ok).toBe(true);
-    // 只更新 leave_requests，绝不触碰 attendances（移除 #149 的考勤还原逻辑）
-    expect(c.calls.map((x) => x.table)).toEqual(["leave_requests"]);
-    expect(c.calls[0].payload).toEqual({ status: "withdrawn" });
-    // 撤回后刷新申请列表（卡片申请状态同步）
-    expect(result.current.data).toEqual([]);
-  });
-
-  it("withdraw 更新失败返回 false 并写入 error", async () => {
-    const c = mockClient([fetchOk, { error: { message: "撤回失败" } }]);
-    const { result } = renderHook(() => useLeaveRequests(c as never));
-    await waitFor(() => expect(result.current.loading).toBe(false));
-
-    const ok = await act(() => result.current.withdraw("lr-1"));
-    expect(ok).toBe(false);
-    expect(result.current.error).toBe("撤回失败");
-  });
-
   // ---- cancelOnSignIn（覆盖请假签到，Issue #155）----
 
   it("cancelOnSignIn 无有效申请（查询为空）：不更新、不删附件，直接成功", async () => {

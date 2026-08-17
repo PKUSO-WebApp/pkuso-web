@@ -259,6 +259,8 @@ describe("CommunityPage 公告板", () => {
       fireEvent.click(screen.getByText("重奏招募")); // 打开详情弹窗
       expect(screen.getByText("编辑")).toBeTruthy();
       expect(screen.getByText("删除")).toBeTruthy();
+      // 操作行右下角（justify-end，Issue #182）
+      expect(screen.getByText("编辑").parentElement!.className).toContain("justify-end");
     });
 
     it("非帖主（其他成员）打开详情弹窗看不到操作行", () => {

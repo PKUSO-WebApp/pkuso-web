@@ -16,7 +16,6 @@ const hookMock = vi.hoisted(() => ({
   create: vi.fn(),
   updateReason: vi.fn(),
   reapply: vi.fn(),
-  withdraw: vi.fn(),
   cancelRequest: vi.fn(),
   uploadAttachment: vi.fn(),
   getSignedUrl: vi.fn(),
@@ -27,12 +26,27 @@ vi.mock("@/hooks/useLeaveRequests", () => ({
   useLeaveRequests: () => hookMock,
 }));
 
-// ---- mock Modal 捕获 closeOnOverlay ----
+// ---- mock Modal：渲染 children 与 headerExtra（状态 chip 位于标题区，Issue #182） ----
 vi.mock("@/components/ui/Modal", () => ({
-  Modal: vi.fn(({ open, children }: { open: boolean; children?: React.ReactNode }) => {
-    if (!open) return null;
-    return <div data-testid="leave-modal">{children}</div>;
-  }),
+  Modal: vi.fn(
+    ({
+      open,
+      children,
+      headerExtra,
+    }: {
+      open: boolean;
+      children?: React.ReactNode;
+      headerExtra?: React.ReactNode;
+    }) => {
+      if (!open) return null;
+      return (
+        <div data-testid="leave-modal">
+          {headerExtra && <div data-testid="modal-header-extra">{headerExtra}</div>}
+          {children}
+        </div>
+      );
+    },
+  ),
 }));
 
 import { Modal } from "@/components/ui/Modal";
@@ -83,7 +97,6 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     hookMock.create.mockResolvedValue(true);
     hookMock.updateReason.mockResolvedValue(true);
     hookMock.reapply.mockResolvedValue(true);
-    hookMock.withdraw.mockResolvedValue(true);
     hookMock.cancelRequest.mockResolvedValue(true);
     hookMock.uploadAttachment.mockResolvedValue({ url: "u1/123-new.jpg" });
     hookMock.getSignedUrl.mockResolvedValue({ url: "https://x/signed.jpg" });
@@ -160,69 +173,20 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     );
   });
 
-  it("approved：底部「状态 chip/关闭」，点击关闭返回（关闭弹窗）", async () => {
+  it("approved：状态 chip 在标题栏右侧，无底部操作行、无撤回/关闭入口（Issue #182）", async () => {
     const onClose = vi.fn();
     hookMock.fetchMine.mockResolvedValue([makeRequest({ status: "approved" })]);
     render(<LeaveRequestModal open rehearsal={rehearsal} onClose={onClose} onSaved={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText("已通过")).toBeInTheDocument());
-    // 底部操作行（Issue #173/#175）：左侧状态 chip「已通过」+ 右侧「关闭」（返回/关闭）
-    expect(screen.getByText("已通过")).toBeTruthy();
+    // 状态 chip 位于标题栏右侧（headerExtra），状态只保留这一处（Issue #175/#182）
+    expect(screen.getByTestId("modal-header-extra")).toContainElement(screen.getByText("已通过"));
     expect(screen.queryByRole("button", { name: "已提交" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("approved：撤回 → 确认后进入新申请模式，选择目标状态提交 create（target_status 生效）", async () => {
-    hookMock.fetchMine.mockResolvedValue([makeRequest({ status: "approved" })]);
-    renderModal();
-
-    await waitFor(() => expect(screen.getByText("已通过")).toBeInTheDocument());
-    // 底部操作行（Issue #173/#175）：左侧状态 chip「已通过」；撤回能力保留（现有撤销状态机）
-    expect(screen.getByText("已通过")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "已提交" })).toBeNull();
-    expect(screen.getByRole("button", { name: "关闭" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "撤回申请" }));
-    // 撤回提示文案：撤回不影响当前考勤状态（Issue #155 移除考勤还原）
-    expect(
-      screen.getByText(/确认撤回该请假申请？撤回不影响当前考勤状态，可重新提交申请。/),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "确认撤回" }));
-    // withdraw 仅携带申请 id（撤回只改申请状态，不动考勤）
-    await waitFor(() => expect(hookMock.withdraw).toHaveBeenCalledWith("lr-1"));
-
-    // 撤回后进入新申请模式：目标状态单选出现
-    expect(await screen.findByText(/目标出勤状态/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "缺勤" }));
-    fireEvent.change(screen.getByLabelText(/请假原因/), { target: { value: "改为缺勤" } });
-    fireEvent.click(screen.getByRole("button", { name: "提交申请" }));
-
-    await waitFor(() =>
-      expect(hookMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          target_status: "absent",
-          reason: "改为缺勤",
-        }),
-      ),
-    );
-  });
-
-  it("approved 撤回后未选目标状态提交被拦截", async () => {
-    hookMock.fetchMine.mockResolvedValue([makeRequest({ status: "approved" })]);
-    renderModal();
-
-    await waitFor(() => expect(screen.getByText("已通过")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "撤回申请" }));
-    fireEvent.click(screen.getByRole("button", { name: "确认撤回" }));
-    await waitFor(() => expect(hookMock.withdraw).toHaveBeenCalled());
-
-    fireEvent.change(await screen.findByLabelText(/请假原因/), {
-      target: { value: "想正常出勤" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "提交申请" }));
-
-    expect(await screen.findByText("请选择目标出勤状态")).toBeInTheDocument();
-    expect(hookMock.create).not.toHaveBeenCalled();
+    // 无底部操作行：无「关闭」「编辑申请」「重新申请」「撤回申请」按钮（撤回已下线）
+    expect(screen.queryByRole("button", { name: "关闭" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "编辑申请" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "重新申请" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "撤回申请" })).toBeNull();
   });
 
   it("rejected：已驳回 chip + 驳回原因 + 底部「状态 chip/重新申请」保存调用 reapply", async () => {
@@ -363,6 +327,12 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
     // 内联确认（项目既有撤回确认同款模式）
     fireEvent.click(screen.getByRole("button", { name: "取消请假" }));
     expect(screen.getByText(/确认取消该请假申请/)).toBeInTheDocument();
+    // 确认块位于底部操作行上方（Issue #182：先确认、后操作）
+    const confirmBlock = screen.getByText(/确认取消该请假申请/).closest("div")!;
+    const actionRow = screen.getByRole("button", { name: "保存修改" }).parentElement!;
+    expect(
+      confirmBlock.compareDocumentPosition(actionRow) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "确认取消" }));
 
     await waitFor(() =>
@@ -470,7 +440,7 @@ describe("LeaveRequestModal 请假申请弹窗（Issue #142）", () => {
   });
 });
 
-describe("只读视图布局（Issue #175）", () => {
+describe("只读视图布局（Issue #175/#182）", () => {
   const cases: { status: string; label: string }[] = [
     { status: "pending", label: "待审批" },
     { status: "approved", label: "已通过" },
@@ -478,7 +448,7 @@ describe("只读视图布局（Issue #175）", () => {
   ];
 
   it.each(cases)(
-    "$label：状态 chip 为 span 且位于底部操作行（justify-between），「申请于」容器右对齐（justify-end）",
+    "$label：状态 chip 为 span 且位于标题栏右侧（headerExtra），「申请于」容器右对齐（justify-end）",
     async ({ status, label }) => {
       hookMock.fetchMine.mockResolvedValue([
         makeRequest({ status, reject_reason: status === "rejected" ? "理由不充分" : null }),
@@ -486,17 +456,38 @@ describe("只读视图布局（Issue #175）", () => {
       renderModal();
 
       await waitFor(() => expect(screen.getByText(label)).toBeInTheDocument());
-      // 无「已提交」chip；状态只保留底部操作行左侧这一处（Issue #175）
+      // 无「已提交」chip；状态只保留标题栏右侧这一处（Issue #175）
       expect(screen.queryByRole("button", { name: "已提交" })).toBeNull();
 
-      // 状态 chip 为 span（非交互，非 button），位于底部操作行（flex justify-between）
+      // 状态 chip 为 span（非交互，非 button），位于标题栏 headerExtra 容器内（Issue #182）
       const chip = screen.getByText(label);
       expect(chip.tagName).toBe("SPAN");
-      expect(chip.parentElement!.className).toContain("justify-between");
+      expect(screen.getByTestId("modal-header-extra")).toContainElement(chip);
 
       // 「申请于」日期右对齐（flex justify-end），左侧无其他元素
       const appliedAt = screen.getByText(/申请于/);
       expect(appliedAt.parentElement!.className).toContain("justify-end");
+    },
+  );
+
+  it.each([
+    { status: "pending", label: "待审批", action: "编辑申请" },
+    { status: "rejected", label: "已驳回", action: "重新申请" },
+  ])(
+    "$label：底部操作行右对齐（justify-end），仅单个主操作「$action」（Issue #182）",
+    async ({ status, action }) => {
+      hookMock.fetchMine.mockResolvedValue([
+        makeRequest({ status, reject_reason: status === "rejected" ? "理由不充分" : null }),
+      ]);
+      renderModal();
+
+      await waitFor(() => expect(screen.getByRole("button", { name: action })).toBeInTheDocument());
+      const btn = screen.getByRole("button", { name: action });
+      // 底部操作行右对齐且只有这一个按钮（状态 chip 已移至标题栏，不占操作行）
+      expect(btn.parentElement!.className).toContain("justify-end");
+      expect(btn.parentElement!.children).toHaveLength(1);
+      // 无其他主操作按钮（approved 才有的「关闭」也不存在）
+      expect(screen.queryByRole("button", { name: "关闭" })).toBeNull();
     },
   );
 });

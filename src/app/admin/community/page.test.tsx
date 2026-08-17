@@ -127,6 +127,8 @@ describe("AdminCommunityPage 社区管理", () => {
     fireEvent.click(screen.getByText("测试公告"));
     expect(screen.getByText("联系方式")).toBeTruthy();
     expect(screen.getByText("wx-id")).toBeTruthy();
+    // 底部操作行右下角（justify-end，Issue #182）
+    expect(screen.getByText("锁定").parentElement!.className).toContain("justify-end");
   });
 
   it("详情弹窗完整展示帖子信息（类型/作者/时间/内容/图片/联系方式/锁定徽章）", () => {

@@ -241,6 +241,56 @@ describe("RehearsalDetailModal 排练信息与请假入口（Issue #173）", () 
     fireEvent.click(screen.getByRole("button", { name: /我要请假/ }));
     expect(onLeaveRequest).toHaveBeenCalledTimes(1);
   });
+
+  it("已结束排练：请假入口文案为「我要补请假 ＞」（判定与出勤状态同源，Issue #175）", () => {
+    render(
+      <RehearsalDetailModal
+        item={makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" })}
+        onClose={vi.fn()}
+        onLeaveRequest={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /^我要补请假/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^我要请假/ })).toBeNull();
+  });
+
+  it("跨时刻切换：进行中排练过结束时刻后重渲染，入口文案与出勤状态同步切换（Issue #175 同源判定）", () => {
+    const { rerender } = render(
+      <RehearsalDetailModal
+        item={makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" })}
+        onClose={vi.fn()}
+        onLeaveRequest={vi.fn()}
+      />,
+    );
+    // 系统时间 2026-08-15 13:00（beforeEach 固定），排练进行中 → 「我要请假 ＞」+「未签到」
+    expect(screen.getByRole("button", { name: /^我要请假/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^我要补请假/ })).toBeNull();
+    expect(screen.getByText("未签到")).toBeTruthy();
+
+    // 推进系统时间到结束时刻（15:00）之后：父级 nowTick 触发重渲染。getSignBlockReason
+    // 内部取 new Date()，每渲染重算（刻意不用 useMemo），跨时刻切换依赖此重渲染
+    vi.setSystemTime(new Date(2026, 7, 15, 16, 0, 0));
+    rerender(
+      <RehearsalDetailModal
+        item={makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" })}
+        onClose={vi.fn()}
+        onLeaveRequest={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /^我要补请假/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^我要请假/ })).toBeNull();
+    // 出勤状态同源切换：未签到 → 缺勤（两者共用 getSignBlockReason 判定）
+    expect(screen.getByText("缺勤")).toBeTruthy();
+    expect(screen.queryByText("未签到")).toBeNull();
+  });
+
+  it("时间无法判定（start_time 缺失）：仍为「我要请假 ＞」", () => {
+    render(
+      <RehearsalDetailModal item={makeRehearsal()} onClose={vi.fn()} onLeaveRequest={vi.fn()} />,
+    );
+    expect(screen.getByRole("button", { name: /^我要请假/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^我要补请假/ })).toBeNull();
+  });
 });
 
 describe("RehearsalDetailModal 红点机制（Issue #173）", () => {

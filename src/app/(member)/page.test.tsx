@@ -581,7 +581,7 @@ describe("Home 首页组件", () => {
       expect(screen.getByText("两个月前合排")).toBeTruthy();
     });
 
-    it("历史 tab 中已结束卡片无按钮/chip，详情弹窗展示「缺勤」与「我要请假 ＞」", () => {
+    it("历史 tab 中已结束卡片无按钮/chip，详情弹窗展示「缺勤」与「我要补请假 ＞」", () => {
       renderWithRehearsals([makeRehearsalAt(1, "2026-08-15T08:00:00", "上午合排")]);
       fireEvent.click(screen.getByTestId("toggle-history"));
 
@@ -590,10 +590,10 @@ describe("Home 首页组件", () => {
       expect(screen.queryByRole("button", { name: "补请假" })).toBeNull();
       expect(screen.queryByText(/缺勤/)).toBeNull();
 
-      // 出勤状态与请假入口收敛到详情弹窗（Issue #173）
+      // 出勤状态与请假入口收敛到详情弹窗（Issue #173）；已结束排练显示「我要补请假 ＞」（Issue #175）
       fireEvent.click(screen.getByRole("button", { name: /上午合排/ }));
       expect(screen.getByText("缺勤")).toBeTruthy();
-      expect(screen.getByRole("button", { name: /我要请假/ })).toBeTruthy();
+      expect(screen.getByRole("button", { name: /我要补请假/ })).toBeTruthy();
     });
 
     it("分排 tab 窗口过滤不受影响：已过去/超期的分排仍隐藏（回归）", () => {
@@ -1196,9 +1196,10 @@ describe("Home 首页组件", () => {
       expect(screen.getByTestId("leave-dot")).toBeTruthy();
 
       fireEvent.click(screen.getByRole("button", { name: /我要请假/ }));
-      // 查看模式：左侧「已提交」+ 右侧「关闭」
+      // 查看模式：底部左侧状态 chip「已通过」+ 右侧「关闭」（Issue #175）
       await act(async () => {});
-      expect(screen.getByRole("button", { name: "已提交" })).toBeTruthy();
+      expect(screen.getByText("已通过")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "已提交" })).toBeNull();
       expect(window.localStorage.getItem("leaveSeen_lr-1")).toBe("1");
       expect(screen.queryByTestId("leave-dot")).toBeNull();
     });

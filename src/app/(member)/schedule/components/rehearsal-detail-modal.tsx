@@ -29,10 +29,10 @@ type Props = {
   attendance?: AttendanceInfo | null;
   /** 考勤加载中：出勤状态行显示占位符（防未签到误判） */
   attendanceLoading?: boolean;
-  /** 该排练当前有效（未撤回）的请假申请；无则 null（供「我要请假 ＞」红点判定，Issue #173） */
+  /** 该排练当前有效（未撤回）的请假申请；无则 null（供「我要请假/我要补请假 ＞」红点判定，Issue #173） */
   leaveRequest?: { id?: string; status: string } | null;
   onClose: () => void;
-  /** 点击「我要请假 ＞」：标记该申请已查看（红点消失）并打开请假面板（页面接线） */
+  /** 点击「我要请假/我要补请假 ＞」：标记该申请已查看（红点消失）并打开请假面板（页面接线） */
   onLeaveRequest: () => void;
 };
 
@@ -43,6 +43,7 @@ type Props = {
  * - 左上第一行大字出勤状态（未签到/出席/迟到/缺勤/请假），复用 STATUS_LABEL 映射；
  * - 排练信息只读（类型/时间/地点/曲目）；
  * - 右下角蓝色小字「我要请假 ＞」（语义 token text-info），点击打开现有请假面板；
+ *   排练已结束（判定与出勤状态同源）时文案为「我要补请假 ＞」；
  * - 红点：存在已通过/已驳回申请且用户未查看时显示；打开面板查看后消失
  *   （localStorage 本地记录 leaveSeen_<申请id>，不跨设备同步）。
  */
@@ -86,6 +87,13 @@ export function RehearsalDetailModal({
     onLeaveRequest();
   };
 
+  // 时间区块判定（Issue #175）：排练是否已结束，请假入口文案（我要请假/我要补请假）
+  // 与出勤状态判定共用，保持同源。刻意不用 useMemo：getSignBlockReason 内部取
+  // new Date()，nowTick 重渲染（排练跨过结束时刻，父级定时器触发）时需重新判定，
+  // 理由与下方出勤状态注释一致——每渲染重算成本极低，故直接计算。
+  const blockReason =
+    item != null ? getSignBlockReason(item.start_time, item.end_time ?? null, new Date()) : null;
+
   // 出勤状态（Issue #173 五行映射）：
   // - 请假（excused）→ 「请假」（无论是否签到，状态已定）
   // - 管理员显式设置的出席/迟到（sign_in_time 为空）→ 按 STATUS_LABEL 展示
@@ -108,7 +116,6 @@ export function RehearsalDetailModal({
     } else if (hasSignedIn(attendance?.sign_in_time)) {
       attendanceLabel = STATUS_LABEL[attendance?.status ?? ""] ?? STATUS_LABEL.absent;
     } else {
-      const blockReason = getSignBlockReason(item.start_time, item.end_time ?? null, new Date());
       attendanceLabel = blockReason === "ended" ? STATUS_LABEL.absent : "未签到";
     }
   }
@@ -146,8 +153,8 @@ export function RehearsalDetailModal({
           </div>
         </div>
 
-        {/* 右下角：我要请假（蓝色小字，全角 ＞；语义 token text-info 亮/暗双模式可用，
-            红点 = 有未查看的已通过/已驳回申请） */}
+        {/* 右下角：我要请假/我要补请假（蓝色小字，全角 ＞；语义 token text-info 亮/暗双模式可用，
+            红点 = 有未查看的已通过/已驳回申请；已结束排练显示「我要补请假 ＞」，Issue #175） */}
         <div className="flex justify-end">
           <button
             type="button"
@@ -161,7 +168,7 @@ export function RehearsalDetailModal({
                 className="inline-block h-1.5 w-1.5 rounded-full bg-danger"
               />
             )}
-            我要请假 ＞
+            {blockReason === "ended" ? "我要补请假 ＞" : "我要请假 ＞"}
           </button>
         </div>
       </div>

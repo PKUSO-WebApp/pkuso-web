@@ -409,8 +409,9 @@ export default function Home() {
         hint={codeOverrideHint}
       />
 
-      {/* 排练详情弹窗（Issue #173）：出勤状态展示 + 「我要请假 ＞」入口（红点提示未查看的
-          已通过/已驳回申请）；点击我要请假打开下方请假面板（详情弹窗保持打开，关闭面板即返回） */}
+      {/* 排练详情弹窗（Issue #173/#175）：出勤状态展示 + 「我要请假/我要补请假 ＞」入口
+          （红点提示未查看的已通过/已驳回申请；已结束排练显示「我要补请假 ＞」）；
+          点击入口打开下方请假/补请假面板（详情弹窗保持打开，关闭面板即返回） */}
       <RehearsalDetailModal
         item={detailRehearsal}
         attendance={detailRehearsal ? (attendanceMap[detailRehearsal.id] ?? null) : null}

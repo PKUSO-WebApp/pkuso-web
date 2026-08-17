@@ -337,7 +337,10 @@ export function useLeaveRequests(client: typeof defaultClient = defaultClient) {
   /** 上传附件到私有桶（路径沿用 usePosts.uploadImage 的 <user_id>/<时间戳>-<文件名> 模式），返回 storage 路径 */
   const uploadAttachment = React.useCallback(
     async (file: File, userId: string) => {
-      const path = `${userId}/${Date.now()}-${file.name}`;
+      // 文件名消毒：与 usePosts.uploadImage 同规则（含中文/空格的文件名作 storage key
+      // 会被 Supabase Storage 拒绝，400 InvalidKey）；保留 [A-Za-z0-9._-]，其余替换为 "-"
+      const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, "-") || "image";
+      const path = `${userId}/${Date.now()}-${safeName}`;
       const { error: uploadError } = await client.storage
         .from("leave-attachments")
         .upload(path, file, { upsert: false });

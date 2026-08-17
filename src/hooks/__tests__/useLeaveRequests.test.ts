@@ -15,6 +15,7 @@ import { useLeaveRequests } from "../useLeaveRequests";
 function mockClient<T>(responses: T[]) {
   const calls: { table: string; op: "update"; payload: unknown }[] = [];
   const removes: { bucket: string; paths: string[] }[] = [];
+  const uploads: { bucket: string; path: string }[] = [];
   const filters: { table: string; args: unknown[] }[] = [];
   let i = 0;
   const chain = (r: T, table: string) => ({
@@ -34,6 +35,7 @@ function mockClient<T>(responses: T[]) {
   return {
     calls,
     removes,
+    uploads,
     filters,
     from: (table: string) => ({
       select: () => chain(responses[i++], table),
@@ -45,7 +47,10 @@ function mockClient<T>(responses: T[]) {
     }),
     storage: {
       from: (bucket: string) => ({
-        upload: () => chain(responses[i++], bucket),
+        upload: (path: string) => {
+          uploads.push({ bucket, path });
+          return chain(responses[i++], bucket);
+        },
         createSignedUrl: () => chain(responses[i++], bucket),
         remove: (paths: string[]) => {
           removes.push({ bucket, paths });
@@ -490,6 +495,22 @@ describe("useLeaveRequests", () => {
     const r = await act(() => result.current.uploadAttachment(new File([], "a.jpg"), "u1"));
     expect(r).toHaveProperty("url");
     expect((r as { url: string }).url).toMatch(/^u1\/\d+-a\.jpg$/);
+  });
+
+  it("uploadAttachment 消毒含中文/空格的文件名（Storage InvalidKey）", async () => {
+    const c = mockClient([fetchOk, { error: null }]);
+    const { result } = renderHook(() => useLeaveRequests(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const r = await act(() =>
+      result.current.uploadAttachment(new File([], "病假证明 2025-11-11.pdf"), "u1"),
+    );
+    expect(r).toHaveProperty("url");
+    // 消毒后 storage key 为纯 ASCII，不含中文/空格，且保留扩展名
+    expect(c.uploads[0]).toMatchObject({ bucket: "leave-attachments" });
+    expect(c.uploads[0].path).not.toMatch(/[一-龥\s]/);
+    expect(c.uploads[0].path).toMatch(/^[A-Za-z0-9._/-]+$/);
+    expect(c.uploads[0].path).toContain(".pdf");
   });
 
   it("uploadAttachment 上传失败返回 error", async () => {

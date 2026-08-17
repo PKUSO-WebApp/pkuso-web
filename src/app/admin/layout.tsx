@@ -139,6 +139,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <Link
                   key={tab.href}
                   href={tab.href}
+                  // 关闭预取：避免预取兄弟路由 CSS 触发浏览器"preload 未被使用"警告
+                  prefetch={false}
                   className="flex flex-1 flex-col items-center justify-center gap-1 text-xs"
                 >
                   <div

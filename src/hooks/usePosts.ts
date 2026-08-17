@@ -128,7 +128,11 @@ export function usePosts(options?: { client?: typeof defaultClient; includeLocke
 
   const uploadImage = React.useCallback(
     async (file: File, userId: string) => {
-      const path = `${userId}/${Date.now()}-${file.name}`;
+      // 文件名消毒：手机截图等原始文件名含中文/空格（如「屏幕截图 2025-11-11 201007.png」），
+      // 直接作 storage key 会被 Supabase Storage 拒绝（400 InvalidKey）。
+      // 保留 [A-Za-z0-9._-]，其余字符替换为 "-"（扩展名自然保留）；消毒后为空则兜底 "image"。
+      const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, "-") || "image";
+      const path = `${userId}/${Date.now()}-${safeName}`;
       const { error: uploadError } = await client.storage
         .from("community-images")
         .upload(path, file, { upsert: false });

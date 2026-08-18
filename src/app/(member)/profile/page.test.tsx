@@ -3,9 +3,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import ProfilePage from "./page";
 import { useUser } from "@/context/user-context";
+import { ThemeProvider } from "@/context/theme-context";
 import { useProfiles } from "@/hooks/useProfiles";
 import { supabase } from "@/lib/supabase";
 import { formatDateTimeInChina, formatRehearsalRange } from "@/lib/date-utils";
+import { THEME_STORAGE_KEY } from "@/lib/theme";
 import type { ProfileRow } from "@/types/database";
 
 // 通知上下文 mock（hoisted：未读数可在各用例中动态配置）
@@ -68,6 +70,26 @@ vi.mock("lucide-react", () => ({
   LogOut: () => <span>LogOut</span>,
 }));
 
+// 主题相关用例的 matchMedia mock（jsdom 未实现 matchMedia，Issue #203）
+function mockMatchMedia(dark: boolean) {
+  const listeners = new Set<(e: { matches: boolean }) => void>();
+  const mql = {
+    matches: dark,
+    media: "(prefers-color-scheme: dark)",
+    addEventListener: vi.fn((_type: string, cb: (e: { matches: boolean }) => void) => {
+      listeners.add(cb);
+    }),
+    removeEventListener: vi.fn((_type: string, cb: (e: { matches: boolean }) => void) => {
+      listeners.delete(cb);
+    }),
+  };
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn(() => mql),
+  );
+  return mql;
+}
+
 const mockUseUser = vi.mocked(useUser);
 const mockUseProfiles = vi.mocked(useProfiles);
 
@@ -102,6 +124,16 @@ function mockUseProfilesReturn(data: ProfileRow[]) {
   } as never);
 }
 
+// 主题 context 需要 provider 包裹（全站共享，对抗返工 Issue #203）：
+// useThemeContext 在 Provider 外抛错，统一渲染入口
+function renderPage() {
+  return render(
+    <ThemeProvider>
+      <ProfilePage />
+    </ThemeProvider>,
+  );
+}
+
 /** 构造考勤 join 排练行（仅展示所需字段；overrides 可覆盖任意字段） */
 function mockAttendanceRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -123,6 +155,8 @@ function mockAttendanceRow(overrides: Record<string, unknown> = {}) {
 describe("ProfilePage 个人信息页", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear(); // 主题用例隔离（Issue #203），不影响既有用例
+    document.documentElement.removeAttribute("data-theme");
     mockUseUser.mockReturnValue({
       user: { id: "u1", name: "张三", role: "member", section: "小提琴", email: "a@b.com" },
       login: vi.fn(),
@@ -152,12 +186,13 @@ describe("ProfilePage 个人信息页", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals(); // 恢复 matchMedia mock（主题用例）
     vi.restoreAllMocks();
   });
 
   it("profile 未加载完成时点击个人信息给出提示且不打开弹窗", () => {
     mockUseProfilesReturn([]);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
     expect(window.alert).toHaveBeenCalledWith("个人信息加载中，请稍候再试");
     // 弹窗标题不出现
@@ -168,7 +203,7 @@ describe("ProfilePage 个人信息页", () => {
     mockUseProfilesReturn([
       mockProfile({ phone_number: "13800138000", college: "信息科学技术学院" }),
     ]);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
     expect((screen.getByPlaceholderText("11 位手机号") as HTMLInputElement).value).toBe(
       "13800138000",
@@ -188,7 +223,7 @@ describe("ProfilePage 个人信息页", () => {
       fetch: vi.fn(),
       update,
     } as never);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
 
     const phoneInput = screen.getByPlaceholderText("11 位手机号") as HTMLInputElement;
@@ -211,7 +246,7 @@ describe("ProfilePage 个人信息页", () => {
       fetch: vi.fn(),
       update,
     } as never);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
 
     const collegeInput = screen.getByPlaceholderText("所在学院") as HTMLInputElement;
@@ -243,7 +278,7 @@ describe("ProfilePage 个人信息页", () => {
       fetch: vi.fn(),
       update: vi.fn().mockResolvedValue(false),
     } as never);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
@@ -265,7 +300,7 @@ describe("ProfilePage 个人信息页", () => {
       fetch: vi.fn(),
       update,
     } as never);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
 
     const saveBtn = screen.getByRole("button", { name: "保存" });
@@ -297,7 +332,7 @@ describe("ProfilePage 个人信息页", () => {
         hide_join_date: true,
       }),
     ]);
-    const { container } = render(<ProfilePage />);
+    const { container } = renderPage();
     fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
 
     const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
@@ -326,7 +361,7 @@ describe("ProfilePage 个人信息页", () => {
       fetch: vi.fn(),
       update,
     } as never);
-    const { container } = render(<ProfilePage />);
+    const { container } = renderPage();
     fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
 
     // 手机号隐私开关切到「隐藏」（第二个 Toggle）
@@ -359,7 +394,7 @@ describe("ProfilePage 个人信息页", () => {
       update,
     } as never);
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
 
     // 原值非日期格式：显示「当前值」只读提示（date input 无法显示学期格式）
@@ -391,7 +426,7 @@ describe("ProfilePage 个人信息页", () => {
       fetch: vi.fn(),
       update,
     } as never);
-    const { container } = render(<ProfilePage />);
+    const { container } = renderPage();
     fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
     const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
     // 手滑打开日期选择器默认选中今天
@@ -419,7 +454,7 @@ describe("ProfilePage 个人信息页", () => {
       fetch: vi.fn(),
       update,
     } as never);
-    const { container } = render(<ProfilePage />);
+    const { container } = renderPage();
     fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
     const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
     // 标准格式原值可正常预填，手滑打开日期选择器默认选中「今天」→ 值变化
@@ -447,7 +482,7 @@ describe("ProfilePage 个人信息页", () => {
       fetch: vi.fn(),
       update,
     } as never);
-    const { container } = render(<ProfilePage />);
+    const { container } = renderPage();
     fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
     const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
     fireEvent.change(dateInput, { target: { value: "2024-09-01" } });
@@ -479,7 +514,7 @@ describe("ProfilePage 个人信息页", () => {
       fetch: vi.fn(),
       update,
     } as never);
-    const { container } = render(<ProfilePage />);
+    const { container } = renderPage();
     fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
     const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
     fireEvent.change(dateInput, { target: { value: "2026-08-19" } });
@@ -508,7 +543,7 @@ describe("ProfilePage 个人信息页", () => {
       fetch: vi.fn(),
       update,
     } as never);
-    const { container } = render(<ProfilePage />);
+    const { container } = renderPage();
     fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
     const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
     // 手滑打开又选中了同一天：值未变化，不写 join_date 也不弹确认（无论原值格式）
@@ -530,14 +565,14 @@ describe("ProfilePage 个人信息页", () => {
 
   it("渲染通知/设置栏目标题与全部按钮行", () => {
     mockUseProfilesReturn([mockProfile()]);
-    render(<ProfilePage />);
+    renderPage();
     expect(screen.getByRole("heading", { name: "通知" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "设置" })).toBeInTheDocument();
     // 通知栏目 3 行
     for (const label of ["考勤与请假", "活动", "系统"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
-    // 设置栏目 7 行（含占位项与已接线的个人信息/账号与密码/退出登录）
+    // 设置栏目 7 行（含占位项与已接线的个人信息/账号与密码/考勤/外观/退出登录）
     for (const label of ["个人信息", "账号与密码", "考勤", "外观", "已发布的活动", "问题与反馈"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
@@ -556,7 +591,7 @@ describe("ProfilePage 个人信息页", () => {
       refresh: vi.fn(),
       markCategoryRead: vi.fn().mockResolvedValue(true),
     });
-    render(<ProfilePage />);
+    renderPage();
     // 考勤与请假 2、系统 1：红色数字徽章（语义 Token）
     const badge2 = screen.getByText("2");
     expect(badge2.className).toContain("bg-danger");
@@ -585,7 +620,7 @@ describe("ProfilePage 个人信息页", () => {
       cb({ data: messages, error: null });
       return undefined;
     });
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: /考勤与请假/ }));
     // Modal 标题 = 信箱名
     expect(screen.getByRole("heading", { name: "考勤与请假" })).toBeInTheDocument();
@@ -611,7 +646,7 @@ describe("ProfilePage 个人信息页", () => {
       markCategoryRead,
     });
     mockUseProfilesReturn([mockProfile()]);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: /系统/ }));
     expect(screen.getByRole("heading", { name: "系统" })).toBeInTheDocument();
     expect(screen.getByText("暂无消息")).toBeInTheDocument();
@@ -641,7 +676,7 @@ describe("ProfilePage 个人信息页", () => {
       });
       return undefined;
     });
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: /考勤与请假/ }));
     await waitFor(() => {
       expect(markCategoryRead).toHaveBeenCalledWith("attendance", ["n1"]);
@@ -662,7 +697,7 @@ describe("ProfilePage 个人信息页", () => {
       cb({ data: null, error: { message: "网络错误" } });
       return undefined;
     });
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: /考勤与请假/ }));
     expect(screen.getByRole("heading", { name: "考勤与请假" })).toBeInTheDocument();
     expect(screen.getByText("加载失败，请稍后重试")).toBeInTheDocument();
@@ -673,13 +708,53 @@ describe("ProfilePage 个人信息页", () => {
 
   it("点击占位按钮弹出底部 Modal：标题为按钮名，内容为功能开发中", () => {
     mockUseProfilesReturn([mockProfile()]);
-    render(<ProfilePage />);
-    fireEvent.click(screen.getByRole("button", { name: "外观" }));
-    expect(screen.getByRole("heading", { name: "外观" })).toBeInTheDocument();
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
+    expect(screen.getByRole("heading", { name: "已发布的活动" })).toBeInTheDocument();
     expect(screen.getByText("功能开发中")).toBeInTheDocument();
     // 关闭后占位弹窗消失
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-    expect(screen.queryByRole("heading", { name: "外观" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "已发布的活动" })).toBeNull();
+  });
+
+  // ============================================================
+  // Issue #203：外观（亮色 / 暗色 / 跟随系统 主题切换）
+  // ============================================================
+  it("点击「外观」打开主题弹窗：渲染三个选项与当前模式说明", () => {
+    mockMatchMedia(false);
+    mockUseProfilesReturn([mockProfile()]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "外观" }));
+    expect(screen.getByRole("heading", { name: "外观" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "亮色" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "暗色" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "跟随系统" })).toBeInTheDocument();
+    // 默认（无存储）跟随系统；系统为亮色 → 当前亮色，且展示「跟随系统」说明
+    expect(
+      screen.getByText("当前为「亮色」模式（跟随系统：随设备系统外观自动切换）"),
+    ).toBeInTheDocument();
+  });
+
+  it("弹窗内点击「暗色」：localStorage 写入 dark + html 设置 data-theme=dark", () => {
+    mockMatchMedia(false);
+    mockUseProfilesReturn([mockProfile()]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "外观" }));
+    fireEvent.click(screen.getByRole("button", { name: "暗色" }));
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("dark");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+  });
+
+  it("弹窗内点击「亮色」：localStorage 写入 light + html 移除 data-theme", () => {
+    // 系统为暗色，且 html 已有上次会话遗留的 data-theme：切亮色应移除
+    mockMatchMedia(true);
+    document.documentElement.setAttribute("data-theme", "dark");
+    mockUseProfilesReturn([mockProfile()]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "外观" }));
+    fireEvent.click(screen.getByRole("button", { name: "亮色" }));
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
+    expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
   });
 
   it("点击退出登录调用 logout", () => {
@@ -690,14 +765,14 @@ describe("ProfilePage 个人信息页", () => {
       logout,
     });
     mockUseProfilesReturn([mockProfile()]);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: /退出登录/ }));
     expect(logout).toHaveBeenCalledTimes(1);
   });
 
   it("弹窗打开时锁定背景滚动，关闭后恢复", () => {
     mockUseProfilesReturn([mockProfile()]);
-    const { container } = render(<ProfilePage />);
+    const { container } = renderPage();
     // 页面根节点是滚动容器（整页滚动豁免）
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain("overflow-y-auto");
@@ -719,7 +794,7 @@ describe("ProfilePage 个人信息页", () => {
     const updateUser = vi.mocked(supabase.auth.updateUser);
     updateUser.mockReturnValue(pending as never);
     mockUseProfilesReturn([mockProfile()]);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
     fireEvent.change(screen.getByPlaceholderText("至少 6 位"), { target: { value: "123456" } });
     fireEvent.change(screen.getByPlaceholderText("再次输入"), { target: { value: "123456" } });
@@ -754,7 +829,7 @@ describe("ProfilePage 个人信息页", () => {
       const updateUser = vi.mocked(supabase.auth.updateUser);
       updateUser.mockRejectedValue(new Error("network error"));
       mockUseProfilesReturn([mockProfile()]);
-      render(<ProfilePage />);
+      renderPage();
       fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
       fireEvent.change(screen.getByPlaceholderText("至少 6 位"), { target: { value: "123456" } });
       fireEvent.change(screen.getByPlaceholderText("再次输入"), { target: { value: "123456" } });
@@ -790,7 +865,7 @@ describe("ProfilePage 个人信息页", () => {
     const updateUser = vi.mocked(supabase.auth.updateUser);
     updateUser.mockResolvedValue({ error: null } as never);
     mockUseProfilesReturn([mockProfile()]);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
     // 当前邮箱只读展示（弹窗内区块）
     expect(screen.getByText("当前邮箱：a@b.com")).toBeInTheDocument();
@@ -814,7 +889,7 @@ describe("ProfilePage 个人信息页", () => {
     const updateUser = vi.mocked(supabase.auth.updateUser);
     updateUser.mockResolvedValue({ error: null } as never);
     mockUseProfilesReturn([mockProfile()]);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
     const emailInput = screen.getByPlaceholderText("输入新邮箱") as HTMLInputElement;
 
@@ -834,7 +909,7 @@ describe("ProfilePage 个人信息页", () => {
     const updateUser = vi.mocked(supabase.auth.updateUser);
     updateUser.mockResolvedValue({ error: null } as never);
     mockUseProfilesReturn([mockProfile()]);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
     fireEvent.change(screen.getByPlaceholderText("输入新邮箱"), {
       target: { value: "A@b.com" },
@@ -849,7 +924,7 @@ describe("ProfilePage 个人信息页", () => {
     const updateUser = vi.mocked(supabase.auth.updateUser);
     updateUser.mockResolvedValue({ error: { message: "邮箱已被占用" } } as never);
     mockUseProfilesReturn([mockProfile()]);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
     const emailInput = screen.getByPlaceholderText("输入新邮箱") as HTMLInputElement;
     fireEvent.change(emailInput, { target: { value: "taken@example.com" } });
@@ -871,7 +946,7 @@ describe("ProfilePage 个人信息页", () => {
     const updateUser = vi.mocked(supabase.auth.updateUser);
     updateUser.mockReturnValue(pending as never);
     mockUseProfilesReturn([mockProfile()]);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
     fireEvent.change(screen.getByPlaceholderText("输入新邮箱"), {
       target: { value: "new@example.com" },
@@ -903,7 +978,7 @@ describe("ProfilePage 个人信息页", () => {
       .mockReturnValueOnce(rebindPending as never)
       .mockResolvedValueOnce({ error: null } as never);
     mockUseProfilesReturn([mockProfile()]);
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
 
     // 先提交换绑（pending 飞行中）
@@ -945,7 +1020,7 @@ describe("ProfilePage 个人信息页", () => {
       data: { user: { id: "u1", email: "a@b.com" } },
       error: null,
     } as never);
-    render(<ProfilePage />);
+    renderPage();
     // flush getUser 微任务后再断言
     await act(async () => {});
     expect(update).not.toHaveBeenCalled();
@@ -966,7 +1041,7 @@ describe("ProfilePage 个人信息页", () => {
       data: { user: { id: "u1", email: "new@a.com" } },
       error: null,
     } as never);
-    render(<ProfilePage />);
+    renderPage();
     await waitFor(() => {
       expect(update).toHaveBeenCalledWith("u1", { email: "new@a.com" });
     });
@@ -987,7 +1062,7 @@ describe("ProfilePage 个人信息页", () => {
       update,
     } as never);
     vi.mocked(supabase.auth.getUser).mockRejectedValue(new Error("auth 网络失败"));
-    render(<ProfilePage />);
+    renderPage();
     // flush getUser 的 reject 微任务（act 内消化，避免 React act 告警）
     await act(async () => {});
     // 跳过同步：update 不被调用
@@ -1024,7 +1099,7 @@ describe("ProfilePage 个人信息页", () => {
       });
       return undefined;
     });
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: "考勤" }));
     // 弹窗打开（底部 Modal，标题「我的考勤」）
     expect(screen.getByRole("heading", { name: "我的考勤" })).toBeInTheDocument();
@@ -1058,7 +1133,7 @@ describe("ProfilePage 个人信息页", () => {
       cb({ data: [], error: null });
       return undefined;
     });
-    const { container } = render(<ProfilePage />);
+    const { container } = renderPage();
     fireEvent.click(screen.getByRole("button", { name: "考勤" }));
     const dateInputs = container.querySelectorAll('input[type="date"]');
     fireEvent.change(dateInputs[0], { target: { value: "2026-08-01" } });
@@ -1074,7 +1149,7 @@ describe("ProfilePage 个人信息页", () => {
       cb({ data: [], error: null });
       return undefined;
     });
-    const { container } = render(<ProfilePage />);
+    const { container } = renderPage();
     fireEvent.click(screen.getByRole("button", { name: "考勤" }));
     const dateInputs = container.querySelectorAll('input[type="date"]');
     // 只填开始日期：仅 gte 开始日期，无 lt
@@ -1097,7 +1172,7 @@ describe("ProfilePage 个人信息页", () => {
       cb({ data: [], error: null });
       return undefined;
     });
-    const { container } = render(<ProfilePage />);
+    const { container } = renderPage();
     fireEvent.click(screen.getByRole("button", { name: "考勤" }));
     const dateInputs = container.querySelectorAll('input[type="date"]');
     // 先填结束日期（合法，开放过滤），清空查询计数后制造起 > 止
@@ -1136,7 +1211,7 @@ describe("ProfilePage 个人信息页", () => {
       });
       return undefined;
     });
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: "考勤" }));
     // 按行锚定断言（O3 加固）：页面其他位置（如邮箱为 null 时）也有「—」兜底，
     // 全局 getByText("—") 依赖"mock 无其他「—」"隐含前提；锚定到该行卡片内避免脆弱。
@@ -1151,7 +1226,7 @@ describe("ProfilePage 个人信息页", () => {
       cb({ data: [], error: null });
       return undefined;
     });
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: "考勤" }));
     expect(screen.getByText("该区间暂无考勤记录")).toBeInTheDocument();
   });
@@ -1162,7 +1237,7 @@ describe("ProfilePage 个人信息页", () => {
       cb({ data: null, error: { message: "网络错误" } });
       return undefined;
     });
-    render(<ProfilePage />);
+    renderPage();
     fireEvent.click(screen.getByRole("button", { name: "考勤" }));
     expect(screen.getByText("加载失败，请稍后重试")).toBeInTheDocument();
     expect(screen.queryByText("该区间暂无考勤记录")).toBeNull();
@@ -1175,7 +1250,7 @@ describe("ProfilePage 个人信息页", () => {
       cbs.push(cb);
       return undefined;
     });
-    const { container } = render(<ProfilePage />);
+    const { container } = renderPage();
     fireEvent.click(screen.getByRole("button", { name: "考勤" })); // 查询 1（打开，全部）
     const dateInputs = container.querySelectorAll('input[type="date"]');
     fireEvent.change(dateInputs[0], { target: { value: "2026-08-01" } }); // 查询 2
@@ -1258,7 +1333,7 @@ describe("ProfilePage 个人信息页", () => {
       return undefined;
     });
     try {
-      render(<ProfilePage />);
+      renderPage();
       fireEvent.click(screen.getByRole("button", { name: "考勤" }));
       expect(screen.getByText("未签到")).toBeInTheDocument();
       expect(screen.getByText("缺勤")).toBeInTheDocument();

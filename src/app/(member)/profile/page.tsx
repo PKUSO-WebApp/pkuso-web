@@ -18,6 +18,7 @@ import { getSignBlockReason, hasSignedIn } from "@/lib/attendance-utils";
 import { STATUS_LABEL, STATUS_TEXT_COLOR } from "@/lib/attendance-status";
 import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
+import { ThemeModal } from "./components/theme-modal";
 import type { AttendanceRow, NotificationCategory, NotificationRow } from "@/types/database";
 
 // 隐私开关选项（Issue #193）：各字段行尾的「公开 / 隐藏」分段开关，随表单一起保存
@@ -36,8 +37,8 @@ const notificationItems: { label: string; category: NotificationCategory }[] = [
   { label: "系统", category: "system" },
 ];
 
-// 设置栏目占位按钮（个人信息/账号与密码/考勤/退出登录已接线，不在此列）
-const placeholderSettingItems = ["外观", "已发布的活动", "问题与反馈"] as const;
+// 设置栏目占位按钮（个人信息/账号与密码/考勤/外观/退出登录已接线，不在此列）
+const placeholderSettingItems = ["已发布的活动", "问题与反馈"] as const;
 
 // ---- 考勤查看（Issue #201）----
 
@@ -105,6 +106,9 @@ export default function ProfilePage() {
 
   // 占位功能弹窗：标题 = 按钮名，内容「功能开发中」；null 表示未打开
   const [placeholderTitle, setPlaceholderTitle] = React.useState<string | null>(null);
+
+  // 外观弹窗（Issue #203）：亮色 / 暗色 / 跟随系统主题切换
+  const [isThemeModalOpen, setIsThemeModalOpen] = React.useState(false);
 
   // ---- 通知信箱（Issue #188）----
   // 状态机（对抗返工）：fetch 成功后才标已读，且只标本次实际展示的未读行——
@@ -396,7 +400,8 @@ export default function ProfilePage() {
     isEditModalOpen ||
     placeholderTitle !== null ||
     inbox !== null ||
-    isAttendanceOpen;
+    isAttendanceOpen ||
+    isThemeModalOpen;
 
   return (
     // 本页豁免：整页滚动——page 根节点自身为滚动容器，tab bar 固定；
@@ -470,6 +475,14 @@ export default function ProfilePage() {
               className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
             >
               考勤
+            </button>
+            {/* 外观（Issue #203）：亮色 / 暗色 / 跟随系统主题切换 */}
+            <button
+              type="button"
+              onClick={() => setIsThemeModalOpen(true)}
+              className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+            >
+              外观
             </button>
             {placeholderSettingItems.map((label) => (
               <button
@@ -693,6 +706,9 @@ export default function ProfilePage() {
       >
         <p className="py-6 text-center text-sm text-text-muted">功能开发中</p>
       </Modal>
+
+      {/* 外观 Modal（底部弹出，Issue #203）：亮色 / 暗色 / 跟随系统 三态切换 */}
+      <ThemeModal open={isThemeModalOpen} onClose={() => setIsThemeModalOpen(false)} />
 
       {/* 通知信箱 Modal（底部弹出）：标题 = 信箱名；消息列表 created_at 倒序，空列表「暂无消息」 */}
       <Modal

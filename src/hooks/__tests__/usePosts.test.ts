@@ -8,8 +8,12 @@ function mockClient<T>(responses: T[]) {
   let i = 0;
   const uploadPaths: string[] = [];
   const removeCalls: string[][] = [];
+  const eqCalls: string[][] = [];
   const c = (r: T) => ({
-    eq: () => c(r),
+    eq: (col: string, val: unknown) => {
+      eqCalls.push([col, String(val)]);
+      return c(r);
+    },
     maybeSingle: () => c(r),
     order: () => c(r),
     // update().eq().select("id") 的 0 行检测链（usePosts.update）
@@ -38,6 +42,7 @@ function mockClient<T>(responses: T[]) {
     },
     uploadPaths, // 记录 storage.upload 收到的路径，供断言
     removeCalls, // 记录 storage.remove 收到的路径数组，供断言（0 行检测守卫）
+    eqCalls, // 记录查询链 eq 过滤条件，供断言（is_locked / author_id）
   };
 }
 
@@ -47,6 +52,17 @@ describe("usePosts", () => {
     const { result } = renderHook(() => usePosts({ client: c as never }));
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.data).toHaveLength(1);
+  });
+
+  it("fetch 按 authorId 过滤：个人面板只查本人帖子（含锁定帖由 includeLocked 配合，Issue #205）", async () => {
+    const c = mockClient([{ data: [], error: null }]); // fetch
+    const { result } = renderHook(() =>
+      usePosts({ client: c as never, includeLocked: true, authorId: "u1" }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // includeLocked: true → 不追加 is_locked 过滤；authorId → 追加 author_id 过滤
+    expect(c.eqCalls).not.toContainEqual(["is_locked", "false"]);
+    expect(c.eqCalls).toContainEqual(["author_id", "u1"]);
   });
 
   it("create 发布帖子", async () => {

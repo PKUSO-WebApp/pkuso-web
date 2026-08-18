@@ -1,24 +1,14 @@
 "use client";
 
 import React from "react";
-import imageCompression from "browser-image-compression";
 import { useUser } from "@/context/user-context";
 import { usePosts } from "@/hooks/usePosts";
 import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
 import { Card } from "@/components/ui/Card";
 import { parseLocalISO, getLocalDateString } from "@/lib/date-utils";
+import { PublishModal } from "./components/publish-modal";
 import type { PostType, PostRow, PostRowWithAuthor } from "@/types/database";
-
-type FormState = {
-  title: string;
-  content: string;
-  type: PostType;
-  contactInfo: string;
-  currentSections: string;
-  missingSections: string;
-  imageFile: File | null;
-};
 
 function hasSectionText(s: string | null | undefined): boolean {
   return s != null && typeof s === "string" && s.trim() !== "";
@@ -36,33 +26,15 @@ const TYPE_LABEL: Record<PostType, string> = {
   gathering: "团建",
 };
 
-// 回收图片预览的 blob URL，避免内存泄漏；非 blob（原图 URL）时无操作
-function revokeBlobUrl(url: string | null) {
-  if (url && url.startsWith("blob:")) URL.revokeObjectURL(url);
-}
-
 export default function CommunityPage() {
   const { user } = useUser();
   const [view, setView] = React.useState<PostType>("ensemble");
   const [detailPost, setDetailPost] = React.useState<PostRow | null>(null);
   const [publishOpen, setPublishOpen] = React.useState(false);
-  const [editId, setEditId] = React.useState<string | null>(null);
-  const submittingRef = React.useRef(false);
-  // 页面级提交锁定：覆盖「上传 + 建帖/更新」全程（usePosts 的 saving 只覆盖
-  // create/update，uploadImage 期间不置位，否则上传中取消/遮罩/关闭会误关弹窗）
-  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  // 编辑/新建目标（null = 新建）：传给 PublishModal 预填；关闭时清空
+  const [editPost, setEditPost] = React.useState<PostRow | null>(null);
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [zoomImageUrl, setZoomImageUrl] = React.useState<string | null>(null);
-  const [form, setForm] = React.useState<FormState>({
-    title: "",
-    content: "",
-    type: "ensemble",
-    contactInfo: "",
-    currentSections: "",
-    missingSections: "",
-    imageFile: null,
-  });
-  const [imagePreviewUrl, setImagePreviewUrl] = React.useState<string | null>(null);
 
   const { data: rawPosts, loading, error, create, update, remove, uploadImage } = usePosts();
 
@@ -90,141 +62,13 @@ export default function CommunityPage() {
   );
 
   const openPublish = (initial?: PostRow) => {
-    if (initial) {
-      setEditId(initial.id);
-      setForm({
-        title: initial.title,
-        content: initial.content ?? "",
-        type: initial.type as PostType,
-        contactInfo: initial.contact_info ?? "",
-        currentSections: initial.current_sections ?? "",
-        missingSections: initial.missing_sections ?? "",
-        imageFile: null,
-      });
-      setImagePreviewUrl(initial.image_url ?? null);
-    } else {
-      setEditId(null);
-      setForm({
-        title: "",
-        content: "",
-        type: view,
-        contactInfo: "",
-        currentSections: "",
-        missingSections: "",
-        imageFile: null,
-      });
-      setImagePreviewUrl(null);
-    }
+    setEditPost(initial ?? null);
     setPublishOpen(true);
   };
 
   const closePublish = () => {
-    if (isSubmitting) return;
-    revokeBlobUrl(imagePreviewUrl);
     setPublishOpen(false);
-    setEditId(null);
-    setForm({
-      title: "",
-      content: "",
-      type: "ensemble",
-      contactInfo: "",
-      currentSections: "",
-      missingSections: "",
-      imageFile: null,
-    });
-    setImagePreviewUrl(null);
-  };
-
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    // 换图：先回收旧 blob URL，再生成新预览
-    revokeBlobUrl(imagePreviewUrl);
-    setForm((prev) => ({ ...prev, imageFile: file }));
-    const url = URL.createObjectURL(file);
-    setImagePreviewUrl(url);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    // 同步 + 异步双重防重复提交
-    if (submittingRef.current || isSubmitting) return;
-    if (!form.title.trim()) {
-      alert("请填写标题。");
-      return;
-    }
-    if (!form.contactInfo.trim()) {
-      alert("请填写联系方式。");
-      return;
-    }
-
-    submittingRef.current = true;
-    setIsSubmitting(true);
-
-    try {
-      let imageUrl: string | null = null;
-      if (form.imageFile) {
-        let fileToUpload: File = form.imageFile;
-        try {
-          fileToUpload = await imageCompression(form.imageFile, {
-            maxSizeMB: 0.3,
-            maxWidthOrHeight: 1024,
-            useWebWorker: true,
-          });
-        } catch {
-          /* fall through */
-        }
-        const result = await uploadImage(fileToUpload, user?.id ?? "anon");
-        if ("error" in result) {
-          alert("图片上传失败");
-          return;
-        }
-        imageUrl = result.url;
-      } else if (editId && imagePreviewUrl?.startsWith("http")) {
-        imageUrl = imagePreviewUrl;
-      }
-
-      const basePayload: Record<string, unknown> = {
-        title: form.title.trim(),
-        content: form.content.trim() || null,
-        type: form.type,
-        contact_info: form.contactInfo.trim(),
-      };
-      if (form.type === "ensemble") {
-        basePayload.current_sections = form.currentSections.trim() || null;
-        basePayload.missing_sections = form.missingSections.trim() || null;
-      } else {
-        basePayload.current_sections = null;
-        basePayload.missing_sections = null;
-      }
-      if (imageUrl !== null) basePayload.image_url = imageUrl;
-
-      if (editId) {
-        const ok = await update(editId, basePayload);
-        if (!ok) {
-          // 优先展示 usePosts 中的具体错误信息，避免误导
-          alert(error || "更新失败");
-          return;
-        }
-        alert("已更新。");
-      } else {
-        if (!user) {
-          alert("请先登录。");
-          return;
-        }
-        const ok = await create({ ...basePayload, image_url: imageUrl, author_id: user.id });
-        if (!ok) {
-          // 优先展示 usePosts 中的具体错误信息，避免误导
-          alert(error || "发布失败");
-          return;
-        }
-        alert("发布成功！");
-      }
-      closePublish();
-    } finally {
-      submittingRef.current = false;
-      setIsSubmitting(false);
-    }
+    setEditPost(null);
   };
 
   const handleDelete = async (id: string) => {
@@ -346,14 +190,13 @@ export default function CommunityPage() {
 
       {publishOpen && (
         <PublishModal
-          form={form}
-          setForm={setForm}
-          imagePreviewUrl={imagePreviewUrl}
-          onImageChange={handleImageChange}
-          submitting={isSubmitting}
-          editId={editId}
+          post={editPost}
+          defaultType={view}
+          create={create}
+          update={update}
+          uploadImage={uploadImage}
+          error={error}
           onClose={closePublish}
-          onSubmit={handleSubmit}
         />
       )}
     </div>
@@ -518,8 +361,10 @@ function DetailModal({
             </button>
           </Card>
         )}
-        {/* 底部操作行：仅帖主或管理员可见（Issue #179：卡片去按钮化，操作入口收敛到详情弹窗；#182：右下角） */}
-        {canManage && (
+        {/* 底部操作行：仅帖主或管理员可见（Issue #179：卡片去按钮化，操作入口收敛到详情弹窗；#182：右下角）。
+            暂时隐藏（Issue #205）：编辑/删除入口已迁移到「我的-已发布的活动」个人面板，
+            保留代码待后续验证（E）后恢复或移除；面板内仍可管理自己的帖子（含锁定/解锁/删除） */}
+        {canManage && false && (
           <div className="flex items-center justify-end gap-3 text-label">
             <button
               type="button"
@@ -540,142 +385,6 @@ function DetailModal({
           </div>
         )}
       </div>
-    </Modal>
-  );
-}
-
-function PublishModal({
-  form,
-  setForm,
-  imagePreviewUrl,
-  onImageChange,
-  submitting,
-  editId,
-  onClose,
-  onSubmit,
-}: {
-  form: FormState;
-  setForm: React.Dispatch<React.SetStateAction<FormState>>;
-  imagePreviewUrl: string | null;
-  onImageChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  submitting: boolean;
-  editId: string | null;
-  onClose: () => void;
-  onSubmit: (e: React.FormEvent) => void;
-}) {
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={editId ? "编辑公告" : "发布公告"}
-      closeOnOverlay={!submitting}
-    >
-      <form onSubmit={onSubmit} className="max-h-[90vh] overflow-y-auto">
-        <div className="space-y-3 text-xs">
-          <div className="space-y-1">
-            <label className="block text-label font-medium text-text-muted">类型</label>
-            <Toggle
-              options={["ensemble", "gathering"] as const}
-              value={form.type}
-              onChange={(t) => setForm((f) => ({ ...f, type: t }))}
-              getLabel={(k) => ({ ensemble: "重奏", gathering: "团建" })[k]}
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="block text-label font-medium text-text-muted">
-              联系方式 <span className="text-danger">*</span>
-            </label>
-            <input
-              type="text"
-              value={form.contactInfo}
-              onChange={(e) => setForm((f) => ({ ...f, contactInfo: e.target.value }))}
-              className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
-              placeholder="微信号或手机号"
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="block text-label font-medium text-text-muted">标题</label>
-            <input
-              type="text"
-              value={form.title}
-              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-              className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
-              placeholder="请输入标题"
-            />
-          </div>
-          {form.type === "ensemble" && (
-            <>
-              <div className="space-y-1">
-                <label className="block text-label font-medium text-text-muted">已有声部</label>
-                <input
-                  type="text"
-                  value={form.currentSections}
-                  onChange={(e) => setForm((f) => ({ ...f, currentSections: e.target.value }))}
-                  className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
-                  placeholder="如：长笛、单簧管"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="block text-label font-medium text-text-muted">需要声部</label>
-                <input
-                  type="text"
-                  value={form.missingSections}
-                  onChange={(e) => setForm((f) => ({ ...f, missingSections: e.target.value }))}
-                  className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
-                  placeholder="如：双簧管、大管"
-                />
-              </div>
-            </>
-          )}
-          <div className="space-y-1">
-            <label className="block text-label font-medium text-text-muted">内容</label>
-            <textarea
-              value={form.content ?? ""}
-              onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
-              className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
-              rows={4}
-              placeholder="请输入内容"
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="block text-label font-medium text-text-muted">
-              图片（如微信二维码）
-            </label>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={onImageChange}
-              disabled={submitting}
-              className="w-full text-label text-text-muted file:mr-2 file:rounded-full file:border-0 file:bg-muted file:px-3 file:py-1 file:text-xs"
-            />
-            {imagePreviewUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={imagePreviewUrl}
-                alt="预览"
-                className="mt-2 rounded-2xl border border-border max-w-full h-auto max-h-32 object-contain"
-              />
-            )}
-          </div>
-        </div>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={submitting}
-            className="rounded-full px-4 py-1.5 text-label text-text-muted"
-          >
-            取消
-          </button>
-          <button
-            type="submit"
-            disabled={submitting}
-            className="rounded-full bg-primary px-4 py-1.5 text-label font-medium text-primary-foreground disabled:opacity-60"
-          >
-            {submitting ? "提交中…" : editId ? "保存" : "发布"}
-          </button>
-        </div>
-      </form>
     </Modal>
   );
 }

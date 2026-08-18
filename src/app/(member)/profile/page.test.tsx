@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import ProfilePage from "./page";
 import { useUser } from "@/context/user-context";
 import { ThemeProvider } from "@/context/theme-context";
 import { useProfiles } from "@/hooks/useProfiles";
+import { usePosts } from "@/hooks/usePosts";
 import { supabase } from "@/lib/supabase";
 import { formatDateTimeInChina, formatRehearsalRange } from "@/lib/date-utils";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
@@ -56,6 +57,15 @@ vi.mock("@/hooks/useProfiles", () => ({
   useProfiles: vi.fn(),
 }));
 
+vi.mock("@/hooks/usePosts", () => ({
+  usePosts: vi.fn(),
+}));
+
+// PublishModal（编辑弹窗）提交时才用到，避免 jsdom 中加载浏览器模块副作用
+vi.mock("browser-image-compression", () => ({
+  default: vi.fn(),
+}));
+
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     auth: {
@@ -92,6 +102,7 @@ function mockMatchMedia(dark: boolean) {
 
 const mockUseUser = vi.mocked(useUser);
 const mockUseProfiles = vi.mocked(useProfiles);
+const mockUsePosts = vi.mocked(usePosts);
 
 function mockProfile(overrides: Partial<ProfileRow> = {}): ProfileRow {
   return {
@@ -709,12 +720,13 @@ describe("ProfilePage 个人信息页", () => {
   it("点击占位按钮弹出底部 Modal：标题为按钮名，内容为功能开发中", () => {
     mockUseProfilesReturn([mockProfile()]);
     renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
-    expect(screen.getByRole("heading", { name: "已发布的活动" })).toBeInTheDocument();
+    // 「已发布的活动」已接线（Issue #205），占位项仅剩「问题与反馈」
+    fireEvent.click(screen.getByRole("button", { name: "问题与反馈" }));
+    expect(screen.getByRole("heading", { name: "问题与反馈" })).toBeInTheDocument();
     expect(screen.getByText("功能开发中")).toBeInTheDocument();
     // 关闭后占位弹窗消失
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-    expect(screen.queryByRole("heading", { name: "已发布的活动" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "问题与反馈" })).toBeNull();
   });
 
   // ============================================================
@@ -1340,5 +1352,344 @@ describe("ProfilePage 个人信息页", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // ============================================================
+  // Issue #205：已发布的活动（本人公告管理，含锁定帖）
+  // ============================================================
+  describe("已发布的活动（Issue #205）", () => {
+    type UpdateFn = (id: string, payload: Record<string, unknown>) => Promise<boolean>;
+    type RemoveFn = (id: string) => Promise<boolean>;
+
+    type PostsApi = {
+      update: Mock<UpdateFn>;
+      remove: Mock<RemoveFn>;
+      fetch: Mock<() => Promise<void>>;
+    };
+
+    function makePost(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "p1",
+        title: "重奏招募",
+        content: "招募长笛",
+        type: "ensemble",
+        contact_info: "wx123",
+        current_sections: null,
+        missing_sections: null,
+        image_url: null,
+        author_id: "u1",
+        created_at: "2026-08-01T10:00:00",
+        is_locked: false,
+        ...overrides,
+      };
+    }
+
+    /**
+     * 注入 usePosts mock。用 mockImplementation 每次渲染返回闭包持有的最新列表，
+     * 模拟真实 usePosts 的乐观更新：update/remove 成功后 data 引用变化，
+     * 驱动列表/面板派生重算、锁定徽章即时刷新（与 admin community 测试同模式）。
+     */
+    function mockPublishedPosts(
+      initialData: unknown[] = [],
+      hooks: Partial<PostsApi> = {},
+    ): PostsApi {
+      let data: unknown[] = initialData;
+      const update =
+        hooks.update ??
+        vi.fn<UpdateFn>().mockImplementation(async (id, payload) => {
+          // 乐观更新：原地合并修改内容（同 usePosts.update）
+          data = data.map((p) =>
+            (p as { id?: string })?.id === id
+              ? { ...(p as Record<string, unknown>), ...payload }
+              : p,
+          );
+          return true;
+        });
+      const remove =
+        hooks.remove ??
+        vi.fn<RemoveFn>().mockImplementation(async (id) => {
+          // 乐观移除：从本地列表剔除（同 usePosts.remove）
+          data = data.filter((p) => (p as { id?: string })?.id !== id);
+          return true;
+        });
+      const fetch = hooks.fetch ?? vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+      mockUsePosts.mockImplementation(() => ({
+        data,
+        loading: false,
+        error: null,
+        saving: false,
+        fetch,
+        create: vi.fn().mockResolvedValue(true),
+        update,
+        remove,
+        uploadImage: vi.fn().mockResolvedValue({ url: "http://img/new.png" }),
+      }));
+      return { update, remove, fetch };
+    }
+
+    /** 打开「已发布的活动」弹窗（默认一条本人帖子） */
+    function openPublishedPosts(posts: unknown[] = [makePost()]) {
+      mockPublishedPosts(posts);
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
+    }
+
+    beforeEach(() => {
+      mockUseProfilesReturn([mockProfile()]);
+      // 兜底默认（各用例通过 mockPublishedPosts 覆盖）
+      mockUsePosts.mockReturnValue({
+        data: [],
+        loading: false,
+        error: null,
+        saving: false,
+        fetch: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+        uploadImage: vi.fn(),
+      });
+    });
+
+    it("空态：本人无帖子时显示「暂无已发布的活动」，查询含锁定帖且限本人（includeLocked + authorId）", () => {
+      openPublishedPosts([]);
+      expect(screen.getByRole("heading", { name: "已发布的活动" })).toBeInTheDocument();
+      expect(screen.getByText("暂无已发布的活动")).toBeInTheDocument();
+      expect(mockUsePosts).toHaveBeenCalledWith({ includeLocked: true, authorId: "u1" });
+    });
+
+    it("列表渲染本人帖子：标题/类型中文标签/发布时间/锁定徽章（锁定帖仍可见）", () => {
+      openPublishedPosts([
+        makePost(),
+        makePost({ id: "p2", title: "团建活动", type: "gathering", is_locked: true }),
+      ]);
+      expect(screen.getByText("重奏招募")).toBeInTheDocument();
+      expect(screen.getByText("团建活动")).toBeInTheDocument();
+      // 类型标签 + 发布时间（与页面同函数计算期望值，避免时区依赖）
+      const expectedTime = formatDateTimeInChina("2026-08-01T10:00:00");
+      expect(screen.getByText(`重奏 · ${expectedTime}`)).toBeInTheDocument();
+      expect(screen.getByText(`团建 · ${expectedTime}`)).toBeInTheDocument();
+      // 锁定帖带 🔒 徽章，未锁定帖无徽章
+      expect(screen.getAllByText("🔒 已锁定")).toHaveLength(1);
+    });
+
+    it("点帖子进入管理面板：标题入标题栏、类型/发布时间展示、操作行三按钮", () => {
+      openPublishedPosts();
+      fireEvent.click(screen.getByText("重奏招募")); // 点帖子
+      // 面板标题 = 帖子标题，类型徽章 + 发布时间
+      expect(screen.getByRole("heading", { name: "重奏招募" })).toBeInTheDocument();
+      expect(screen.getByText("重奏")).toBeInTheDocument();
+      const expectedTime = formatDateTimeInChina("2026-08-01T10:00:00");
+      expect(screen.getByText(`发布时间：${expectedTime}`)).toBeInTheDocument();
+      // 操作行：编辑 / 锁定 / 删除（右下角）
+      expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "锁定" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "删除" })).toBeInTheDocument();
+      // 操作行右下角（justify-end，Issue #182）
+      expect(screen.getByRole("button", { name: "锁定" }).parentElement!.className).toContain(
+        "justify-end",
+      );
+    });
+
+    it("点「锁定」：update 切换 is_locked=true，按钮变「解锁」且标题栏出现锁定徽章", async () => {
+      const { update } = mockPublishedPosts([makePost()]);
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
+      fireEvent.click(screen.getByText("重奏招募")); // 进入面板
+      fireEvent.click(screen.getByRole("button", { name: "锁定" }));
+      await waitFor(() => {
+        expect(update).toHaveBeenCalledWith("p1", { is_locked: true });
+      });
+      // 乐观更新同步：面板按钮变「解锁」、锁定状态入标题（headerExtra 徽章）
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "解锁" })).toBeInTheDocument();
+      });
+      expect(screen.getByText("🔒 已锁定")).toBeInTheDocument();
+    });
+
+    it("锁定帖进入面板：标题栏带 🔒 徽章，点「解锁」后 update is_locked=false 且徽章消失", async () => {
+      const { update } = mockPublishedPosts([makePost({ is_locked: true })]);
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
+      fireEvent.click(screen.getByText("重奏招募")); // 进入面板
+      // 只读状态入标题（headerExtra）
+      expect(screen.getByText("🔒 已锁定")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "解锁" }));
+      await waitFor(() => {
+        expect(update).toHaveBeenCalledWith("p1", { is_locked: false });
+      });
+      await waitFor(() => {
+        expect(screen.queryByText("🔒 已锁定")).toBeNull();
+      });
+      expect(screen.getByRole("button", { name: "锁定" })).toBeInTheDocument();
+    });
+
+    it("锁定失败（update 0 行返回 false）：alert 提示且状态不变（不假成功）", async () => {
+      const update = vi.fn<UpdateFn>().mockResolvedValue(false);
+      mockPublishedPosts([makePost()], { update });
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
+      fireEvent.click(screen.getByText("重奏招募")); // 进入面板
+      fireEvent.click(screen.getByRole("button", { name: "锁定" }));
+      await waitFor(() => {
+        expect(update).toHaveBeenCalledWith("p1", { is_locked: true });
+      });
+      expect(window.alert).toHaveBeenCalledWith("操作失败");
+      // 状态未变：仍为「锁定」按钮、无徽章
+      expect(screen.getByRole("button", { name: "锁定" })).toBeInTheDocument();
+      expect(screen.queryByText("🔒 已锁定")).toBeNull();
+    });
+
+    it("点「删除」：confirm 后调用 remove，面板关闭回列表、帖子移除（空态）", async () => {
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      const { remove } = mockPublishedPosts([makePost()]);
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
+      fireEvent.click(screen.getByText("重奏招募")); // 进入面板
+      fireEvent.click(screen.getByRole("button", { name: "删除" }));
+      expect(confirmSpy).toHaveBeenCalledWith("确定要删除这条公告吗？");
+      await waitFor(() => {
+        expect(remove).toHaveBeenCalledWith("p1");
+      });
+      // 回列表视图（标题变回「已发布的活动」），帖子已移除 → 空态
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "已发布的活动" })).toBeInTheDocument();
+      });
+      expect(screen.getByText("暂无已发布的活动")).toBeInTheDocument();
+      expect(window.alert).toHaveBeenCalledWith("已删除。");
+    });
+
+    it("删除 confirm 取消：不调用 remove，面板保持打开", () => {
+      vi.spyOn(window, "confirm").mockReturnValue(false);
+      const remove = vi.fn<RemoveFn>();
+      mockPublishedPosts([makePost()], { remove });
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
+      fireEvent.click(screen.getByText("重奏招募")); // 进入面板
+      fireEvent.click(screen.getByRole("button", { name: "删除" }));
+      expect(remove).not.toHaveBeenCalled();
+      expect(screen.getByRole("heading", { name: "重奏招募" })).toBeInTheDocument();
+    });
+
+    it("删除进行中：操作行三按钮互斥禁用、弹窗关闭被拦截，完成后回列表", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      let resolveRemove!: (ok: boolean) => void;
+      const removeMock = vi.fn<RemoveFn>().mockImplementation(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveRemove = resolve;
+          }),
+      );
+      mockPublishedPosts([makePost()], { remove: removeMock });
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
+      fireEvent.click(screen.getByText("重奏招募")); // 进入面板
+      fireEvent.click(screen.getByRole("button", { name: "删除" }));
+      // busy：删除按钮显示「删除中…」并禁用，编辑/锁定同步禁用（防操作已删帖子）
+      expect((screen.getByText("删除中…") as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByText("编辑") as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByText("锁定") as HTMLButtonElement).disabled).toBe(true);
+      // busy：遮罩关闭按钮不渲染，标题栏「关闭」点击被守卫拦截
+      expect(screen.queryByLabelText("关闭弹窗")).toBeNull();
+      fireEvent.click(screen.getByText("关闭"));
+      expect(screen.getByRole("heading", { name: "重奏招募" })).toBeInTheDocument();
+      // 完成后删除成功，回列表视图
+      await act(async () => {
+        resolveRemove(true);
+      });
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "已发布的活动" })).toBeInTheDocument();
+      });
+    });
+
+    it("点「编辑」：打开共用编辑弹窗预填，保存后 update 调用并回列表显示新标题", async () => {
+      const { update } = mockPublishedPosts([makePost()]);
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
+      fireEvent.click(screen.getByText("重奏招募")); // 进入面板
+      fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+      // 复用社区 PublishModal：编辑模式预填标题/内容
+      expect(screen.getByRole("heading", { name: "编辑公告" })).toBeInTheDocument();
+      expect((screen.getByPlaceholderText("请输入标题") as HTMLInputElement).value).toBe(
+        "重奏招募",
+      );
+      expect((screen.getByPlaceholderText("请输入内容") as HTMLTextAreaElement).value).toBe(
+        "招募长笛",
+      );
+      // 修改标题并保存
+      fireEvent.change(screen.getByPlaceholderText("请输入标题"), {
+        target: { value: "重奏招募（改）" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+      await waitFor(() => {
+        expect(update).toHaveBeenCalledWith(
+          "p1",
+          expect.objectContaining({ title: "重奏招募（改）" }),
+        );
+      });
+      // 保存成功：编辑弹窗关闭回列表，乐观更新显示新标题。
+      // 注意：inert 方案下底层 Modal 编辑期间始终挂载，「已发布的活动」标题一直在 DOM，
+      // 不能以它出现为完成信号——以编辑弹窗消失（「编辑公告」heading 移除）为准
+      await waitFor(() => {
+        expect(screen.queryByRole("heading", { name: "编辑公告" })).toBeNull();
+      });
+      expect(screen.getByText("重奏招募（改）")).toBeInTheDocument();
+    });
+
+    it("编辑打开时底层 Modal 加 inert 隔离（Tab 无法逃逸误触「关闭」丢编辑内容），取消后解除", () => {
+      openPublishedPosts();
+      fireEvent.click(screen.getByText("重奏招募")); // 进入面板
+      fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+      // 双层弹窗同时在 DOM：底层 Modal（列表视图）+ PublishModal（编辑），读屏器只见编辑弹窗
+      const dialogs = screen.getAllByRole("dialog");
+      expect(dialogs).toHaveLength(2);
+      // 底层 dialog 的父容器带 inert（编辑期间 Tab/点击无法逃逸），编辑弹窗无 inert
+      expect(dialogs[0].parentElement).toHaveAttribute("inert");
+      expect(dialogs[1].parentElement).not.toHaveAttribute("inert");
+      // 取消编辑：编辑弹窗卸载，底层 Modal 恢复可交互（inert 移除）
+      fireEvent.click(screen.getByRole("button", { name: "取消" }));
+      expect(screen.queryByRole("heading", { name: "编辑公告" })).toBeNull();
+      expect(screen.getByRole("dialog").parentElement).not.toHaveAttribute("inert");
+    });
+
+    it("删除 0 行（帖子已被并发删除）：提示兼容文案、刷新列表并回列表视图（不假成功）", async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const remove = vi.fn<RemoveFn>().mockResolvedValue(false);
+      const { fetch } = mockPublishedPosts([makePost()], { remove });
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
+      fireEvent.click(screen.getByText("重奏招募")); // 进入面板
+      fireEvent.click(screen.getByRole("button", { name: "删除" }));
+      await waitFor(() => {
+        expect(remove).toHaveBeenCalledWith("p1");
+      });
+      // 0 行与真实失败不区分（usePosts.remove 只返回 boolean）：刷新列表同步真实状态 + 兼容提示
+      expect(fetch).toHaveBeenCalled();
+      await waitFor(() => {
+        expect(window.alert).toHaveBeenCalledWith("删除失败（帖子可能已被删除）");
+      });
+      // 回列表视图；mock 数据未被移除（真实 fetch 后以 DB 为准），帖子仍在可重试
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "已发布的活动" })).toBeInTheDocument();
+      });
+      expect(screen.getByText("重奏招募")).toBeInTheDocument();
+    });
+
+    it("编辑保存失败（update 0 行返回 false）：alert 更新失败、编辑弹窗保持打开", async () => {
+      const update = vi.fn<UpdateFn>().mockResolvedValue(false);
+      mockPublishedPosts([makePost()], { update });
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
+      fireEvent.click(screen.getByText("重奏招募")); // 进入面板
+      fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+      fireEvent.click(screen.getByRole("button", { name: "保存" }));
+      await waitFor(() => {
+        expect(update).toHaveBeenCalledWith("p1", expect.objectContaining({ title: "重奏招募" }));
+      });
+      // 0 行更新返回 false → 提示更新失败，不假成功
+      await waitFor(() => {
+        expect(window.alert).toHaveBeenCalledWith("更新失败");
+      });
+      expect(screen.getByRole("heading", { name: "编辑公告" })).toBeInTheDocument();
+    });
   });
 });

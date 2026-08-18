@@ -3,8 +3,13 @@
 import React from "react";
 import { supabase as defaultClient } from "@/lib/supabase";
 
-export function usePosts(options?: { client?: typeof defaultClient; includeLocked?: boolean }) {
-  const { client = defaultClient, includeLocked = false } = options ?? {};
+export function usePosts(options?: {
+  client?: typeof defaultClient;
+  includeLocked?: boolean;
+  /** 仅查询该作者的帖子（「我的-已发布的活动」个人面板，Issue #205）；默认查全部 */
+  authorId?: string | null;
+}) {
+  const { client = defaultClient, includeLocked = false, authorId = null } = options ?? {};
 
   const [data, setData] = React.useState<unknown[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -24,6 +29,13 @@ export function usePosts(options?: { client?: typeof defaultClient; includeLocke
       query = query.eq("is_locked", false);
     }
 
+    // 个人面板按作者过滤（含锁定帖由 includeLocked: true 配合，Issue #205）。
+    // 用 != null 而非 truthy：authorId 为 null/undefined（user 未就绪）时才跳过过滤；
+    // "" 会被加 eq("author_id", "")（结果为空列表，比拉全团更安全）
+    if (authorId != null) {
+      query = query.eq("author_id", authorId);
+    }
+
     query = query.order("created_at", { ascending: false });
 
     const { data: rows, error: dbError } = await query;
@@ -34,7 +46,7 @@ export function usePosts(options?: { client?: typeof defaultClient; includeLocke
       return;
     }
     setData((rows as unknown[]) ?? []);
-  }, [client, includeLocked]);
+  }, [client, includeLocked, authorId]);
 
   React.useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect

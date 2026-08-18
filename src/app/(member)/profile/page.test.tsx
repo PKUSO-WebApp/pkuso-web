@@ -1,11 +1,11 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import ProfilePage from "./page";
 import { useUser } from "@/context/user-context";
 import { useProfiles } from "@/hooks/useProfiles";
 import { supabase } from "@/lib/supabase";
-import { formatDateTimeInChina } from "@/lib/date-utils";
+import { formatDateTimeInChina, formatRehearsalRange } from "@/lib/date-utils";
 import type { ProfileRow } from "@/types/database";
 
 // 通知上下文 mock（hoisted：未读数可在各用例中动态配置）
@@ -13,23 +13,29 @@ const { mockUseNotificationsContext } = vi.hoisted(() => ({
   mockUseNotificationsContext: vi.fn(),
 }));
 
-// supabase 查询链 mock（hoisted：信箱消息列表查询走 from → select → eq → order → then）
-const { mockFrom, mockSelect, mockEq, mockOrder, mockThen } = vi.hoisted(() => {
+// supabase 查询链 mock（hoisted：信箱/考勤查询走 from → select → eq → (gte/lt) → order → then）
+const { mockFrom, mockSelect, mockEq, mockGte, mockLt, mockOrder, mockThen } = vi.hoisted(() => {
   const chain: Record<string, unknown> = {};
   const mockSelect = vi.fn();
   const mockEq = vi.fn();
+  const mockGte = vi.fn();
+  const mockLt = vi.fn();
   const mockOrder = vi.fn();
   const mockThen = vi.fn();
   const mockFrom = vi.fn();
   chain.select = mockSelect;
   chain.eq = mockEq;
+  chain.gte = mockGte;
+  chain.lt = mockLt;
   chain.order = mockOrder;
   chain.then = mockThen;
   mockSelect.mockReturnValue(chain);
   mockEq.mockReturnValue(chain);
+  mockGte.mockReturnValue(chain);
+  mockLt.mockReturnValue(chain);
   mockOrder.mockReturnValue(chain);
   mockFrom.mockReturnValue(chain);
-  return { mockFrom, mockSelect, mockEq, mockOrder, mockThen };
+  return { mockFrom, mockSelect, mockEq, mockGte, mockLt, mockOrder, mockThen };
 });
 
 vi.mock("next/navigation", () => ({
@@ -94,6 +100,24 @@ function mockUseProfilesReturn(data: ProfileRow[]) {
     fetch: vi.fn(),
     update: vi.fn().mockResolvedValue(true),
   } as never);
+}
+
+/** 构造考勤 join 排练行（仅展示所需字段；overrides 可覆盖任意字段） */
+function mockAttendanceRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 1,
+    user_id: "u1",
+    rehearsal_id: 10,
+    status: "present",
+    sign_in_time: "2026-08-10T19:00:00",
+    rehearsals: {
+      start_time: "2026-08-10T19:00:00",
+      end_time: "2026-08-10T21:00:00",
+      location: "排练厅",
+      repertoire: "贝多芬第五交响曲",
+    },
+    ...overrides,
+  };
 }
 
 describe("ProfilePage 个人信息页", () => {
@@ -973,5 +997,273 @@ describe("ProfilePage 个人信息页", () => {
       expect.stringContaining("[Profile] 获取 auth 邮箱失败"),
       expect.any(Error),
     );
+  });
+
+  // ============================================================
+  // Issue #201：考勤查看（起止日期过滤 + 本人考勤列表）
+  // ============================================================
+  it("打开考勤弹窗：默认（未选区间）查询本人全部考勤并渲染时间/地点/曲目/状态", () => {
+    mockUseProfilesReturn([mockProfile()]);
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({
+        data: [
+          mockAttendanceRow(),
+          mockAttendanceRow({
+            id: 2,
+            rehearsal_id: 11,
+            status: "late",
+            rehearsals: {
+              start_time: "2026-08-12T19:00:00",
+              end_time: "2026-08-12T21:00:00",
+              location: "排练厅",
+              repertoire: "莫扎特第三十九交响曲",
+            },
+          }),
+        ],
+        error: null,
+      });
+      return undefined;
+    });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: "考勤" }));
+    // 弹窗打开（底部 Modal，标题「我的考勤」）
+    expect(screen.getByRole("heading", { name: "我的考勤" })).toBeInTheDocument();
+    // 查询：attendances 表、本人 user_id、join 排练（仅展示列，无 profiles 敏感列）、无日期过滤
+    expect(mockFrom).toHaveBeenCalledWith("attendances");
+    expect(mockEq).toHaveBeenCalledWith("user_id", "u1");
+    expect(mockSelect).toHaveBeenCalledWith(
+      "*, rehearsals!inner(start_time, end_time, location, repertoire)",
+    );
+    expect(mockGte).not.toHaveBeenCalled();
+    expect(mockLt).not.toHaveBeenCalled();
+    // 排序：按排练开始时间倒序（近 → 远，最近的排练在前）
+    expect(mockOrder).toHaveBeenCalledWith("start_time", {
+      referencedTable: "rehearsals",
+      ascending: false,
+    });
+    // 行渲染：时间用与页面相同的格式化函数计算期望值，避免时区依赖
+    const expectedTime = formatRehearsalRange("2026-08-10T19:00:00", "2026-08-10T21:00:00");
+    expect(screen.getByText(expectedTime)).toBeInTheDocument();
+    // 两行地点相同：批量断言
+    expect(screen.getAllByText("地点：排练厅")).toHaveLength(2);
+    expect(screen.getByText("曲目：贝多芬第五交响曲")).toBeInTheDocument();
+    expect(screen.getByText("曲目：莫扎特第三十九交响曲")).toBeInTheDocument();
+    expect(screen.getByText("出席")).toBeInTheDocument();
+    expect(screen.getByText("迟到")).toBeInTheDocument();
+  });
+
+  it("选择起止日期后按区间过滤查询（gte 开始日期、lt 结束日期次日，结束当天全天包含）", () => {
+    mockUseProfilesReturn([mockProfile()]);
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({ data: [], error: null });
+      return undefined;
+    });
+    const { container } = render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: "考勤" }));
+    const dateInputs = container.querySelectorAll('input[type="date"]');
+    fireEvent.change(dateInputs[0], { target: { value: "2026-08-01" } });
+    fireEvent.change(dateInputs[1], { target: { value: "2026-08-31" } });
+    // 区间过滤：开始 ≥ 08-01；结束 < 09-01（次日开区间，结束当天 23:59 开始的排练也包含）
+    expect(mockGte).toHaveBeenCalledWith("rehearsals.start_time", "2026-08-01");
+    expect(mockLt).toHaveBeenCalledWith("rehearsals.start_time", "2026-09-01");
+  });
+
+  it("只填一端时按该端开放过滤（另一端不设界）", () => {
+    mockUseProfilesReturn([mockProfile()]);
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({ data: [], error: null });
+      return undefined;
+    });
+    const { container } = render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: "考勤" }));
+    const dateInputs = container.querySelectorAll('input[type="date"]');
+    // 只填开始日期：仅 gte 开始日期，无 lt
+    fireEvent.change(dateInputs[0], { target: { value: "2026-08-05" } });
+    expect(mockGte).toHaveBeenCalledWith("rehearsals.start_time", "2026-08-05");
+    expect(mockLt).not.toHaveBeenCalled();
+    // 补填结束日期：区间完整，lt 结束日期次日（开始 ≥ 08-05 不变）
+    fireEvent.change(dateInputs[1], { target: { value: "2026-08-10" } });
+    expect(mockLt).toHaveBeenCalledWith("rehearsals.start_time", "2026-08-11");
+    // 清空开始日期（只填结束）：仍按 lt 开放过滤，无 gte
+    mockGte.mockClear();
+    fireEvent.change(dateInputs[0], { target: { value: "" } });
+    expect(mockLt).toHaveBeenCalledWith("rehearsals.start_time", "2026-08-11");
+    expect(mockGte).not.toHaveBeenCalled();
+  });
+
+  it("起 > 止：显示校验提示、不发起查询、不清空已选日期；修正后提示消失并重新查询", () => {
+    mockUseProfilesReturn([mockProfile()]);
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({ data: [], error: null });
+      return undefined;
+    });
+    const { container } = render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: "考勤" }));
+    const dateInputs = container.querySelectorAll('input[type="date"]');
+    // 先填结束日期（合法，开放过滤），清空查询计数后制造起 > 止
+    fireEvent.change(dateInputs[1], { target: { value: "2026-08-10" } });
+    mockFrom.mockClear();
+    fireEvent.change(dateInputs[0], { target: { value: "2026-08-20" } });
+    expect(screen.getByText("开始日期不能晚于结束日期")).toBeInTheDocument();
+    expect(mockFrom).not.toHaveBeenCalled(); // 非法区间不发起查询
+    // 已选日期保留（不清空），等待用户修正
+    expect((dateInputs[0] as HTMLInputElement).value).toBe("2026-08-20");
+    expect((dateInputs[1] as HTMLInputElement).value).toBe("2026-08-10");
+    // 修正为合法区间：提示消失并重新查询
+    fireEvent.change(dateInputs[0], { target: { value: "2026-08-01" } });
+    expect(screen.queryByText("开始日期不能晚于结束日期")).toBeNull();
+    expect(mockFrom).toHaveBeenCalledWith("attendances");
+  });
+
+  it("考勤状态未评定（status 为 null）的行显示「—」且无状态色", () => {
+    mockUseProfilesReturn([mockProfile()]);
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({
+        data: [
+          mockAttendanceRow({
+            id: 2,
+            status: null,
+            sign_in_time: null,
+            rehearsals: {
+              start_time: "2026-08-12T19:00:00",
+              end_time: "2026-08-12T21:00:00",
+              location: "排练厅",
+              repertoire: "莫扎特第三十九交响曲",
+            },
+          }),
+        ],
+        error: null,
+      });
+      return undefined;
+    });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: "考勤" }));
+    // 按行锚定断言（O3 加固）：页面其他位置（如邮箱为 null 时）也有「—」兜底，
+    // 全局 getByText("—") 依赖"mock 无其他「—」"隐含前提；锚定到该行卡片内避免脆弱。
+    const card = screen.getByText("曲目：莫扎特第三十九交响曲").closest("div") as HTMLElement;
+    const dash = within(card).getByText("—");
+    expect(dash.className).toContain("text-text-muted");
+  });
+
+  it("列表为空时显示「该区间暂无考勤记录」", () => {
+    mockUseProfilesReturn([mockProfile()]);
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({ data: [], error: null });
+      return undefined;
+    });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: "考勤" }));
+    expect(screen.getByText("该区间暂无考勤记录")).toBeInTheDocument();
+  });
+
+  it("查询失败时显示「加载失败」提示", () => {
+    mockUseProfilesReturn([mockProfile()]);
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({ data: null, error: { message: "网络错误" } });
+      return undefined;
+    });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: "考勤" }));
+    expect(screen.getByText("加载失败，请稍后重试")).toBeInTheDocument();
+    expect(screen.queryByText("该区间暂无考勤记录")).toBeNull();
+  });
+
+  it("竞态守卫：快速切换区间时过期响应不覆盖最新结果（递增序号范式）", async () => {
+    mockUseProfilesReturn([mockProfile()]);
+    const cbs: ((v: unknown) => void)[] = [];
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cbs.push(cb);
+      return undefined;
+    });
+    const { container } = render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: "考勤" })); // 查询 1（打开，全部）
+    const dateInputs = container.querySelectorAll('input[type="date"]');
+    fireEvent.change(dateInputs[0], { target: { value: "2026-08-01" } }); // 查询 2
+    fireEvent.change(dateInputs[1], { target: { value: "2026-08-10" } }); // 查询 3（最新区间）
+    expect(cbs).toHaveLength(3);
+
+    // 乱序返回：查询 3 先返回，查询 2 后返回（过期，应被丢弃）
+    await act(async () => {
+      cbs[2]({
+        data: [
+          mockAttendanceRow({
+            id: 2,
+            rehearsals: {
+              start_time: "2026-08-09T19:00:00",
+              end_time: "2026-08-09T21:00:00",
+              location: "排练厅",
+              repertoire: "区间内曲目",
+            },
+          }),
+        ],
+        error: null,
+      });
+    });
+    await act(async () => {
+      cbs[1]({
+        data: [
+          mockAttendanceRow({
+            id: 3,
+            rehearsals: {
+              start_time: "2026-07-01T19:00:00",
+              end_time: "2026-07-01T21:00:00",
+              location: "排练厅",
+              repertoire: "过期响应曲目",
+            },
+          }),
+        ],
+        error: null,
+      });
+    });
+    // 展示最新查询结果，过期响应被丢弃
+    expect(screen.getByText("曲目：区间内曲目")).toBeInTheDocument();
+    expect(screen.queryByText("曲目：过期响应曲目")).toBeNull();
+  });
+
+  it("存储缺勤是占位：排练未结束时显示「未签到」，已结束才显示「缺勤」（与详情弹窗语义一致）", () => {
+    // 固定系统时间，避免判定依赖真实运行时刻（与详情弹窗测试同模式）
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 15, 13, 0, 0));
+    mockUseProfilesReturn([mockProfile()]);
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({
+        data: [
+          // 未来排练（未结束）：absent 是新建排练的默认占位 → 未签到
+          mockAttendanceRow({
+            id: 1,
+            status: "absent",
+            sign_in_time: null,
+            rehearsals: {
+              start_time: "2026-08-16T19:00:00",
+              end_time: "2026-08-16T21:00:00",
+              location: "排练厅",
+              repertoire: "未来曲目",
+            },
+          }),
+          // 已结束排练 → 缺勤
+          mockAttendanceRow({
+            id: 2,
+            status: "absent",
+            sign_in_time: null,
+            rehearsals: {
+              start_time: "2026-08-01T19:00:00",
+              end_time: "2026-08-01T21:00:00",
+              location: "排练厅",
+              repertoire: "已结束曲目",
+            },
+          }),
+        ],
+        error: null,
+      });
+      return undefined;
+    });
+    try {
+      render(<ProfilePage />);
+      fireEvent.click(screen.getByRole("button", { name: "考勤" }));
+      expect(screen.getByText("未签到")).toBeInTheDocument();
+      expect(screen.getByText("缺勤")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

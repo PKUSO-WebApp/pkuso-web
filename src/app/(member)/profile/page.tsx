@@ -8,10 +8,17 @@ import { LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useProfiles } from "@/hooks/useProfiles";
 import { isValidEmail, isValidPhoneNumber } from "@/lib/validation";
-import { formatDateTimeInChina } from "@/lib/date-utils";
+import {
+  formatDateTimeInChina,
+  formatRehearsalRange,
+  getLocalDateString,
+  parseLocalISO,
+} from "@/lib/date-utils";
+import { getSignBlockReason, hasSignedIn } from "@/lib/attendance-utils";
+import { STATUS_LABEL, STATUS_TEXT_COLOR } from "@/lib/attendance-status";
 import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
-import type { NotificationCategory, NotificationRow } from "@/types/database";
+import type { AttendanceRow, NotificationCategory, NotificationRow } from "@/types/database";
 
 // 隐私开关选项（Issue #193）：各字段行尾的「公开 / 隐藏」分段开关，随表单一起保存
 const PRIVACY_OPTIONS = ["public", "hidden"] as const;
@@ -29,8 +36,54 @@ const notificationItems: { label: string; category: NotificationCategory }[] = [
   { label: "系统", category: "system" },
 ];
 
-// 设置栏目占位按钮（个人信息/账号与密码/退出登录已接线，不在此列）
-const placeholderSettingItems = ["考勤", "外观", "已发布的活动", "问题与反馈"] as const;
+// 设置栏目占位按钮（个人信息/账号与密码/考勤/退出登录已接线，不在此列）
+const placeholderSettingItems = ["外观", "已发布的活动", "问题与反馈"] as const;
+
+// ---- 考勤查看（Issue #201）----
+
+/** 考勤 join 排练的返回行（仅取展示所需排练列；不含 profiles 敏感列，
+ *  Issue #193 列级权限不受影响，attendances/rehearsals 表正常 join 即可） */
+type AttendanceWithRehearsal = AttendanceRow & {
+  rehearsals?: {
+    start_time?: string | null;
+    end_time?: string | null;
+    location?: string | null;
+    repertoire?: string | null;
+  } | null;
+};
+
+/** 日期字符串的次日（YYYY-MM-DD）：区间上界用开区间（< 次日），
+ *  结束当天 23:59 开始的排练也算在区间内（字符串前缀比较会误排除当天深夜的排练） */
+const nextDayString = (dateStr: string): string => {
+  const d = parseLocalISO(dateStr);
+  d.setDate(d.getDate() + 1);
+  return getLocalDateString(d);
+};
+
+/**
+ * 考勤状态展示（与详情弹窗五行映射同源语义，Issue #201）：
+ * - present/late/excused：管理员评定或签到确定，直接按 STATUS_LABEL 映射；
+ * - absent：新建排练时为全员预生成的默认占位（未签到）——排练未结束时
+ *   不构成缺勤，显示「未签到」（与详情弹窗一致）；已结束（或已签到补签）才确认缺勤；
+ * - status 为 null（历史数据/未评定）：显示「—」（无考勤状态）。
+ * 返回 { label, className }；className 为空时由渲染层用默认文字色兜底。
+ */
+const getAttendanceDisplay = (
+  status: AttendanceRow["status"],
+  signInTime: string | null,
+  startTime: string | null,
+  endTime: string | null,
+): { label: string; className: string } => {
+  if (!status) return { label: "—", className: "text-text-muted" };
+  if (status === "absent" && !hasSignedIn(signInTime)) {
+    const blockReason = getSignBlockReason(startTime, endTime, new Date());
+    if (blockReason !== "ended") return { label: "未签到", className: "text-text" };
+  }
+  return {
+    label: STATUS_LABEL[status] ?? status,
+    className: STATUS_TEXT_COLOR[status] ?? "",
+  };
+};
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -94,6 +147,75 @@ export default function ProfilePage() {
         const unreadIds = rows.filter((m) => m.read_at === null).map((m) => m.id);
         void markCategoryRead(category, unreadIds);
       });
+  };
+
+  // ---- 考勤查看（Issue #201）----
+  // 状态机：打开弹窗与切换起止日期时查询本人考勤（attendances join rehearsals）；
+  // 起 > 止 时提示且不查询（保留上次结果，不清空已选日期）；区间未选（两端都空）默认查全部。
+  // 竞态守卫用递增序号：快速切换区间时丢弃过期响应（与 inbox 同模式，CLAUDE.md 范式）。
+  const [isAttendanceOpen, setIsAttendanceOpen] = React.useState(false);
+  const [attendanceStart, setAttendanceStart] = React.useState("");
+  const [attendanceEnd, setAttendanceEnd] = React.useState("");
+  const [attendanceRows, setAttendanceRows] = React.useState<AttendanceWithRehearsal[]>([]);
+  const [attendanceLoading, setAttendanceLoading] = React.useState(false);
+  const [attendanceError, setAttendanceError] = React.useState(false); // 查询失败态（显示「加载失败」）
+  const attendanceSeqRef = React.useRef(0);
+
+  /** 拉取本人考勤：区间两端都填按起止过滤，只填一端按该端开放过滤（另一端不设界），
+   *  两端都空查全部（默认行为）。排序：按排练开始时间倒序（近 → 远，最近的排练在前）。 */
+  const fetchAttendance = (userId: string, startDate: string, endDate: string) => {
+    setAttendanceLoading(true);
+    setAttendanceError(false);
+    const seq = ++attendanceSeqRef.current;
+    let builder = supabase
+      .from("attendances")
+      .select("*, rehearsals!inner(start_time, end_time, location, repertoire)")
+      .eq("user_id", userId);
+    if (startDate) builder = builder.gte("rehearsals.start_time", startDate);
+    if (endDate) {
+      // 上界取结束日期次日（开区间）：结束当天任意时刻开始的排练都算在区间内
+      builder = builder.lt("rehearsals.start_time", nextDayString(endDate));
+    }
+    void builder
+      .order("start_time", { referencedTable: "rehearsals", ascending: false })
+      .then(({ data, error }) => {
+        // 仅最新一次查询的响应生效（用户可能已快速切换区间）
+        if (seq !== attendanceSeqRef.current) return;
+        setAttendanceLoading(false);
+        if (error) {
+          console.error("[Profile] 考勤列表查询失败", error.message);
+          setAttendanceError(true);
+          setAttendanceRows([]);
+          return;
+        }
+        setAttendanceRows((data as AttendanceWithRehearsal[] | null) ?? []);
+      });
+  };
+
+  /** 打开考勤弹窗：清空上次区间（重新打开默认查全部本人排练），拉取列表 */
+  const handleOpenAttendance = () => {
+    setAttendanceStart("");
+    setAttendanceEnd("");
+    setIsAttendanceOpen(true);
+    if (user) fetchAttendance(user.id, "", "");
+  };
+
+  /** 开始日期变更：起 > 止 时仅提示不查询（保留上次结果，不清空已选），否则按新区间查询 */
+  const handleAttendanceStartChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    setAttendanceStart(v);
+    if (!user) return;
+    if (v && attendanceEnd && v > attendanceEnd) return; // 非法区间（起 > 止）：不查询
+    fetchAttendance(user.id, v, attendanceEnd);
+  };
+
+  /** 结束日期变更：同上（起 > 止 时提示不查询） */
+  const handleAttendanceEndChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    setAttendanceEnd(v);
+    if (!user) return;
+    if (attendanceStart && v && attendanceStart > v) return;
+    fetchAttendance(user.id, attendanceStart, v);
   };
 
   // 编辑个人信息（联系方式 + 入团时间 + 学院 + 隐私开关）
@@ -270,7 +392,11 @@ export default function ProfilePage() {
 
   // 弹窗打开时锁定背景滚动（防滚动穿透：fixed 遮罩的最近可滚动祖先就是本页根容器），关闭后恢复
   const anyModalOpen =
-    isPwdModalOpen || isEditModalOpen || placeholderTitle !== null || inbox !== null;
+    isPwdModalOpen ||
+    isEditModalOpen ||
+    placeholderTitle !== null ||
+    inbox !== null ||
+    isAttendanceOpen;
 
   return (
     // 本页豁免：整页滚动——page 根节点自身为滚动容器，tab bar 固定；
@@ -336,6 +462,14 @@ export default function ProfilePage() {
               className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
             >
               账号与密码
+            </button>
+            {/* 考勤（Issue #201）：本人考勤历史，起止日期过滤 */}
+            <button
+              type="button"
+              onClick={handleOpenAttendance}
+              className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+            >
+              考勤
             </button>
             {placeholderSettingItems.map((label) => (
               <button
@@ -590,6 +724,90 @@ export default function ProfilePage() {
                 </p>
               </div>
             ))}
+        </div>
+      </Modal>
+
+      {/* 考勤查看 Modal（底部弹出，Issue #201）：起止日期过滤本人考勤列表；
+          两端都填按区间过滤、只填一端按该端开放过滤、都空查全部（默认）；
+          起 > 止 显示校验提示且不查询（不清空已选日期） */}
+      <Modal
+        open={isAttendanceOpen}
+        onClose={() => setIsAttendanceOpen(false)}
+        title="我的考勤"
+        position="bottom"
+      >
+        <div className="mt-4 space-y-3">
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <label className="mb-1 block text-xs font-medium text-text-muted">开始日期</label>
+              <input
+                type="date"
+                value={attendanceStart}
+                onChange={handleAttendanceStartChange}
+                className="input"
+              />
+            </div>
+            <span className="pb-2 text-sm text-text-muted">至</span>
+            <div className="flex-1">
+              <label className="mb-1 block text-xs font-medium text-text-muted">结束日期</label>
+              <input
+                type="date"
+                value={attendanceEnd}
+                onChange={handleAttendanceEndChange}
+                className="input"
+              />
+            </div>
+          </div>
+          {attendanceStart && attendanceEnd && attendanceStart > attendanceEnd && (
+            <p className="text-xs text-danger">开始日期不能晚于结束日期</p>
+          )}
+          {/* 考勤列表：罗列内容可滚动（max-h 容器，CLAUDE.md） */}
+          <div className="max-h-[60vh] space-y-3 overflow-y-auto pb-1">
+            {attendanceLoading && (
+              <p className="py-6 text-center text-xs text-text-muted">加载中…</p>
+            )}
+            {!attendanceLoading && attendanceError && (
+              <p className="py-6 text-center text-sm text-text-muted">加载失败，请稍后重试</p>
+            )}
+            {!attendanceLoading && !attendanceError && attendanceRows.length === 0 && (
+              <p className="py-6 text-center text-sm text-text-muted">该区间暂无考勤记录</p>
+            )}
+            {!attendanceLoading &&
+              !attendanceError &&
+              attendanceRows.map((row) => {
+                const { label, className } = getAttendanceDisplay(
+                  row.status,
+                  row.sign_in_time,
+                  row.rehearsals?.start_time ?? null,
+                  row.rehearsals?.end_time ?? null,
+                );
+                return (
+                  <div key={row.id} className="rounded-xl border border-border bg-card p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="min-w-0 flex-1 text-sm font-medium text-text">
+                        {row.rehearsals?.start_time
+                          ? formatRehearsalRange(
+                              row.rehearsals.start_time,
+                              row.rehearsals.end_time ?? null,
+                            )
+                          : "时间未设置"}
+                      </p>
+                      <span
+                        className={`flex-shrink-0 text-sm font-medium ${className || "text-text"}`}
+                      >
+                        {label}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-text-muted">
+                      地点：{row.rehearsals?.location ?? "—"}
+                    </p>
+                    <p className="mt-0.5 text-xs text-text-muted">
+                      曲目：{row.rehearsals?.repertoire ?? "—"}
+                    </p>
+                  </div>
+                );
+              })}
+          </div>
         </div>
       </Modal>
     </div>

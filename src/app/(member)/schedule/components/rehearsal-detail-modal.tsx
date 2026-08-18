@@ -4,24 +4,8 @@ import React from "react";
 import { Modal } from "@/components/ui/Modal";
 import { formatRehearsalRange } from "@/lib/date-utils";
 import { getSignBlockReason, hasSignedIn } from "@/lib/attendance-utils";
+import { STATUS_LABEL, STATUS_TEXT_COLOR } from "@/lib/attendance-status";
 import type { RehearsalRow } from "@/types/database";
-
-/** 出勤状态文案（与考勤名单一致） */
-const STATUS_LABEL: Record<string, string> = {
-  present: "出席",
-  late: "迟到",
-  absent: "缺勤",
-  excused: "请假",
-};
-
-/** 出勤状态文字色（语义 token，亮/暗双模式；配色语义与请假审批 STATUS_CHIP 一致
- *  ——成功/警告/危险/信息，此处为文字大字而非 chip，故只映射文字色，无背景类） */
-const STATUS_TEXT_COLOR: Record<string, string> = {
-  present: "text-success",
-  late: "text-warning",
-  absent: "text-danger",
-  excused: "text-info",
-};
 
 /** 红点已查看记录的 localStorage 键前缀（键 = leaveSeen_<申请id>，值为 "1"） */
 const LEAVE_SEEN_PREFIX = "leaveSeen_";

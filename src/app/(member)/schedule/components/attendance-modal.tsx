@@ -2,6 +2,7 @@
 
 import React from "react";
 import { Modal } from "@/components/ui/Modal";
+import { STATUS_LABEL } from "@/lib/attendance-status";
 import type { AttendanceRowWithUser, AttendanceStatus } from "@/types/database";
 
 type Props = {
@@ -21,13 +22,6 @@ const STATUS_ICON: Record<AttendanceStatus, string> = {
   late: "➖",
   absent: "❌",
   excused: "⭕",
-};
-
-const STATUS_LABEL: Record<AttendanceStatus, string> = {
-  present: "出席",
-  late: "迟到",
-  absent: "缺勤",
-  excused: "请假",
 };
 
 const STATUS_OPTIONS: AttendanceStatus[] = ["present", "late", "absent", "excused"];

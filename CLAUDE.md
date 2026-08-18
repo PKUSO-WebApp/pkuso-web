@@ -97,7 +97,7 @@ src/app/
 
 - **Token 优先**: `src/styles/tokens.css` 为设计令牌单一可信源。所有颜色通过 Tailwind 语义类使用,**禁止硬编码调色板色**(`zinc-*`/`text-white` 等——`text-white` 应写 `text-primary-foreground`,暗色模式才不会低对比度)。21 对语义色覆盖亮/暗双模式,完整清单以 tokens.css 为准。
 - **移动端优先**: 页面宽 `max-w-md`(448px),Modal 默认底部弹出(`position="bottom"`),底部安全区 `pb-safe`。
-- **罗列内容必须可滚动**: 页面是固定视口(AuthGate `h-screen` 列 + 两端 layout `flex-1 overflow-hidden`,页面本身不可滚动)。罗列性质的内容必须放可滚动容器(`flex-1 min-h-0 overflow-y-auto` 或 `max-h-[Npx] overflow-y-auto`);含筛选控件的列表页,根容器用 `flex h-full min-h-0 flex-col`,控件+列表整体放滚动区(矮屏可到达)。
+- **罗列内容必须可滚动**: 页面是固定视口(AuthGate `h-screen` 列 + 两端 layout `flex-1 overflow-hidden`,页面本身不可滚动)。罗列性质的内容必须放可滚动容器(`flex-1 min-h-0 overflow-y-auto` 或 `max-h-[Npx] overflow-y-auto`);含筛选控件的列表页,根容器用 `flex h-full min-h-0 flex-col`,控件+列表整体放滚动区(矮屏可到达)。**豁免:member 端 profile 页整页滚动**——page 根节点自身为 `flex-1 min-h-0 overflow-y-auto` 滚动容器(整页上下滚动、tab bar 固定),其余页面维持固定视口。
 - **多行文本框可拉长**: textarea 保持默认可拖拽调整大小(resize: both),除全屏铺满等豁免场景外**不要加 `resize-none`**,且避免 `.input` 固定高度类覆盖 rows。
 - **组件复用**: 写新 UI 前先查 `src/components/ui/`(Modal/Toggle/Card/Toast)和 `src/app/(member)/schedule/components/`(排练相关组件)。Button 暂不统一(35+ 变体,待设计系统定型)。
 - **暗色模式**: `<html data-theme="dark">` 即可全局切换,所有组件应双模式可用。测试时亮/暗都过一遍。

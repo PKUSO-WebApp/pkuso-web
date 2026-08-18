@@ -9,6 +9,12 @@ import { useProfiles } from "@/hooks/useProfiles";
 import { isValidPhoneNumber } from "@/lib/validation";
 import { Modal } from "@/components/ui/Modal";
 
+// 通知栏目按钮（均未实现，点击弹出「功能开发中」占位弹窗）
+const notificationItems = ["考勤与请假", "活动", "系统"] as const;
+
+// 设置栏目占位按钮（个人信息/账号与密码/退出登录已接线，不在此列）
+const placeholderSettingItems = ["考勤", "外观", "已发布的活动", "问题与反馈"] as const;
+
 export default function ProfilePage() {
   const router = useRouter();
   const { user, logout } = useUser();
@@ -21,6 +27,10 @@ export default function ProfilePage() {
   const [newPwd, setNewPwd] = React.useState("");
   const [confirmPwd, setConfirmPwd] = React.useState("");
   const [isUpdatingPwd, setIsUpdatingPwd] = React.useState(false);
+  const pwdSubmittingRef = React.useRef(false); // 同步 guard，阻断竞态窗口
+
+  // 占位功能弹窗：标题 = 按钮名，内容「功能开发中」；null 表示未打开
+  const [placeholderTitle, setPlaceholderTitle] = React.useState<string | null>(null);
 
   // 编辑个人信息（联系方式 + 学院）
   const { data: profileData, update: updateProfile } = useProfiles({ userId: user?.id });
@@ -86,65 +96,117 @@ export default function ProfilePage() {
     e.preventDefault();
     if (newPwd.trim() !== confirmPwd.trim()) return alert("两次输入的密码不一致");
     if (newPwd.trim().length < 6) return alert("新密码长度至少 6 位");
+    // 双重 guard 防重复提交：ref 同步阻断 + state 异步兜底
+    if (pwdSubmittingRef.current || isUpdatingPwd) return;
+    pwdSubmittingRef.current = true;
     setIsUpdatingPwd(true);
-    const { error } = await supabase.auth.updateUser({ password: newPwd.trim() });
-    setIsUpdatingPwd(false);
-    if (error) alert(error.message);
-    else {
-      alert("密码修改成功");
-      setNewPwd("");
-      setConfirmPwd("");
-      setIsPwdModalOpen(false);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPwd.trim() });
+      if (error) alert(error.message);
+      else {
+        alert("密码修改成功");
+        setNewPwd("");
+        setConfirmPwd("");
+        setIsPwdModalOpen(false);
+      }
+    } finally {
+      // 无论成败都复位：避免抛异常时 isUpdatingPwd 卡 true，弹窗被守卫锁死无法关闭
+      pwdSubmittingRef.current = false;
+      setIsUpdatingPwd(false);
     }
   };
 
+  // 弹窗打开时锁定背景滚动（防滚动穿透：fixed 遮罩的最近可滚动祖先就是本页根容器），关闭后恢复
+  const anyModalOpen = isPwdModalOpen || isEditModalOpen || placeholderTitle !== null;
+
   return (
-    <div className="space-y-6">
-      <section className="rounded-2xl border border-border-light bg-surface p-4 shadow-[var(--shadow-card)]">
-        <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary text-base font-medium text-primary-foreground">
-            {initials}
+    // 本页豁免：整页滚动——page 根节点自身为滚动容器，tab bar 固定；
+    // 其余页面维持固定视口（见 CLAUDE.md「罗列内容必须可滚动」豁免说明）
+    <div
+      className={`flex-1 min-h-0 ${
+        anyModalOpen ? "overflow-hidden" : "overflow-y-auto"
+      } overscroll-contain`}
+    >
+      <div className="space-y-6">
+        <section className="rounded-2xl border border-border-light bg-surface p-4 shadow-[var(--shadow-card)]">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary text-base font-medium text-primary-foreground">
+              {initials}
+            </div>
+            <div className="min-w-0 flex-1 space-y-1">
+              <h1 className="text-lg font-semibold text-text">{fullName}</h1>
+              <p className="text-sm text-text-muted">声部 {instrument}</p>
+              <p className="text-xs text-text-muted">邮箱 {email}</p>
+            </div>
           </div>
-          <div className="min-w-0 flex-1 space-y-1">
-            <h1 className="text-lg font-semibold text-text">{fullName}</h1>
-            <p className="text-sm text-text-muted">声部 {instrument}</p>
-            <p className="text-xs text-text-muted">邮箱 {email}</p>
+        </section>
+
+        {/* 通知栏目 */}
+        <section>
+          <h2 className="text-xs font-medium text-text-muted">通知</h2>
+          <div className="mt-2 divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface">
+            {notificationItems.map((label) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setPlaceholderTitle(label)}
+                className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+              >
+                {label}
+              </button>
+            ))}
           </div>
-        </div>
-      </section>
+        </section>
 
-      <button
-        type="button"
-        onClick={() => setIsPwdModalOpen(true)}
-        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
-      >
-        🔒 修改密码
-      </button>
+        {/* 设置栏目 */}
+        <section>
+          <h2 className="text-xs font-medium text-text-muted">设置</h2>
+          <div className="mt-2 divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface">
+            <button
+              type="button"
+              onClick={handleOpenEditModal}
+              className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+            >
+              个人信息
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsPwdModalOpen(true)}
+              className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+            >
+              账号与密码
+            </button>
+            {placeholderSettingItems.map((label) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setPlaceholderTitle(label)}
+                className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+              >
+                {label}
+              </button>
+            ))}
+            {/* 退出登录：最后一行，红色文字 */}
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium text-danger hover:bg-muted"
+            >
+              <LogOut className="h-4 w-4" />
+              退出登录
+            </button>
+          </div>
+        </section>
+      </div>
 
-      <button
-        type="button"
-        onClick={handleOpenEditModal}
-        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
-      >
-        📝 编辑个人信息
-      </button>
-
-      <button
-        type="button"
-        onClick={handleLogout}
-        className="flex w-full items-center justify-center gap-2 rounded-full bg-danger-bg px-4 py-2.5 text-sm font-medium text-danger shadow-sm hover:opacity-80"
-      >
-        <LogOut className="h-4 w-4" />
-        退出登录
-      </button>
-
+      {/* 修改密码 Modal（底部弹出） */}
       <Modal
         open={isPwdModalOpen}
         onClose={() => {
           if (!isUpdatingPwd) setIsPwdModalOpen(false);
         }}
         title="修改登录密码"
-        position="center"
+        position="bottom"
         closeOnOverlay={!isUpdatingPwd}
       >
         <form onSubmit={handleUpdatePassword} className="mt-4 space-y-3">
@@ -244,6 +306,16 @@ export default function ProfilePage() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* 占位功能 Modal：标题 = 按钮名，内容一行「功能开发中」 */}
+      <Modal
+        open={placeholderTitle !== null}
+        onClose={() => setPlaceholderTitle(null)}
+        title={placeholderTitle ?? ""}
+        position="bottom"
+      >
+        <p className="py-6 text-center text-sm text-text-muted">功能开发中</p>
       </Modal>
     </div>
   );

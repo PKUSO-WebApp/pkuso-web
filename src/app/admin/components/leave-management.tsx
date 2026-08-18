@@ -17,23 +17,20 @@ import type { LeaveRequestWithDetails } from "@/types/database";
  * - 待审批 tab：checkbox 勾选 + 全选，批量操作栏「批量通过」（二次确认）/
  *   「批量驳回」（原因必填弹窗，同一原因应用到全部勾选）；
  * - 点击列表项打开详情弹窗（审批/驳回/附件查看）。
- * 审批成功后本地移除已处理行，成员端重新进入页面可见同步结果。
+ * 审批/驳回成功后重拉列表，行保留（切到已处理 tab 可见，Issue #190）；
+ * 已处理列表仅含 approved/rejected，成员撤回/取消（withdrawn/canceled）的申请不展示。
  */
 
 const STATUS_LABEL: Record<string, string> = {
   pending: "待审批",
   approved: "已通过",
   rejected: "已驳回",
-  withdrawn: "已撤回",
-  canceled: "已取消",
 };
 
 const STATUS_CHIP: Record<string, string> = {
   pending: "bg-warning-bg text-warning",
   approved: "bg-success-bg text-success",
   rejected: "bg-danger-bg text-danger",
-  withdrawn: "bg-muted text-text-subtle",
-  canceled: "bg-muted text-text-subtle",
 };
 
 /** 排练展示名：repertoire 优先（成员端卡片同源），缺失回退 title */
@@ -99,7 +96,8 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
   const batchBusyRef = React.useRef(false);
 
   const pendingList = requests.filter((r) => r.status === "pending");
-  const processedList = requests.filter((r) => r.status !== "pending");
+  // 已处理列表仅含审批终态；成员撤回/取消（withdrawn/canceled）的申请不展示（Issue #190）
+  const processedList = requests.filter((r) => r.status === "approved" || r.status === "rejected");
   const tabList = tab === "pending" ? pendingList : processedList;
   // 分类筛选只作用于当前 status tab 内部（全部/请假/补请假）
   const list =
@@ -109,7 +107,7 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
   const detailRequest = requests.find((r) => r.id === detailId) ?? null;
 
   // 待审批数实时上报给父组件（控制台 tab 红点，Issue #150）；
-  // 审批/驳回成功本地移除后 pendingList 变化会自动再次触发
+  // 审批/驳回成功后重拉列表，pendingList 变化会自动再次触发
   React.useEffect(() => {
     onPendingCountChange?.(pendingList.length);
   }, [pendingList.length, onPendingCountChange]);
@@ -132,7 +130,7 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
     try {
       const result = await approve(selectedIds);
       if (result.ok) {
-        // 有 warnings（如成员已实际签到、考勤未联动）时逐条提示管理员（Issue #159 返工）
+        // 有 warnings（如成员已实际签到、failed 未处理项）时逐条提示管理员（Issue #159 返工 / #190 对抗）
         if (result.warnings.length > 0) {
           alert(result.warnings.join("\n"));
         }
@@ -157,8 +155,12 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
     batchBusyRef.current = true;
     setBatchBusy(true);
     try {
-      const ok = await reject(selectedIds, trimmed);
-      if (ok) {
+      const result = await reject(selectedIds, trimmed);
+      if (result.ok) {
+        // failed（已被处理/不存在的行）并入 warnings，逐条提示管理员（Issue #190 对抗）
+        if (result.warnings.length > 0) {
+          alert(result.warnings.join("\n"));
+        }
         setRejectOpen(false);
         setRejectReason("");
         setRejectError(null);
@@ -436,12 +438,13 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
           return result;
         }}
         onReject={async (id, reason) => {
-          const ok = await reject([id], reason);
-          if (ok) setSelectedIds((prev) => prev.filter((x) => x !== id));
-          return ok;
+          const result = await reject([id], reason);
+          if (result.ok) setSelectedIds((prev) => prev.filter((x) => x !== id));
+          return result;
         }}
         getSignedUrl={getSignedUrl}
-        processing={busy}
+        // loading 并入：列表加载（含手动刷新/审批后重拉）期间禁用弹窗操作，防陈旧行误操作（Issue #190 对抗）
+        processing={busy || loading}
       />
     </section>
   );

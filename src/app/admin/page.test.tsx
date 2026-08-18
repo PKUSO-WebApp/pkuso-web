@@ -106,9 +106,9 @@ const mockLeaveAdmin = (overrides: Record<string, unknown> = {}) => {
     error: null,
     processing: false,
     fetch: vi.fn(),
-    // approve 返回值形态：{ ok, warnings }（Issue #159 返工）
+    // approve/reject 返回值形态：{ ok, warnings }（Issue #159 返工 / #190 对抗）
     approve: vi.fn().mockResolvedValue({ ok: true, warnings: [] }),
-    reject: vi.fn().mockResolvedValue(true),
+    reject: vi.fn().mockResolvedValue({ ok: true, warnings: [] }),
     getSignedUrl: vi.fn().mockResolvedValue(null),
   };
   (useLeaveAdmin as unknown as Mock).mockReturnValue({ ...defaultReturn, ...overrides });

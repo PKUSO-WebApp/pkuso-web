@@ -11,16 +11,18 @@ import type { LeaveRequestWithDetails } from "@/types/database";
  * - 完整表单内容 + 附件图片（私有桶签名 URL，点击放大）+ 状态 chip；
  * - pending 时底部固定「通过」「驳回」按钮，驳回需填写原因（必填）；
  *   点「驳回」展开输入块时隐藏底部通过/驳回行（Issue #182 布局统一）；
- * - 审批成功后父级从列表移除本行，弹窗随之自动关闭（open 由 request 是否存在控制）。
+ * - 审批/驳回成功后父级重拉列表，本行保留：弹窗保持打开并展示最新状态
+ *   （已通过/已驳回 chip），底部操作按钮随之隐藏（Issue #190 行不再移除）。
  * 防重复提交：同步 ref + state 双重 guard，操作中禁关闭。
  */
 
 type Props = {
   request: LeaveRequestWithDetails | null;
   onClose: () => void;
-  /** 通过回调返回 { ok, warnings }（warnings 如成员已实际签到、考勤未联动，Issue #159 返工） */
+  /** 通过回调返回 { ok, warnings }（warnings 如成员已实际签到、failed 未处理项，Issue #159 返工 / #190 对抗） */
   onApprove: (id: string) => Promise<{ ok: boolean; warnings: string[] }>;
-  onReject: (id: string, reason: string) => Promise<boolean>;
+  /** 驳回回调返回 { ok, warnings }（与通过同构，Issue #190 对抗） */
+  onReject: (id: string, reason: string) => Promise<{ ok: boolean; warnings: string[] }>;
   getSignedUrl: (path: string) => Promise<string | null>;
   /** 父级批量操作进行中：禁用本弹窗操作 */
   processing?: boolean;
@@ -100,7 +102,7 @@ export function LeaveDetailModal({
     try {
       const result = await onApprove(request.id);
       // 有 warnings（如成员已实际签到、考勤未联动）时逐条提示管理员（Issue #159 返工）；
-      // 成功时父级移除该行，request 变 null 自动关闭；失败由父级提示
+      // 成功时父级重拉列表，本行保留并变为已通过（弹窗展示最新状态）；失败由父级提示
       if (result.ok && result.warnings.length > 0) {
         alert(result.warnings.join("\n"));
       }
@@ -121,10 +123,13 @@ export function LeaveDetailModal({
     setActing(true);
     setRejectError(null);
     try {
-      await onReject(request.id, trimmed);
+      const result = await onReject(request.id, trimmed);
       setRejectOpen(false);
       setRejectReason("");
-      // 成功时父级移除该行，request 变 null 自动关闭
+      // warnings（failed 未处理项等）逐条提示；成功时父级重拉列表，本行保留并变为已驳回（Issue #190 对抗）
+      if (result.ok && result.warnings.length > 0) {
+        alert(result.warnings.join("\n"));
+      }
     } finally {
       actingRef.current = false;
       setActing(false);

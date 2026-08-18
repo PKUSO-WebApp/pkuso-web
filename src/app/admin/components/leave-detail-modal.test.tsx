@@ -44,7 +44,8 @@ type DetailModalProps = {
   onClose: () => void;
   /** 通过回调返回 { ok, warnings }（Issue #159 返工） */
   onApprove: (id: string) => Promise<{ ok: boolean; warnings: string[] }>;
-  onReject: (id: string, reason: string) => Promise<boolean>;
+  /** 驳回回调返回 { ok, warnings }（与通过同构，Issue #190 对抗） */
+  onReject: (id: string, reason: string) => Promise<{ ok: boolean; warnings: string[] }>;
   getSignedUrl: (path: string) => Promise<string | null>;
   processing?: boolean;
 };
@@ -54,7 +55,7 @@ function renderModal(props: Partial<DetailModalProps> = {}) {
     request: makeRequest(),
     onClose: vi.fn(),
     onApprove: vi.fn().mockResolvedValue({ ok: true, warnings: [] }),
-    onReject: vi.fn().mockResolvedValue(true),
+    onReject: vi.fn().mockResolvedValue({ ok: true, warnings: [] }),
     getSignedUrl: vi.fn().mockResolvedValue("https://x/signed.jpg"),
     processing: false,
   };
@@ -116,7 +117,7 @@ describe("LeaveDetailModal 请假详情弹窗（管理端）", () => {
   });
 
   it("驳回：原因必填，空原因提交被拦截，填写后调用 onReject", async () => {
-    const onReject = vi.fn().mockResolvedValue(true);
+    const onReject = vi.fn().mockResolvedValue({ ok: true, warnings: [] });
     renderModal({ onReject });
 
     fireEvent.click(screen.getByRole("button", { name: "驳回" }));
@@ -131,6 +132,48 @@ describe("LeaveDetailModal 请假详情弹窗（管理端）", () => {
     fireEvent.change(ta, { target: { value: "理由不充分" } });
     fireEvent.click(screen.getByRole("button", { name: "确认驳回" }));
     await waitFor(() => expect(onReject).toHaveBeenCalledWith("lr-1", "理由不充分"));
+  });
+
+  it("驳回返回 warnings（failed 未处理项等）：alert 逐条展示（Issue #190 对抗）", async () => {
+    const alertSpy = vi.fn();
+    vi.stubGlobal("alert", alertSpy);
+    const onReject = vi.fn().mockResolvedValue({
+      ok: true,
+      warnings: ["有 1 条申请未被处理：李四（申请不存在或已处理）"],
+    });
+    renderModal({ onReject });
+
+    fireEvent.click(screen.getByRole("button", { name: "驳回" }));
+    const ta = await screen.findByLabelText(/驳回原因/);
+    fireEvent.change(ta, { target: { value: "理由不充分" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认驳回" }));
+
+    await waitFor(() =>
+      expect(alertSpy).toHaveBeenCalledWith("有 1 条申请未被处理：李四（申请不存在或已处理）"),
+    );
+  });
+
+  it("驳回失败（ok=false）：不弹 alert、输入框关闭且原因清空（固化既有行为，Issue #190 对抗遗留）", async () => {
+    const alertSpy = vi.fn();
+    vi.stubGlobal("alert", alertSpy);
+    const onReject = vi.fn().mockResolvedValue({ ok: false, warnings: [] });
+    renderModal({ onReject });
+
+    fireEvent.click(screen.getByRole("button", { name: "驳回" }));
+    const ta = await screen.findByLabelText(/驳回原因/);
+    fireEvent.change(ta, { target: { value: "理由不充分" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认驳回" }));
+
+    await waitFor(() => expect(onReject).toHaveBeenCalledWith("lr-1", "理由不充分"));
+    // warnings 仅在 ok 时弹 alert，失败不弹
+    expect(alertSpy).not.toHaveBeenCalled();
+    // 固化既有行为：失败也关闭输入块并清空原因（非本次回归引入；若后续 issue 要修，需同步更新此断言）
+    expect(screen.queryByLabelText(/驳回原因/)).toBeNull();
+    expect(screen.getByRole("button", { name: "驳回" })).toBeTruthy();
+    // 重新打开输入块：原因已被清空（setRejectReason("") 生效）
+    fireEvent.click(screen.getByRole("button", { name: "驳回" }));
+    const reopened = await screen.findByLabelText(/驳回原因/);
+    expect((reopened as HTMLTextAreaElement).value).toBe("");
   });
 
   it("驳回输入展开时：底部通过/驳回按钮隐藏，关闭输入后恢复（Issue #182）", async () => {
@@ -192,7 +235,8 @@ describe("LeaveDetailModal 请假详情弹窗（管理端）", () => {
     expect(lastCall[0].closeOnOverlay).toBe(false);
 
     resolveApprove({ ok: true, warnings: [] });
-    // 等待父级移除行（request 变 null 关闭）后的异步收尾
-    await waitFor(() => expect((Modal as unknown as Mock).mock.calls.length).toBeGreaterThan(0));
+    // 审批成功后父级重拉列表、本行保留（Issue #190 行不再移除，弹窗不自动关闭），
+    // 弹窗保持打开渲染；此处仅收尾 resolve 后的异步状态
+    await waitFor(() => expect(screen.getByTestId("detail-modal")).toBeInTheDocument());
   });
 });

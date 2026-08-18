@@ -67,9 +67,9 @@ describe("LeaveManagement 请假审批区块（管理端）", () => {
     adminMock.loading = false;
     adminMock.error = null;
     adminMock.processing = false;
-    // approve 返回值形态：{ ok, warnings }（Issue #159 返工）
+    // approve/reject 返回值形态：{ ok, warnings }（Issue #159 返工 / #190 对抗）
     adminMock.approve.mockResolvedValue({ ok: true, warnings: [] });
-    adminMock.reject.mockResolvedValue(true);
+    adminMock.reject.mockResolvedValue({ ok: true, warnings: [] });
   });
 
   afterEach(() => {
@@ -205,6 +205,46 @@ describe("LeaveManagement 请假审批区块（管理端）", () => {
     );
   });
 
+  it("批量驳回返回 warnings（failed 未处理项等）：alert 逐条展示（Issue #190 对抗）", async () => {
+    const alertSpy = vi.fn();
+    vi.stubGlobal("alert", alertSpy);
+    adminMock.reject.mockResolvedValue({
+      ok: true,
+      warnings: ["有 1 条申请未被处理：李四（申请不存在或已处理）"],
+    });
+    adminMock.requests = [makeRequest({ id: "lr-1" })];
+    render(<LeaveManagement />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /全选/ }));
+    fireEvent.click(screen.getByRole("button", { name: "批量驳回" }));
+    const ta = await screen.findByPlaceholderText(/驳回原因/);
+    fireEvent.change(ta, { target: { value: "已另行安排" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认驳回" }));
+
+    await waitFor(() =>
+      expect(alertSpy).toHaveBeenCalledWith("有 1 条申请未被处理：李四（申请不存在或已处理）"),
+    );
+  });
+
+  it("详情弹窗审批后行保留：重拉后弹窗保持打开并展示已通过 chip（Issue #190）", () => {
+    adminMock.approve.mockResolvedValue({ ok: true, warnings: [] });
+    adminMock.requests = [makeRequest({ id: "lr-1" })];
+    const { rerender } = render(<LeaveManagement />);
+
+    fireEvent.click(screen.getByText("张三"));
+    let calls = (LeaveDetailModal as unknown as Mock).mock.calls;
+    expect(calls[calls.length - 1][0].request).toMatchObject({ id: "lr-1", status: "pending" });
+
+    // 审批成功后父级重拉列表：行保留（不再移除），状态更新为已通过
+    adminMock.requests = [makeRequest({ id: "lr-1", status: "approved" })];
+    rerender(<LeaveManagement />);
+
+    calls = (LeaveDetailModal as unknown as Mock).mock.calls;
+    const lastCall = calls[calls.length - 1];
+    // 弹窗保持打开（request 非 null）且展示最新状态 chip
+    expect(lastCall[0].request).toMatchObject({ id: "lr-1", status: "approved" });
+  });
+
   it("点击列表项打开详情弹窗（传递该申请）", async () => {
     adminMock.requests = [makeRequest({ id: "lr-1" })];
     render(<LeaveManagement />);
@@ -236,17 +276,38 @@ describe("LeaveManagement 请假审批区块（管理端）", () => {
     expect(screen.queryByRole("button", { name: "批量通过" })).toBeNull();
   });
 
-  it("已处理 tab：成员取消的申请显示「已取消」chip（Issue #149 保留历史）", () => {
+  it("已处理列表仅含 approved/rejected，不含 withdrawn/canceled（Issue #190）", () => {
     adminMock.requests = [
       makeRequest({ id: "lr-1", status: "approved" }),
-      makeRequest({ id: "lr-2", status: "canceled", reason: "临时有事去不了" }),
+      makeRequest({ id: "lr-2", status: "rejected" }),
+      makeRequest({ id: "lr-3", status: "canceled", reason: "临时有事去不了" }),
+      makeRequest({ id: "lr-4", status: "withdrawn", reason: "改期了" }),
     ];
     render(<LeaveManagement />);
 
     fireEvent.click(screen.getByRole("button", { name: "已处理" }));
-    expect(screen.getByText("已取消")).toBeInTheDocument();
-    // canceled 行不出现英文枚举值
+
+    // 已通过/已驳回正常展示；撤回/取消的申请不进入已处理列表（不显示中文标签与枚举原文）
+    expect(screen.getByText("已通过")).toBeInTheDocument();
+    expect(screen.getByText("已驳回")).toBeInTheDocument();
+    expect(screen.queryByText("已取消")).toBeNull();
+    expect(screen.queryByText("已撤回")).toBeNull();
     expect(screen.queryByText(/canceled/)).toBeNull();
+    expect(screen.queryByText(/withdrawn/)).toBeNull();
+  });
+
+  it("withdrawn/canceled 行不显示在任何 tab（待审批/已处理都无，Issue #190）", () => {
+    adminMock.requests = [
+      makeRequest({ id: "lr-1", status: "canceled" }),
+      makeRequest({ id: "lr-2", status: "withdrawn" }),
+    ];
+    render(<LeaveManagement />);
+
+    // 待审批 tab：无 pending 行
+    expect(screen.getByText("暂无待审批申请")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "已处理" }));
+    expect(screen.getByText("暂无已处理申请")).toBeInTheDocument();
   });
 
   it("加载失败显示错误横幅", () => {

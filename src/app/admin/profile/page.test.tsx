@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import ProfilePage from "./page";
 import { supabase } from "@/lib/supabase";
 import { getFreshAccessToken } from "@/lib/auth-token";
 import { EMAIL_SIGNATURE_MAX_LENGTH } from "@/lib/email-signature";
+import { formatDateTimeInChina } from "@/lib/date-utils";
 import type { InvitationCodeRow } from "@/types/database";
 
 vi.mock("@/lib/supabase", () => ({
@@ -1359,5 +1360,129 @@ describe("邮件签名全屏编辑", () => {
     expect(preventDefaulted).toBe(false);
     // 焦点不被循环逻辑改动，交由浏览器默认 Tab 顺序
     expect(middle).toHaveFocus();
+  });
+});
+
+// ---- Issue #209：反馈列表（成员匿名反馈，只读展示）----
+
+describe("反馈列表（Issue #209）", () => {
+  const sampleFeedback = (overrides: Record<string, unknown> = {}) => ({
+    id: "f1",
+    content: "希望增加曲库功能",
+    created_at: "2026-08-18T10:00:00+08:00",
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("渲染「反馈列表」按钮", () => {
+    render(<ProfilePage />);
+    expect(screen.getByRole("button", { name: /反馈列表/ })).toBeInTheDocument();
+  });
+
+  it("打开弹窗时查询 feedback 表：内容 + 提交时间倒序渲染", async () => {
+    const feedbacks = [
+      sampleFeedback(),
+      sampleFeedback({ id: "f2", content: "签到太麻烦", created_at: "2026-08-17T09:00:00+08:00" }),
+    ];
+    const { orderMock } = setupSupabaseMock({ fetchData: feedbacks });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /反馈列表/ }));
+
+    await waitFor(() => {
+      expect(supabase.from).toHaveBeenCalledWith("feedback");
+      expect(orderMock).toHaveBeenCalledWith("created_at", { ascending: false });
+      expect(screen.getByText("希望增加曲库功能")).toBeInTheDocument();
+      expect(screen.getByText("签到太麻烦")).toBeInTheDocument();
+    });
+    // 时间用与页面相同的格式化函数计算期望值，避免时区依赖
+    const expectedTime1 = formatDateTimeInChina("2026-08-18T10:00:00+08:00");
+    const expectedTime2 = formatDateTimeInChina("2026-08-17T09:00:00+08:00");
+    expect(screen.getByText(expectedTime1)).toBeInTheDocument();
+    expect(screen.getByText(expectedTime2)).toBeInTheDocument();
+  });
+
+  it("空列表显示「暂无反馈」", async () => {
+    setupSupabaseMock({ fetchData: [] });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /反馈列表/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("暂无反馈")).toBeInTheDocument();
+    });
+  });
+
+  it("加载失败：显示「加载失败」与重试按钮，点击重试重新查询并成功", async () => {
+    setupSupabaseMock({ fetchError: { message: "网络错误" } });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /反馈列表/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("加载失败，请稍后重试")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /重试/ })).toBeInTheDocument();
+    });
+    expect(screen.queryByText("暂无反馈")).toBeNull();
+
+    // 点击重试：第二次查询成功，列表渲染
+    setupSupabaseMock({ fetchData: [sampleFeedback()] });
+    fireEvent.click(screen.getByRole("button", { name: /重试/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("希望增加曲库功能")).toBeInTheDocument();
+      expect(screen.queryByText("加载失败，请稍后重试")).toBeNull();
+    });
+  });
+
+  it("竞态守卫：快速开关弹窗时过期响应被丢弃（递增序号范式）", async () => {
+    const cbs: ((v: unknown) => void)[] = [];
+    // orderMock 挂起不 resolve，收集回调后手动触发（模拟慢网络）
+    const orderMock = vi.fn().mockImplementation(() => {
+      const p = new Promise<unknown>((resolve) => {
+        cbs.push(resolve);
+      });
+      return p;
+    });
+    const selectMock = vi.fn().mockReturnValue({ order: orderMock });
+    (supabase.from as Mock).mockReturnValue({
+      select: selectMock,
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      delete: vi.fn().mockReturnThis(),
+      single: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockReturnThis(),
+    });
+
+    render(<ProfilePage />);
+    const openBtn = screen.getByRole("button", { name: /反馈列表/ });
+    // 第一次打开：查询 1 挂起
+    fireEvent.click(openBtn);
+    // 关闭再打开：查询 2 挂起（弹窗内标题栏与底部各有一个「关闭」，取第一个）
+    fireEvent.click(screen.getAllByRole("button", { name: "关闭" })[0]);
+    fireEvent.click(openBtn);
+    expect(cbs).toHaveLength(2);
+
+    // 乱序返回：查询 2（最新）先返回，查询 1（过期）后返回
+    await act(async () => {
+      cbs[1]({
+        data: [{ id: "f2", content: "最新反馈", created_at: "2026-08-18T10:00:00+08:00" }],
+        error: null,
+      });
+    });
+    await act(async () => {
+      cbs[0]({
+        data: [{ id: "f1", content: "过期反馈", created_at: "2026-08-17T09:00:00+08:00" }],
+        error: null,
+      });
+    });
+    // 展示最新查询结果，过期响应被丢弃
+    expect(screen.getByText("最新反馈")).toBeInTheDocument();
+    expect(screen.queryByText("过期反馈")).toBeNull();
   });
 });

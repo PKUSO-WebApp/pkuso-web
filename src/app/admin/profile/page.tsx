@@ -11,7 +11,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
 import { useInvitationCodes } from "@/hooks/useInvitationCodes";
 import { formatDateTimeInChina } from "@/lib/date-utils";
-import type { InvitationCodeRow } from "@/types/database";
+import type { FeedbackRow, InvitationCodeRow } from "@/types/database";
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -69,6 +69,43 @@ export default function ProfilePage() {
   const [sigError, setSigError] = React.useState<string | null>(null);
   const [sigSuccess, setSigSuccess] = React.useState(false);
   const [isSigFullscreen, setIsSigFullscreen] = React.useState(false);
+
+  // ---- 反馈列表（Issue #209）----
+  // 状态机：打开弹窗时查询（避免进「我的」页就拉一次）；成员端匿名提交（表无作者列），
+  // 只读展示内容 + 提交时间倒序，无删除/标记。竞态守卫用递增序号（快速开关丢弃过期响应）。
+  const [isFeedbackOpen, setIsFeedbackOpen] = React.useState(false);
+  const [feedbackRows, setFeedbackRows] = React.useState<FeedbackRow[]>([]);
+  const [feedbackLoading, setFeedbackLoading] = React.useState(false);
+  const [feedbackError, setFeedbackError] = React.useState(false); // 查询失败态（显示「加载失败」+ 重试）
+  const feedbackSeqRef = React.useRef(0);
+
+  /** 拉取反馈列表（created_at 倒序；admin 浏览器端，is_admin() RLS 放行） */
+  const fetchFeedback = () => {
+    const seq = ++feedbackSeqRef.current;
+    setFeedbackLoading(true);
+    setFeedbackError(false);
+    void supabase
+      .from("feedback")
+      .select("id, content, created_at")
+      .order("created_at", { ascending: false })
+      .then(({ data, error }) => {
+        // 仅最新一次打开弹窗的响应生效（快速开关时丢弃过期响应）
+        if (seq !== feedbackSeqRef.current) return;
+        setFeedbackLoading(false);
+        if (error) {
+          console.error("[Admin Profile] 反馈列表查询失败", error.message);
+          setFeedbackError(true);
+          setFeedbackRows([]);
+          return;
+        }
+        setFeedbackRows((data as FeedbackRow[] | null) ?? []);
+      });
+  };
+
+  const handleOpenFeedbackModal = () => {
+    setIsFeedbackOpen(true);
+    fetchFeedback();
+  };
 
   // 全屏编辑时锁定背景滚动（清理时恢复；组件卸载时 cleanup 同样恢复）
   React.useEffect(() => {
@@ -404,6 +441,15 @@ export default function ProfilePage() {
         className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
       >
         📧 邮件签名设置
+      </button>
+
+      {/* 反馈列表（Issue #209）：成员匿名反馈，只读列表 */}
+      <button
+        type="button"
+        onClick={handleOpenFeedbackModal}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
+      >
+        💬 反馈列表
       </button>
 
       <button
@@ -932,6 +978,56 @@ export default function ProfilePage() {
             disabled={codesDeleting}
             onClick={() => setIsManageModalOpen(false)}
             className="w-full rounded-xl border border-border bg-surface py-2.5 text-sm font-medium text-text-muted hover:bg-muted disabled:opacity-60"
+          >
+            关闭
+          </button>
+        </div>
+      </Modal>
+
+      {/* 反馈列表 Modal（底部弹出，Issue #209）：只读展示成员匿名反馈（内容 + 提交时间倒序）。
+          表结构无作者列（匿名是结构保证），不显示任何作者信息；无删除/标记操作 */}
+      <Modal
+        open={isFeedbackOpen}
+        onClose={() => setIsFeedbackOpen(false)}
+        title="反馈列表"
+        position="bottom"
+      >
+        <div className="mt-4 space-y-3 pb-safe">
+          {feedbackLoading ? (
+            <p className="py-8 text-center text-xs text-text-muted">加载中…</p>
+          ) : feedbackError ? (
+            <div className="py-8 text-center">
+              <p className="text-xs text-danger">加载失败，请稍后重试</p>
+              <button
+                type="button"
+                onClick={fetchFeedback}
+                className="mt-3 rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted"
+              >
+                重试
+              </button>
+            </div>
+          ) : feedbackRows.length === 0 ? (
+            <p className="py-8 text-center text-xs text-text-muted">暂无反馈</p>
+          ) : (
+            // 罗列内容可滚动（max-h 容器，CLAUDE.md）
+            <div className="max-h-[60vh] space-y-3 overflow-y-auto pb-1">
+              {feedbackRows.map((row) => (
+                <div key={row.id} className="rounded-xl border border-border bg-card p-3">
+                  <p className="whitespace-pre-line text-sm leading-relaxed text-text">
+                    {row.content}
+                  </p>
+                  <p className="mt-1 text-caption text-text-muted">
+                    {formatDateTimeInChina(row.created_at)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setIsFeedbackOpen(false)}
+            className="w-full rounded-xl border border-border bg-surface py-2.5 text-sm font-medium text-text-muted hover:bg-muted"
           >
             关闭
           </button>

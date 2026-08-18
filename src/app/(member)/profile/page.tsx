@@ -38,9 +38,7 @@ const notificationItems: { label: string; category: NotificationCategory }[] = [
   { label: "系统", category: "system" },
 ];
 
-// 设置栏目占位按钮（个人信息/账号与密码/考勤/外观/已发布的活动/退出登录已接线，不在此列；
-// 已发布的活动 Issue #205 接线，仅剩「问题与反馈」占位）
-const placeholderSettingItems = ["问题与反馈"] as const;
+// 设置栏目按钮均已接线（个人信息/账号与密码/考勤/外观/已发布的活动/问题与反馈 Issue #209/退出登录）
 
 // ---- 考勤查看（Issue #201）----
 
@@ -106,8 +104,13 @@ export default function ProfilePage() {
   const [isRebindingEmail, setIsRebindingEmail] = React.useState(false);
   const rebindSubmittingRef = React.useRef(false); // 同步 guard，阻断竞态窗口
 
-  // 占位功能弹窗：标题 = 按钮名，内容「功能开发中」；null 表示未打开
-  const [placeholderTitle, setPlaceholderTitle] = React.useState<string | null>(null);
+  // ---- 问题与反馈（Issue #209）----
+  // 状态机：底部弹窗内多行输入 + 提交；匿名提交（表结构无作者列，DBA 保证），
+  // 提交成功 alert 提示并清空关闭；双重 guard 防重复提交（ref 同步 + state 异步）。
+  const [isFeedbackOpen, setIsFeedbackOpen] = React.useState(false);
+  const [feedbackContent, setFeedbackContent] = React.useState("");
+  const [isFeedbackSubmitting, setIsFeedbackSubmitting] = React.useState(false);
+  const feedbackSubmittingRef = React.useRef(false); // 同步 guard，阻断竞态窗口
 
   // 外观弹窗（Issue #203）：亮色 / 暗色 / 跟随系统主题切换
   const [isThemeModalOpen, setIsThemeModalOpen] = React.useState(false);
@@ -399,11 +402,41 @@ export default function ProfilePage() {
     }
   };
 
+  /** 提交反馈（Issue #209）：trim 非空校验；INSERT 不链 .select()——
+   *  DBA 实证：INSERT RETURNING 的输出行受 SELECT 策略约束，成员会 403/42501，
+   *  默认 insert 即返回 { data, error }（反馈表 RLS 放行 authenticated 插入） */
+  const handleFeedbackSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const content = feedbackContent.trim();
+    if (!content) return alert("请填写反馈内容");
+    // 双重 guard 防重复提交：ref 同步阻断 + state 异步兜底
+    if (feedbackSubmittingRef.current || isFeedbackSubmitting) return;
+    feedbackSubmittingRef.current = true;
+    setIsFeedbackSubmitting(true);
+    try {
+      const { error } = await supabase.from("feedback").insert({ content });
+      if (error) {
+        alert(error.message || "反馈提交失败，请重试");
+        return;
+      }
+      alert("反馈已提交，感谢你的反馈");
+      setFeedbackContent("");
+      setIsFeedbackOpen(false);
+    } catch {
+      // 网络异常兜底：不弹 error.message（非 PostgrestError，无 message 字段）
+      alert("反馈提交失败，请重试");
+    } finally {
+      // 无论成败都复位：避免抛异常时 isFeedbackSubmitting 卡 true，按钮被永久禁用
+      feedbackSubmittingRef.current = false;
+      setIsFeedbackSubmitting(false);
+    }
+  };
+
   // 弹窗打开时锁定背景滚动（防滚动穿透：fixed 遮罩的最近可滚动祖先就是本页根容器），关闭后恢复
   const anyModalOpen =
     isPwdModalOpen ||
     isEditModalOpen ||
-    placeholderTitle !== null ||
+    isFeedbackOpen ||
     inbox !== null ||
     isAttendanceOpen ||
     isThemeModalOpen ||
@@ -498,16 +531,14 @@ export default function ProfilePage() {
             >
               已发布的活动
             </button>
-            {placeholderSettingItems.map((label) => (
-              <button
-                key={label}
-                type="button"
-                onClick={() => setPlaceholderTitle(label)}
-                className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
-              >
-                {label}
-              </button>
-            ))}
+            {/* 问题与反馈（Issue #209）：匿名提交，底部弹窗 */}
+            <button
+              type="button"
+              onClick={() => setIsFeedbackOpen(true)}
+              className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+            >
+              问题与反馈
+            </button>
             {/* 退出登录：最后一行，红色文字 */}
             <button
               type="button"
@@ -711,14 +742,38 @@ export default function ProfilePage() {
         </form>
       </Modal>
 
-      {/* 占位功能 Modal：标题 = 按钮名，内容一行「功能开发中」 */}
+      {/* 问题与反馈 Modal（底部弹出，Issue #209）：多行输入匿名提交。
+          textarea 保持默认可拖拽 resize（不加 resize-none、不用 .input 固定高度类，CLAUDE.md） */}
       <Modal
-        open={placeholderTitle !== null}
-        onClose={() => setPlaceholderTitle(null)}
-        title={placeholderTitle ?? ""}
+        open={isFeedbackOpen}
+        onClose={() => {
+          if (!isFeedbackSubmitting) setIsFeedbackOpen(false);
+        }}
+        title="问题与反馈"
         position="bottom"
+        closeOnOverlay={!isFeedbackSubmitting}
       >
-        <p className="py-6 text-center text-sm text-text-muted">功能开发中</p>
+        <form onSubmit={handleFeedbackSubmit} className="mt-4 space-y-3">
+          <p className="text-xs text-text-muted">匿名提交，管理员可在后台查看</p>
+          <textarea
+            value={feedbackContent}
+            onChange={(e) => setFeedbackContent(e.target.value)}
+            rows={4}
+            disabled={isFeedbackSubmitting}
+            className="w-full rounded-xl border border-border bg-muted px-3 py-3 text-xs leading-[1.6] text-text outline-none focus:border-text-muted"
+            placeholder="写下你的问题或建议"
+          />
+          {/* 单主操作按钮右对齐（双按钮行规范的唯一按钮豁免） */}
+          <div className="mt-2 flex justify-end gap-2">
+            <button
+              type="submit"
+              disabled={isFeedbackSubmitting}
+              className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+            >
+              {isFeedbackSubmitting ? "提交中..." : "提交"}
+            </button>
+          </div>
+        </form>
       </Modal>
 
       {/* 外观 Modal（底部弹出，Issue #203）：亮色 / 暗色 / 跟随系统 三态切换 */}

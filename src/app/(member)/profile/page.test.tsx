@@ -16,30 +16,36 @@ const { mockUseNotificationsContext } = vi.hoisted(() => ({
   mockUseNotificationsContext: vi.fn(),
 }));
 
-// supabase 查询链 mock（hoisted：信箱/考勤查询走 from → select → eq → (gte/lt) → order → then）
-const { mockFrom, mockSelect, mockEq, mockGte, mockLt, mockOrder, mockThen } = vi.hoisted(() => {
-  const chain: Record<string, unknown> = {};
-  const mockSelect = vi.fn();
-  const mockEq = vi.fn();
-  const mockGte = vi.fn();
-  const mockLt = vi.fn();
-  const mockOrder = vi.fn();
-  const mockThen = vi.fn();
-  const mockFrom = vi.fn();
-  chain.select = mockSelect;
-  chain.eq = mockEq;
-  chain.gte = mockGte;
-  chain.lt = mockLt;
-  chain.order = mockOrder;
-  chain.then = mockThen;
-  mockSelect.mockReturnValue(chain);
-  mockEq.mockReturnValue(chain);
-  mockGte.mockReturnValue(chain);
-  mockLt.mockReturnValue(chain);
-  mockOrder.mockReturnValue(chain);
-  mockFrom.mockReturnValue(chain);
-  return { mockFrom, mockSelect, mockEq, mockGte, mockLt, mockOrder, mockThen };
-});
+// supabase 查询链 mock（hoisted：信箱/考勤查询走 from → select → eq → (gte/lt) → order → then；
+// 反馈提交走 from → insert → await，不链 select（Issue #209））
+const { mockFrom, mockSelect, mockEq, mockGte, mockLt, mockOrder, mockThen, mockInsert } =
+  vi.hoisted(() => {
+    const chain: Record<string, unknown> = {};
+    const mockSelect = vi.fn();
+    const mockEq = vi.fn();
+    const mockGte = vi.fn();
+    const mockLt = vi.fn();
+    const mockOrder = vi.fn();
+    const mockThen = vi.fn();
+    const mockInsert = vi.fn();
+    const mockFrom = vi.fn();
+    chain.select = mockSelect;
+    chain.eq = mockEq;
+    chain.gte = mockGte;
+    chain.lt = mockLt;
+    chain.order = mockOrder;
+    chain.then = mockThen;
+    chain.insert = mockInsert;
+    mockSelect.mockReturnValue(chain);
+    mockEq.mockReturnValue(chain);
+    mockGte.mockReturnValue(chain);
+    mockLt.mockReturnValue(chain);
+    mockOrder.mockReturnValue(chain);
+    // 默认插入成功（vi.clearAllMocks 保留实现，各用例按需覆盖）
+    mockInsert.mockResolvedValue({ data: null, error: null });
+    mockFrom.mockReturnValue(chain);
+    return { mockFrom, mockSelect, mockEq, mockGte, mockLt, mockOrder, mockThen, mockInsert };
+  });
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -583,7 +589,7 @@ describe("ProfilePage 个人信息页", () => {
     for (const label of ["考勤与请假", "活动", "系统"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
-    // 设置栏目 7 行（含占位项与已接线的个人信息/账号与密码/考勤/外观/退出登录）
+    // 设置栏目全部按钮行（个人信息/账号与密码/考勤/外观/已发布的活动/问题与反馈 Issue #209/退出登录）
     for (const label of ["个人信息", "账号与密码", "考勤", "外观", "已发布的活动", "问题与反馈"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
@@ -717,16 +723,104 @@ describe("ProfilePage 个人信息页", () => {
     expect(markCategoryRead).not.toHaveBeenCalled();
   });
 
-  it("点击占位按钮弹出底部 Modal：标题为按钮名，内容为功能开发中", () => {
+  // ============================================================
+  // Issue #209：问题与反馈（匿名提交 + 双重 guard + 不链 select）
+  // ============================================================
+  it("点击「问题与反馈」打开底部 Modal：渲染说明、textarea 与提交按钮", () => {
     mockUseProfilesReturn([mockProfile()]);
     renderPage();
-    // 「已发布的活动」已接线（Issue #205），占位项仅剩「问题与反馈」
     fireEvent.click(screen.getByRole("button", { name: "问题与反馈" }));
     expect(screen.getByRole("heading", { name: "问题与反馈" })).toBeInTheDocument();
-    expect(screen.getByText("功能开发中")).toBeInTheDocument();
-    // 关闭后占位弹窗消失
+    expect(screen.getByText("匿名提交，管理员可在后台查看")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("写下你的问题或建议")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "提交" })).toBeInTheDocument();
+    // 关闭后弹窗消失
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));
     expect(screen.queryByRole("heading", { name: "问题与反馈" })).toBeNull();
+  });
+
+  it("空内容提交：alert 提示且不调用 insert", () => {
+    mockUseProfilesReturn([mockProfile()]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "问题与反馈" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+    expect(window.alert).toHaveBeenCalledWith("请填写反馈内容");
+    expect(mockInsert).not.toHaveBeenCalled();
+    // 弹窗保持打开
+    expect(screen.getByRole("heading", { name: "问题与反馈" })).toBeInTheDocument();
+  });
+
+  it("提交成功：insert 不链 select、alert 提示、清空输入并关闭弹窗", async () => {
+    mockUseProfilesReturn([mockProfile()]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "问题与反馈" }));
+    // 先捕获 textarea 引用：成功关闭弹窗后元素随 Modal 卸载，无法再按 placeholder 查询
+    const textarea = screen.getByPlaceholderText("写下你的问题或建议") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "希望增加曲库功能" } });
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+
+    await waitFor(() => {
+      expect(mockFrom).toHaveBeenCalledWith("feedback");
+      expect(mockInsert).toHaveBeenCalledWith({ content: "希望增加曲库功能" });
+    });
+    // 关键约束（DBA 实证）：INSERT 不链 .select()——RETURNING 输出行受 SELECT 策略
+    // 约束，成员会 403/42501；默认 insert 即可
+    expect(mockSelect).not.toHaveBeenCalled();
+    expect(window.alert).toHaveBeenCalledWith("反馈已提交，感谢你的反馈");
+    // 成功：弹窗已关闭
+    expect(screen.queryByRole("heading", { name: "问题与反馈" })).toBeNull();
+    // 输入已清空（feedbackContent 复位）：重新打开弹窗时 textarea 为空
+    fireEvent.click(screen.getByRole("button", { name: "问题与反馈" }));
+    expect((screen.getByPlaceholderText("写下你的问题或建议") as HTMLTextAreaElement).value).toBe(
+      "",
+    );
+  });
+
+  it("提交失败（insert 返回 error）：alert 错误信息、不清空输入、弹窗保持打开", async () => {
+    mockUseProfilesReturn([mockProfile()]);
+    mockInsert.mockResolvedValue({ data: null, error: { message: "权限不足" } });
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "问题与反馈" }));
+    fireEvent.change(screen.getByPlaceholderText("写下你的问题或建议"), {
+      target: { value: "测试反馈" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+
+    await waitFor(() => {
+      expect(window.alert).toHaveBeenCalledWith("权限不足");
+    });
+    // 失败不清空输入，方便修改重试；弹窗保持打开
+    expect((screen.getByPlaceholderText("写下你的问题或建议") as HTMLTextAreaElement).value).toBe(
+      "测试反馈",
+    );
+    expect(screen.getByRole("heading", { name: "问题与反馈" })).toBeInTheDocument();
+  });
+
+  it("防重复提交：提交中双击只调用一次 insert，且提交中不可关闭弹窗", async () => {
+    mockUseProfilesReturn([mockProfile()]);
+    let resolveInsert!: (v: { data: null; error: null }) => void;
+    const pending = new Promise<{ data: null; error: null }>((resolve) => {
+      resolveInsert = resolve;
+    });
+    mockInsert.mockReturnValue(pending as never);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "问题与反馈" }));
+    fireEvent.change(screen.getByPlaceholderText("写下你的问题或建议"), {
+      target: { value: "测试反馈" },
+    });
+    const submitBtn = screen.getByRole("button", { name: "提交" });
+    fireEvent.click(submitBtn);
+    fireEvent.click(submitBtn);
+    // ref 同步阻断：双击只发一次请求
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    // 提交中按钮进入提交态且禁用，弹窗无法通过守卫关闭
+    expect(screen.getByRole("button", { name: "提交中..." })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(screen.getByRole("heading", { name: "问题与反馈" })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveInsert({ data: null, error: null });
+    });
   });
 
   // ============================================================

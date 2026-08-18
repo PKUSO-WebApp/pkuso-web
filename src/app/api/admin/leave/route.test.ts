@@ -397,7 +397,8 @@ describe("GET/POST /api/admin/leave", () => {
       const notis = await getMemberNotifications();
       expect(notis[0]?.category).toBe("attendance");
       expect(notis[0]?.title).toBe("请假申请已通过");
-      expect(notis[0]?.content).toBe("《测试排练》排练的请假申请已通过");
+      // Issue #192 文案：日期取自排练 start_time（8月16日，无前导零）+ 类型（测试排练为 full → 合排）
+      expect(notis[0]?.content).toBe("8月16日《测试排练》的合排请假申请已通过");
     } finally {
       await dbSb.from("attendances").delete().eq("rehearsal_id", rehearsalId);
       await dbSb.from("leave_requests").delete().eq("id", id);
@@ -456,7 +457,8 @@ describe("GET/POST /api/admin/leave", () => {
       const notis = await getMemberNotifications();
       expect(notis[0]?.category).toBe("attendance");
       expect(notis[0]?.title).toBe("请假申请被驳回");
-      expect(notis[0]?.content).toBe("《测试排练》排练的请假申请已被驳回，原因：理由不充分");
+      // Issue #192 文案：日期 + 类型（合排）+ 句尾原因
+      expect(notis[0]?.content).toBe("8月16日《测试排练》的合排请假申请已被驳回，原因：理由不充分");
     } finally {
       await dbSb.from("leave_requests").delete().eq("id", id);
       // 清理本用例插入的通知行（避免跨用例累积）

@@ -289,7 +289,8 @@ describe("ProfilePage 个人信息页", () => {
         user_id: "u1",
         category: "attendance",
         title: "请假申请已通过",
-        content: "《贝多芬第五交响曲》排练的请假申请已通过",
+        // Issue #192 文案：日期 + 曲目 + 类型（合排）
+        content: "8月18日《贝多芬第五交响曲》的合排请假申请已通过",
         created_at: "2026-08-18T10:00:00+08:00",
         read_at: null,
       },
@@ -303,7 +304,7 @@ describe("ProfilePage 个人信息页", () => {
     // Modal 标题 = 信箱名
     expect(screen.getByRole("heading", { name: "考勤与请假" })).toBeInTheDocument();
     expect(screen.getByText("请假申请已通过")).toBeInTheDocument();
-    expect(screen.getByText("《贝多芬第五交响曲》排练的请假申请已通过")).toBeInTheDocument();
+    expect(screen.getByText("8月18日《贝多芬第五交响曲》的合排请假申请已通过")).toBeInTheDocument();
     // 时间用与页面相同的格式化函数计算期望值，避免时区依赖
     const expectedTime = formatDateTimeInChina("2026-08-18T10:00:00+08:00");
     expect(screen.getByText(expectedTime)).toBeInTheDocument();

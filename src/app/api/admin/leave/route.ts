@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { createServerSupabase } from "@/lib/supabase-server";
+import { parseLocalISO } from "@/lib/date-utils";
 
 export const runtime = "nodejs";
 
@@ -26,17 +27,39 @@ const SIGNED_IN_WARNING = "成员已签到，考勤保持签到记录（请假�
 /**
  * 向申请人插请假处理通知（best-effort，Issue #188）：
  * 插入失败仅 console 记录，绝不阻断 approve/reject 主操作。
+ *
+ * content 模板（Issue #192）：「x月x日《[曲目]》的[合排|分排]请假申请已[通过|驳回]」，
+ * 兜底链：
+ * - 日期：取排练 start_time 格式化为 M月d日（无前导零）；缺失/解析失败时省略日期，句子仍通顺
+ * - 类型：full → 合排，section → 分排；其余值省略类型词
+ * - 曲目：repertoire 缺失回退 title，再兜底「排练」（与旧模板一致）
  */
 async function insertLeaveNotification(
   supabaseServer: ReturnType<typeof createServerSupabase>,
   req: {
     user_id: string;
-    rehearsals?: { repertoire?: string | null; title?: string | null } | null;
+    rehearsals?: {
+      repertoire?: string | null;
+      title?: string | null;
+      type?: string | null;
+      start_time?: string | null;
+    } | null;
   },
   kind: "approved" | "rejected",
   reason?: string,
 ) {
   try {
+    // 日期：M月d日（无前导零），start_time 缺失/解析失败时省略日期
+    let datePart = "";
+    if (req.rehearsals?.start_time) {
+      const start = parseLocalISO(req.rehearsals.start_time);
+      if (!Number.isNaN(start.getTime())) {
+        datePart = `${start.getMonth() + 1}月${start.getDate()}日`;
+      }
+    }
+    // 类型：full → 合排，section → 分排，其余省略类型词
+    const typeWord =
+      req.rehearsals?.type === "full" ? "合排" : req.rehearsals?.type === "section" ? "分排" : "";
     // 排练名优先曲目（repertoire），缺失时回退标题，再兜底「排练」
     const rehearsalName = req.rehearsals?.repertoire || req.rehearsals?.title || "排练";
     const { error } = await supabaseServer.from("notifications").insert({
@@ -45,8 +68,8 @@ async function insertLeaveNotification(
       title: kind === "approved" ? "请假申请已通过" : "请假申请被驳回",
       content:
         kind === "approved"
-          ? `《${rehearsalName}》排练的请假申请已通过`
-          : `《${rehearsalName}》排练的请假申请已被驳回，原因：${reason ?? ""}`,
+          ? `${datePart}《${rehearsalName}》的${typeWord}请假申请已通过`
+          : `${datePart}《${rehearsalName}》的${typeWord}请假申请已被驳回，原因：${reason ?? ""}`,
     });
     if (error) console.error("[Leave Admin] 通知插入失败", error.message);
   } catch (err) {
@@ -145,7 +168,9 @@ export async function POST(request: Request) {
           // 拉取申请（仅 pending，防并发重复处理已完成的申请）；join 排练信息供通过通知文案使用
           const { data: reqs, error: fetchErr } = await auth.supabaseServer
             .from("leave_requests")
-            .select("id, rehearsal_id, user_id, target_status, rehearsals(repertoire, title)")
+            .select(
+              "id, rehearsal_id, user_id, target_status, rehearsals(repertoire, title, type, start_time)",
+            )
             .eq("id", id)
             .eq("status", "pending");
           if (fetchErr) throw new Error(fetchErr.message);
@@ -221,7 +246,9 @@ export async function POST(request: Request) {
           // 驳回：先拉取申请（仅 pending）——通知需要成员与排练信息，且与更新共用同一 pending 守卫
           const { data: reqs, error: fetchErr } = await auth.supabaseServer
             .from("leave_requests")
-            .select("id, rehearsal_id, user_id, target_status, rehearsals(repertoire, title)")
+            .select(
+              "id, rehearsal_id, user_id, target_status, rehearsals(repertoire, title, type, start_time)",
+            )
             .eq("id", id)
             .eq("status", "pending");
           if (fetchErr) throw new Error(fetchErr.message);

@@ -193,6 +193,16 @@ describe("GET/POST /api/admin/leave", () => {
     return data as { status: string; sign_in_time: string | null } | null;
   }
 
+  /** 查成员最近收到的通知（created_at 倒序，Issue #188 断言用） */
+  async function getMemberNotifications() {
+    const { data } = await dbSb
+      .from("notifications")
+      .select("id, category, title, content")
+      .eq("user_id", memberUserId)
+      .order("created_at", { ascending: false });
+    return (data ?? []) as { id: string; category: string; title: string; content: string }[];
+  }
+
   // ---- 鉴权 ----
   it("GET 未带 token → 401", { timeout: 20000 }, async () => {
     if (!ready) return;
@@ -322,6 +332,8 @@ describe("GET/POST /api/admin/leave", () => {
       } finally {
         await dbSb.from("attendances").delete().eq("rehearsal_id", rehearsalId);
         await dbSb.from("leave_requests").delete().eq("id", id);
+        // 清理本用例插入的通知行（避免跨用例累积）
+        await dbSb.from("notifications").delete().eq("user_id", memberUserId);
       }
     },
   );
@@ -358,6 +370,8 @@ describe("GET/POST /api/admin/leave", () => {
       } finally {
         await dbSb.from("attendances").delete().eq("rehearsal_id", rehearsalId);
         await dbSb.from("leave_requests").delete().eq("id", id);
+        // 清理本用例插入的通知行（避免跨用例累积）
+        await dbSb.from("notifications").delete().eq("user_id", memberUserId);
       }
     },
   );
@@ -378,9 +392,17 @@ describe("GET/POST /api/admin/leave", () => {
       const att = await getAttendance();
       expect(att?.status).toBe("excused");
       expect(att?.sign_in_time).toBeNull();
+      // Issue #188：通过后向申请人插通知（分类/标题/文案含排练曲目）。
+      // 前置用例 finally 均已清理通知行，此处 notis[0] 必为本用例插入行（created_at 倒序）
+      const notis = await getMemberNotifications();
+      expect(notis[0]?.category).toBe("attendance");
+      expect(notis[0]?.title).toBe("请假申请已通过");
+      expect(notis[0]?.content).toBe("《测试排练》排练的请假申请已通过");
     } finally {
       await dbSb.from("attendances").delete().eq("rehearsal_id", rehearsalId);
       await dbSb.from("leave_requests").delete().eq("id", id);
+      // 清理本用例插入的通知行（避免跨用例累积）
+      await dbSb.from("notifications").delete().eq("user_id", memberUserId);
     }
   });
 
@@ -408,6 +430,8 @@ describe("GET/POST /api/admin/leave", () => {
     } finally {
       await dbSb.from("attendances").delete().eq("rehearsal_id", rehearsalId);
       await dbSb.from("leave_requests").delete().eq("id", id);
+      // 清理本用例插入的通知行（避免跨用例累积）
+      await dbSb.from("notifications").delete().eq("user_id", memberUserId);
     }
   });
 
@@ -428,8 +452,15 @@ describe("GET/POST /api/admin/leave", () => {
       const req = await getRequest(id);
       expect(req?.status).toBe("rejected");
       expect(req?.reject_reason).toBe("理由不充分");
+      // Issue #188：驳回后向申请人插通知（content 附驳回原因）
+      const notis = await getMemberNotifications();
+      expect(notis[0]?.category).toBe("attendance");
+      expect(notis[0]?.title).toBe("请假申请被驳回");
+      expect(notis[0]?.content).toBe("《测试排练》排练的请假申请已被驳回，原因：理由不充分");
     } finally {
       await dbSb.from("leave_requests").delete().eq("id", id);
+      // 清理本用例插入的通知行（避免跨用例累积）
+      await dbSb.from("notifications").delete().eq("user_id", memberUserId);
     }
   });
 
@@ -451,6 +482,8 @@ describe("GET/POST /api/admin/leave", () => {
     } finally {
       await dbSb.from("attendances").delete().eq("rehearsal_id", rehearsalId);
       await dbSb.from("leave_requests").delete().in("id", [id1, id2]);
+      // 清理本用例插入的通知行（避免跨用例累积）
+      await dbSb.from("notifications").delete().eq("user_id", memberUserId);
     }
   });
 
@@ -471,6 +504,8 @@ describe("GET/POST /api/admin/leave", () => {
       expect((await getRequest(id2))?.reject_reason).toBe("已另行安排");
     } finally {
       await dbSb.from("leave_requests").delete().in("id", [id1, id2]);
+      // 清理本用例插入的通知行（避免跨用例累积）
+      await dbSb.from("notifications").delete().eq("user_id", memberUserId);
     }
   });
 

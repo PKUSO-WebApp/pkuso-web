@@ -99,15 +99,38 @@ export function usePosts(options?: { client?: typeof defaultClient; includeLocke
   const remove = React.useCallback(
     async (id: string) => {
       setSaving(true);
-      // 先查询图片 URL，删除 post 前清理存储图片
+      // 先查图片 URL（删行后行不存在，需在删行前取到；查询失败不影响删除主流程）
+      let imageUrl: string | null = null;
       try {
         const { data: postData } = await client
           .from("posts")
           .select("image_url")
           .eq("id", id)
           .maybeSingle();
-        const imageUrl = (postData as { image_url?: string | null } | null)?.image_url;
-        if (imageUrl) {
+        imageUrl = (postData as { image_url?: string | null } | null)?.image_url ?? null;
+      } catch {
+        // 查询图片 URL 失败不影响数据库删除
+      }
+      // 删除数据库行：链 .select("id") 做 0 行检测（CLAUDE.md）——双管理员并发删帖时
+      // 后删者命中 0 行无 error，若按成功处理会向作者发「假成功」删除通知（Issue #188 对抗返工）
+      const { data: deleted, error: dbError } = await client
+        .from("posts")
+        .delete()
+        .eq("id", id)
+        .select("id");
+      setSaving(false);
+      if (dbError) {
+        setError(dbError.message);
+        return false;
+      }
+      if (!deleted || deleted.length === 0) {
+        // 0 行（RLS 静默失败/记录已被并发删除）：清理旧 error，返回 false 且不删附件
+        setError(null);
+        return false;
+      }
+      // 行删除成功后再清理存储图片（best-effort，失败不影响删除结果）
+      if (imageUrl) {
+        try {
           // 从 URL 中提取 storage 路径：...community-images/<path>
           const idx = imageUrl.indexOf("community-images/");
           if (idx !== -1) {
@@ -115,16 +138,9 @@ export function usePosts(options?: { client?: typeof defaultClient; includeLocke
             const filePath = decodeURIComponent(encodedPath);
             await client.storage.from("community-images").remove([filePath]);
           }
+        } catch {
+          // 删除存储文件失败不影响数据库删除结果
         }
-      } catch {
-        // 查询图片或删除存储文件失败不影响数据库删除
-      }
-      // 删除数据库行
-      const { error: dbError } = await client.from("posts").delete().eq("id", id);
-      setSaving(false);
-      if (dbError) {
-        setError(dbError.message);
-        return false;
       }
       // 乐观更新：从本地列表移除，不依赖 fetch 刷新
       setData((prev) => prev.filter((p) => (p as { id?: string } | null)?.id !== id));

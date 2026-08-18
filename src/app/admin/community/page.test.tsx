@@ -6,6 +6,27 @@ import AdminCommunityPage from "./page";
 import { usePosts } from "@/hooks/usePosts";
 import { formatDateTimeInChina } from "@/lib/date-utils";
 
+// 通知插入 mock + 当前管理员 id（hoisted，供 insertPostNotification 与自删判定使用）
+const { mockInsert, mockUseUser, setAdminId } = vi.hoisted(() => {
+  const mockInsert = vi.fn().mockResolvedValue({ error: null });
+  let adminId = "admin-1";
+  return {
+    mockInsert,
+    mockUseUser: () => ({ user: { id: adminId }, login: vi.fn(), logout: vi.fn() }),
+    setAdminId: (id: string) => {
+      adminId = id;
+    },
+  };
+});
+
+vi.mock("@/lib/supabase", () => ({
+  supabase: { from: () => ({ insert: mockInsert }) },
+}));
+
+vi.mock("@/context/user-context", () => ({
+  useUser: mockUseUser,
+}));
+
 vi.mock("@/hooks/usePosts", () => ({
   usePosts: vi.fn(),
 }));
@@ -90,6 +111,7 @@ describe("AdminCommunityPage 社区管理", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    setAdminId("admin-1"); // 自删用例会改管理员 id，默认恢复
     // jsdom 未实现 alert/confirm，spy 并配置默认行为
     alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -282,5 +304,85 @@ describe("AdminCommunityPage 社区管理", () => {
     // 弹窗保持，busy 解除后按钮恢复可点击
     expect(screen.getByText("联系方式")).toBeTruthy();
     expect((screen.getByText("删除") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  // ============================================================
+  // Issue #188：删除/锁定成功 → 向作者插通知；作者=操作者时不通知
+  // ============================================================
+  it("删除成功 → 向作者插 activity 通知（文案含帖子类型与标题）", async () => {
+    const { remove } = renderPage([makePost()]); // author_id: user-1 ≠ admin-1
+    fireEvent.click(screen.getByText("测试公告"));
+    fireEvent.click(screen.getByText("删除"));
+    await waitFor(() => {
+      expect(remove).toHaveBeenCalledWith("post-1");
+    });
+    await waitFor(() => {
+      expect(mockInsert).toHaveBeenCalledWith({
+        user_id: "user-1",
+        category: "activity",
+        title: "帖子已被删除",
+        content: "你的重奏帖子《测试公告》已被管理员删除",
+      });
+    });
+  });
+
+  it("锁定（false→true）→ 插通知；解锁（true→false）不再插", async () => {
+    const { update } = renderPage([makePost()]);
+    fireEvent.click(screen.getByText("测试公告"));
+    fireEvent.click(screen.getByText("锁定"));
+    await waitFor(() => {
+      expect(update).toHaveBeenCalledWith("post-1", { is_locked: true });
+    });
+    await waitFor(() => {
+      expect(mockInsert).toHaveBeenCalledWith({
+        user_id: "user-1",
+        category: "activity",
+        title: "帖子已被锁定",
+        content: "你的重奏帖子《测试公告》已被管理员锁定",
+      });
+    });
+    // 解锁（is_locked true→false）：不插通知，插入次数保持 1
+    fireEvent.click(screen.getByText("解锁"));
+    await waitFor(() => {
+      expect(update).toHaveBeenCalledWith("post-1", { is_locked: false });
+    });
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("作者=操作者：删除自己的帖子不插通知", async () => {
+    setAdminId("user-1");
+    const { remove } = renderPage([makePost({ author_id: "user-1" })]);
+    fireEvent.click(screen.getByText("测试公告"));
+    fireEvent.click(screen.getByText("删除"));
+    await waitFor(() => {
+      expect(remove).toHaveBeenCalledWith("post-1");
+    });
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it("作者=操作者：锁定自己的帖子不插通知", async () => {
+    setAdminId("user-1");
+    const { update } = renderPage([makePost({ author_id: "user-1" })]);
+    fireEvent.click(screen.getByText("测试公告"));
+    fireEvent.click(screen.getByText("锁定"));
+    await waitFor(() => {
+      expect(update).toHaveBeenCalledWith("post-1", { is_locked: true });
+    });
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it("通知插入失败不阻断删除主操作（列表仍移除、不弹失败提示）", async () => {
+    mockInsert.mockResolvedValueOnce({ error: { message: "insert failed" } });
+    const { remove } = renderPage([makePost()]);
+    fireEvent.click(screen.getByText("测试公告"));
+    fireEvent.click(screen.getByText("删除"));
+    await waitFor(() => {
+      expect(remove).toHaveBeenCalledWith("post-1");
+    });
+    // 主操作照常成功：帖子移除、无「删除失败」提示
+    await waitFor(() => {
+      expect(screen.queryByText("测试公告")).toBeNull();
+    });
+    expect(alertSpy).not.toHaveBeenCalledWith("删除失败");
   });
 });

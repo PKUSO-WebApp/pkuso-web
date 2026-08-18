@@ -5,6 +5,8 @@ import { usePosts } from "@/hooks/usePosts";
 import { Toggle } from "@/components/ui/Toggle";
 import { Card } from "@/components/ui/Card";
 import { formatDateTimeInChina } from "@/lib/date-utils";
+import { supabase } from "@/lib/supabase";
+import { useUser } from "@/context/user-context";
 import { PostDetailModal } from "./components/post-detail-modal";
 import type { PostType, PostRow } from "@/types/database";
 
@@ -13,9 +15,31 @@ const TYPE_LABEL: Record<PostType, string> = {
   gathering: "团建",
 };
 
+/**
+ * 通知规则（Issue #188）：
+ * - 删除成功 → 向作者插「activity」通知；仅锁定（is_locked false→true，解锁不通知）→ 同上；
+ * - 作者 = 操作者（管理员删/锁自己的帖子）时不通知；
+ * - 通知插入为 best-effort——失败仅 console 记录，不阻断删除/锁定主操作。
+ */
+async function insertPostNotification(post: PostRow, kind: "deleted" | "locked") {
+  try {
+    const { error } = await supabase.from("notifications").insert({
+      user_id: post.author_id,
+      category: "activity",
+      title: kind === "deleted" ? "帖子已被删除" : "帖子已被锁定",
+      content: `你的${TYPE_LABEL[post.type as PostType]}帖子《${post.title}》已被管理员${kind === "deleted" ? "删除" : "锁定"}`,
+    });
+    if (error) console.error("[AdminCommunity] 通知插入失败", error.message);
+  } catch (err) {
+    console.error("[AdminCommunity] 通知插入失败", err);
+  }
+}
+
 export default function AdminCommunityPage() {
   const [view, setView] = React.useState<PostType>("ensemble");
   const { data: rawPosts, loading, update, remove } = usePosts({ includeLocked: true });
+  const { user } = useUser();
+  const adminId = user?.id;
 
   // normalize Supabase join profiles
   const posts = React.useMemo(() => {
@@ -53,9 +77,18 @@ export default function AdminCommunityPage() {
       return;
     }
     setDeletingId(id);
+    // 删除前捕获帖子快照（成功后列表已移除，通知文案需要作者/标题/类型）
+    const target = posts.find((p) => p.id === id) ?? null;
     const ok = await remove(id);
     setDeletingId(null);
-    if (!ok) alert("删除失败");
+    if (!ok) {
+      alert("删除失败");
+      return;
+    }
+    // 删除成功 → 向作者发通知（作者=操作者时不通知；best-effort 不阻断）
+    if (target && target.author_id !== adminId) {
+      await insertPostNotification(target, "deleted");
+    }
   };
 
   const handleToggleLock = async (post: PostRow) => {
@@ -66,7 +99,14 @@ export default function AdminCommunityPage() {
     setLockingId(post.id);
     const ok = await update(post.id, { is_locked: !post.is_locked });
     setLockingId(null);
-    if (!ok) alert("操作失败");
+    if (!ok) {
+      alert("操作失败");
+      return;
+    }
+    // 仅锁定（false→true）发通知，解锁不通知；作者=操作者时不通知（best-effort 不阻断）
+    if (!post.is_locked && post.author_id !== adminId) {
+      await insertPostNotification(post, "locked");
+    }
   };
 
   return (

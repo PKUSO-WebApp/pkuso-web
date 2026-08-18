@@ -90,12 +90,18 @@ export function useAttendance(client: typeof defaultClient = defaultClient) {
   /** 管理员: 更新单条出勤状态 */
   const updateStatus = React.useCallback(
     async (rehearsalId: number, userId: string, status: AttendanceStatus) => {
-      const { error } = await client
+      // 链 .select("id") 做 0 行检测（CLAUDE.md）：考勤行已被级联删除或 RLS 静默失败时
+      // 0 行更新无 error，若按成功处理会向成员发「假成功」考勤通知（Issue #188 对抗返工）
+      const { data, error } = await client
         .from("attendances")
         .update({ status })
         .eq("rehearsal_id", rehearsalId)
-        .eq("user_id", userId);
+        .eq("user_id", userId)
+        .select("id");
       if (error) return error.message;
+      if (!data || data.length === 0) {
+        return "考勤行不存在或已被删除，更新未生效";
+      }
       return null;
     },
     [client],

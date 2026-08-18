@@ -18,6 +18,8 @@ function mockClient<T>(responses: T[]) {
       select: () => c(responses[i++]),
       upsert: () => c(responses[i++]),
       insert: () => c(responses[i++]),
+      // update().eq().select("id") 的 0 行检测链（useAttendance.updateStatus）
+      update: () => ({ eq: () => c(responses[i++]) }),
     }),
   };
 }
@@ -104,5 +106,20 @@ describe("useAttendance", () => {
       result.current.upsert([{ rehearsal_id: 1, user_id: "u1", status: "present" }]),
     );
     expect(err).toBe("冲突");
+  });
+
+  it("updateStatus 命中 1 行返回 null（成功语义，可发通知）", async () => {
+    const c = mockClient([{ data: [{ id: 1 }], error: null }]);
+    const { result } = renderHook(() => useAttendance(c as never));
+    const err = await act(() => result.current.updateStatus(1, "u1", "present"));
+    expect(err).toBeNull();
+  });
+
+  it("updateStatus 0 行（级联删除/RLS 静默失败）返回错误语义（不得发通知）", async () => {
+    const c = mockClient([{ data: [], error: null }]);
+    const { result } = renderHook(() => useAttendance(c as never));
+    const err = await act(() => result.current.updateStatus(1, "u1", "present"));
+    expect(err).not.toBeNull();
+    expect(err).toContain("考勤行不存在");
   });
 });

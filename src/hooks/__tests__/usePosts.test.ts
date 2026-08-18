@@ -7,6 +7,7 @@ import { usePosts } from "../usePosts";
 function mockClient<T>(responses: T[]) {
   let i = 0;
   const uploadPaths: string[] = [];
+  const removeCalls: string[][] = [];
   const c = (r: T) => ({
     eq: () => c(r),
     maybeSingle: () => c(r),
@@ -28,11 +29,15 @@ function mockClient<T>(responses: T[]) {
           uploadPaths.push(path);
           return c(responses[i++]);
         },
-        remove: () => c(responses[i++]),
+        remove: (paths: string[]) => {
+          removeCalls.push(paths);
+          return c(responses[i++]);
+        },
         getPublicUrl: () => responses[i++], // 同步,不 then
       }),
     },
     uploadPaths, // 记录 storage.upload 收到的路径，供断言
+    removeCalls, // 记录 storage.remove 收到的路径数组，供断言（0 行检测守卫）
   };
 }
 
@@ -99,19 +104,60 @@ describe("usePosts", () => {
     expect(result.current.data[0]).toMatchObject({ title: "原标题" });
   });
 
-  it("remove 删除帖子", async () => {
+  it("remove 删除帖子：命中 1 行返回 true 并移除本地数据", async () => {
     const c = mockClient([
       { data: [{ id: "1" }], error: null }, // fetch
       { data: null, error: null }, // select image_url（无图片）
-      { data: null, error: null }, // delete（乐观更新，无需再 fetch）
+      { data: [{ id: "1" }], error: null }, // delete .select("id") 命中 1 行
     ]);
     const { result } = renderHook(() => usePosts({ client: c as never }));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
+    let ok = false;
     await act(async () => {
-      await result.current.remove("1");
+      ok = await result.current.remove("1");
     });
+    expect(ok).toBe(true);
     await waitFor(() => expect(result.current.data).toEqual([]));
+  });
+
+  it("remove 0 行（并发已删/RLS 静默失败）返回 false，不移除本地数据", async () => {
+    const c = mockClient([
+      { data: [{ id: "1" }], error: null }, // fetch
+      { data: null, error: null }, // select image_url（无图片）
+      { data: [], error: null }, // delete 0 行（无 error 的假成功）
+    ]);
+    const { result } = renderHook(() => usePosts({ client: c as never }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.remove("1");
+    });
+    expect(ok).toBe(false);
+    // 0 行时本地数据不被移除，避免上层假成功（如对已删帖子插删除通知）
+    expect(result.current.data).toHaveLength(1);
+  });
+
+  it("remove 0 行但帖子有图：返回 false 且不清理 storage 图片（附件清理守卫）", async () => {
+    const c = mockClient([
+      { data: [{ id: "1", image_url: "http://img/1.jpg" }], error: null }, // fetch
+      { data: { image_url: "http://cdn/community-images/u1/a.jpg" }, error: null }, // select image_url（有图）
+      { data: [], error: null }, // delete 0 行（无 error 的假成功）
+    ]);
+    const { result } = renderHook(() => usePosts({ client: c as never }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.remove("1");
+    });
+    expect(ok).toBe(false);
+    // 0 行时本地数据不被移除
+    expect(result.current.data).toHaveLength(1);
+    // 0 行时跳过附件清理：图片可能仍被其他引用（双管理员并发删帖的败者不删图），
+    // 附件删除必须发生在确认行删除成功之后（usePosts.remove 的守卫顺序）
+    expect(c.removeCalls).toHaveLength(0);
   });
 
   it("uploadImage 上传图片", async () => {

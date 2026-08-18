@@ -94,11 +94,12 @@ const mocks = vi.hoisted(() => {
     },
   ];
 
-  // supabase 链式 mock：select/eq/in/order 返回链自身，then 由 beforeEach 按查询类型配置返回值
+  // supabase 链式 mock：select/eq/in/order/insert 返回链自身，then 由 beforeEach 按查询类型配置返回值
   const mockSelect = vi.fn();
   const mockEq = vi.fn();
   const mockIn = vi.fn();
   const mockOrder = vi.fn();
+  const mockInsert = vi.fn();
   const mockThen = vi.fn();
   const mockFrom = vi.fn();
   const chain = {
@@ -106,12 +107,14 @@ const mocks = vi.hoisted(() => {
     eq: mockEq,
     in: mockIn,
     order: mockOrder,
+    insert: mockInsert,
     then: mockThen,
   };
   mockSelect.mockReturnValue(chain);
   mockEq.mockReturnValue(chain);
   mockIn.mockReturnValue(chain);
   mockOrder.mockReturnValue(chain);
+  mockInsert.mockReturnValue(chain);
 
   return {
     mockFetchByRehearsal,
@@ -129,6 +132,7 @@ const mocks = vi.hoisted(() => {
     mockEq,
     mockIn,
     mockOrder,
+    mockInsert,
     mockThen,
     mockFrom,
     chain,
@@ -285,6 +289,89 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
     });
     // 保存后刷新名单（fetchByRehearsal 共调用 2 次：打开 1 次 + 保存后 1 次）
     expect(mocks.mockFetchByRehearsal).toHaveBeenCalledTimes(2);
+  });
+
+  it("保存考勤修改成功 → 向该成员插 attendance 通知（文案含排练曲目与状态中文名）", async () => {
+    render(<MembersPage />);
+    fireEvent.click(screen.getByText("贝多芬第五交响曲"));
+    await waitFor(() => {
+      expect(screen.getByText("出勤名单")).toBeInTheDocument();
+    });
+
+    const selects = screen.getAllByRole("combobox");
+    fireEvent.change(selects[0], { target: { value: "present" } });
+    fireEvent.click(screen.getByText("保存修改"));
+
+    await waitFor(() => {
+      expect(mocks.mockInsert).toHaveBeenCalledWith({
+        user_id: "u1",
+        category: "attendance",
+        title: "考勤状态已更新",
+        content: "《贝多芬第五交响曲》排练的考勤状态已更新为「出席」",
+      });
+    });
+  });
+
+  it("考勤更新失败时不插通知（best-effort 只在成功后发）", async () => {
+    mocks.mockUpdateStatus.mockResolvedValueOnce("update failed");
+    render(<MembersPage />);
+    fireEvent.click(screen.getByText("贝多芬第五交响曲"));
+    await waitFor(() => {
+      expect(screen.getByText("出勤名单")).toBeInTheDocument();
+    });
+
+    const selects = screen.getAllByRole("combobox");
+    fireEvent.change(selects[0], { target: { value: "present" } });
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    fireEvent.click(screen.getByText("保存修改"));
+
+    await waitFor(() => {
+      expect(mocks.mockUpdateStatus).toHaveBeenCalledWith(1, "u1", "present");
+    });
+    expect(alertSpy).toHaveBeenCalledWith("部分出勤更新失败，请刷新后重试");
+    expect(mocks.mockInsert).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
+
+  it("updateStatus 0 行（考勤行被级联删除/RLS 静默失败）→ 视为失败不插通知", async () => {
+    // 0 行无 error 的假成功：updateStatus 返回错误语义（useAttendance.updateStatus .select("id") 检测）
+    mocks.mockUpdateStatus.mockResolvedValueOnce("考勤行不存在或已被删除，更新未生效");
+    render(<MembersPage />);
+    fireEvent.click(screen.getByText("贝多芬第五交响曲"));
+    await waitFor(() => {
+      expect(screen.getByText("出勤名单")).toBeInTheDocument();
+    });
+
+    const selects = screen.getAllByRole("combobox");
+    fireEvent.change(selects[0], { target: { value: "present" } });
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    fireEvent.click(screen.getByText("保存修改"));
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith("部分出勤更新失败，请刷新后重试");
+    });
+    expect(mocks.mockInsert).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
+
+  it("改回原值（present→absent 原值）保存：不调用 updateStatus、不插通知", async () => {
+    render(<MembersPage />);
+    fireEvent.click(screen.getByText("贝多芬第五交响曲"));
+    await waitFor(() => {
+      expect(screen.getByText("出勤名单")).toBeInTheDocument();
+    });
+
+    // 张小三默认 absent：先改 present 再改回 absent（最终值 = 行原值，无实际变更）
+    const selects = screen.getAllByRole("combobox");
+    fireEvent.change(selects[0], { target: { value: "present" } });
+    fireEvent.change(selects[0], { target: { value: "absent" } });
+    fireEvent.click(screen.getByText("保存修改"));
+
+    await waitFor(() => {
+      expect(screen.getByText("保存修改")).toBeInTheDocument();
+    });
+    expect(mocks.mockUpdateStatus).not.toHaveBeenCalled();
+    expect(mocks.mockInsert).not.toHaveBeenCalled();
   });
 
   it("无改动时点击保存不调用 updateStatus", async () => {

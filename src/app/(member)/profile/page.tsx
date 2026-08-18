@@ -3,14 +3,21 @@
 import React from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/user-context";
+import { useNotificationsContext } from "@/context/notification-context";
 import { LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useProfiles } from "@/hooks/useProfiles";
 import { isValidPhoneNumber } from "@/lib/validation";
+import { formatDateTimeInChina } from "@/lib/date-utils";
 import { Modal } from "@/components/ui/Modal";
+import type { NotificationCategory, NotificationRow } from "@/types/database";
 
-// 通知栏目按钮（均未实现，点击弹出「功能开发中」占位弹窗）
-const notificationItems = ["考勤与请假", "活动", "系统"] as const;
+// 通知栏目：信箱按钮 → 通知分类映射（Issue #188）
+const notificationItems: { label: string; category: NotificationCategory }[] = [
+  { label: "考勤与请假", category: "attendance" },
+  { label: "活动", category: "activity" },
+  { label: "系统", category: "system" },
+];
 
 // 设置栏目占位按钮（个人信息/账号与密码/退出登录已接线，不在此列）
 const placeholderSettingItems = ["考勤", "外观", "已发布的活动", "问题与反馈"] as const;
@@ -31,6 +38,49 @@ export default function ProfilePage() {
 
   // 占位功能弹窗：标题 = 按钮名，内容「功能开发中」；null 表示未打开
   const [placeholderTitle, setPlaceholderTitle] = React.useState<string | null>(null);
+
+  // ---- 通知信箱（Issue #188）----
+  // 状态机（对抗返工）：fetch 成功后才标已读，且只标本次实际展示的未读行——
+  // 打开瞬间到达的新通知不在本次列表内，不会被误标；fetch 失败不标已读（用户未看到消息），
+  // 显示「加载失败」可重开。DB 标记成功（或本就无未读）后共享未读数归零，tab 气泡立即消失。
+  const { unreadCounts, markCategoryRead } = useNotificationsContext();
+  const [inbox, setInbox] = React.useState<{
+    label: string;
+    category: NotificationCategory;
+  } | null>(null);
+  const [inboxMessages, setInboxMessages] = React.useState<NotificationRow[]>([]);
+  const [inboxLoading, setInboxLoading] = React.useState(false);
+  const [inboxError, setInboxError] = React.useState(false); // 消息查询失败态（显示「加载失败」）
+  const inboxSeqRef = React.useRef(0); // 竞态守卫：快速切换信箱时丢弃过期响应（递增序号模式）
+
+  /** 打开信箱：拉取该分类消息列表（created_at 倒序），成功后标记本次展示的未读为已读 */
+  const openInbox = (label: string, category: NotificationCategory) => {
+    setInbox({ label, category });
+    setInboxLoading(true);
+    setInboxError(false);
+    const seq = ++inboxSeqRef.current;
+    void supabase
+      .from("notifications")
+      .select("*")
+      .eq("category", category)
+      .order("created_at", { ascending: false })
+      .then(({ data, error }) => {
+        // 仅当前信箱的响应生效（用户可能已快速切换到另一信箱）
+        if (seq !== inboxSeqRef.current) return;
+        setInboxLoading(false);
+        if (error) {
+          console.error("[Profile] 消息列表查询失败", error.message);
+          setInboxError(true);
+          setInboxMessages([]);
+          return; // fetch 失败不标已读
+        }
+        const rows = (data as NotificationRow[]) ?? [];
+        setInboxMessages(rows);
+        // 只标本次展示的未读行（已读行无需重复标记）
+        const unreadIds = rows.filter((m) => m.read_at === null).map((m) => m.id);
+        void markCategoryRead(category, unreadIds);
+      });
+  };
 
   // 编辑个人信息（联系方式 + 学院）
   const { data: profileData, update: updateProfile } = useProfiles({ userId: user?.id });
@@ -117,7 +167,8 @@ export default function ProfilePage() {
   };
 
   // 弹窗打开时锁定背景滚动（防滚动穿透：fixed 遮罩的最近可滚动祖先就是本页根容器），关闭后恢复
-  const anyModalOpen = isPwdModalOpen || isEditModalOpen || placeholderTitle !== null;
+  const anyModalOpen =
+    isPwdModalOpen || isEditModalOpen || placeholderTitle !== null || inbox !== null;
 
   return (
     // 本页豁免：整页滚动——page 根节点自身为滚动容器，tab bar 固定；
@@ -141,20 +192,28 @@ export default function ProfilePage() {
           </div>
         </section>
 
-        {/* 通知栏目 */}
+        {/* 通知栏目：三个信箱按钮，右侧未读数字徽章（>0 时显示，Issue #188） */}
         <section>
           <h2 className="text-xs font-medium text-text-muted">通知</h2>
           <div className="mt-2 divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface">
-            {notificationItems.map((label) => (
-              <button
-                key={label}
-                type="button"
-                onClick={() => setPlaceholderTitle(label)}
-                className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
-              >
-                {label}
-              </button>
-            ))}
+            {notificationItems.map(({ label, category }) => {
+              const count = unreadCounts[category];
+              return (
+                <button
+                  key={category}
+                  type="button"
+                  onClick={() => openInbox(label, category)}
+                  className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+                >
+                  {label}
+                  {count > 0 && (
+                    <span className="ml-auto rounded-full bg-danger px-1.5 py-0.5 text-caption font-medium leading-none text-danger-foreground">
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </section>
 
@@ -316,6 +375,39 @@ export default function ProfilePage() {
         position="bottom"
       >
         <p className="py-6 text-center text-sm text-text-muted">功能开发中</p>
+      </Modal>
+
+      {/* 通知信箱 Modal（底部弹出）：标题 = 信箱名；消息列表 created_at 倒序，空列表「暂无消息」 */}
+      <Modal
+        open={inbox !== null}
+        onClose={() => setInbox(null)}
+        title={inbox?.label ?? ""}
+        position="bottom"
+      >
+        <div className="mt-4 max-h-[60vh] space-y-3 overflow-y-auto">
+          {inboxLoading && <p className="py-6 text-center text-xs text-text-muted">加载中…</p>}
+          {!inboxLoading && inboxError && (
+            <p className="py-6 text-center text-sm text-text-muted">加载失败，请稍后重试</p>
+          )}
+          {!inboxLoading && !inboxError && inboxMessages.length === 0 && (
+            <p className="py-6 text-center text-sm text-text-muted">暂无消息</p>
+          )}
+          {!inboxLoading &&
+            !inboxError &&
+            inboxMessages.map((msg) => (
+              <div key={msg.id} className="rounded-xl border border-border bg-card p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="min-w-0 flex-1 text-sm font-medium text-text">{msg.title}</p>
+                  <p className="flex-shrink-0 text-caption text-text-muted">
+                    {formatDateTimeInChina(msg.created_at)}
+                  </p>
+                </div>
+                <p className="mt-1 whitespace-pre-line text-xs leading-relaxed text-text-muted">
+                  {msg.content}
+                </p>
+              </div>
+            ))}
+        </div>
       </Modal>
     </div>
   );

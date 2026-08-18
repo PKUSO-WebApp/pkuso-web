@@ -5,7 +5,32 @@ import ProfilePage from "./page";
 import { useUser } from "@/context/user-context";
 import { useProfiles } from "@/hooks/useProfiles";
 import { supabase } from "@/lib/supabase";
+import { formatDateTimeInChina } from "@/lib/date-utils";
 import type { ProfileRow } from "@/types/database";
+
+// 通知上下文 mock（hoisted：未读数可在各用例中动态配置）
+const { mockUseNotificationsContext } = vi.hoisted(() => ({
+  mockUseNotificationsContext: vi.fn(),
+}));
+
+// supabase 查询链 mock（hoisted：信箱消息列表查询走 from → select → eq → order → then）
+const { mockFrom, mockSelect, mockEq, mockOrder, mockThen } = vi.hoisted(() => {
+  const chain: Record<string, unknown> = {};
+  const mockSelect = vi.fn();
+  const mockEq = vi.fn();
+  const mockOrder = vi.fn();
+  const mockThen = vi.fn();
+  const mockFrom = vi.fn();
+  chain.select = mockSelect;
+  chain.eq = mockEq;
+  chain.order = mockOrder;
+  chain.then = mockThen;
+  mockSelect.mockReturnValue(chain);
+  mockEq.mockReturnValue(chain);
+  mockOrder.mockReturnValue(chain);
+  mockFrom.mockReturnValue(chain);
+  return { mockFrom, mockSelect, mockEq, mockOrder, mockThen };
+});
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -15,6 +40,10 @@ vi.mock("@/context/user-context", () => ({
   useUser: vi.fn(),
 }));
 
+vi.mock("@/context/notification-context", () => ({
+  useNotificationsContext: () => mockUseNotificationsContext(),
+}));
+
 vi.mock("@/hooks/useProfiles", () => ({
   useProfiles: vi.fn(),
 }));
@@ -22,6 +51,7 @@ vi.mock("@/hooks/useProfiles", () => ({
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     auth: { updateUser: vi.fn().mockResolvedValue({ error: null }) },
+    from: mockFrom,
   },
 }));
 
@@ -67,6 +97,19 @@ describe("ProfilePage 个人信息页", () => {
       user: { id: "u1", name: "张三", role: "member", section: "小提琴", email: "a@b.com" },
       login: vi.fn(),
       logout: vi.fn(),
+    });
+    // 通知上下文默认：全 0 未读（各用例按需覆盖）
+    mockUseNotificationsContext.mockReturnValue({
+      unreadCounts: { attendance: 0, activity: 0, system: 0 },
+      totalUnread: 0,
+      loading: false,
+      refresh: vi.fn(),
+      markCategoryRead: vi.fn().mockResolvedValue(true),
+    });
+    // 信箱消息列表查询默认返回空列表
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({ data: [], error: null });
+      return undefined;
     });
     // jsdom 的 alert 未实现，spy 并吞掉，用于断言提示
     vi.spyOn(window, "alert").mockImplementation(() => {});
@@ -213,6 +256,132 @@ describe("ProfilePage 个人信息页", () => {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
     expect(screen.getByRole("button", { name: /退出登录/ })).toBeInTheDocument();
+  });
+
+  // ============================================================
+  // Issue #188：通知信箱（未读徽章 / 消息列表 / 打开即已读）
+  // ============================================================
+  it("未读徽章：>0 时按钮右侧红色数字，0 时隐藏", () => {
+    mockUseProfilesReturn([mockProfile()]);
+    mockUseNotificationsContext.mockReturnValue({
+      unreadCounts: { attendance: 2, activity: 0, system: 1 },
+      totalUnread: 3,
+      loading: false,
+      refresh: vi.fn(),
+      markCategoryRead: vi.fn().mockResolvedValue(true),
+    });
+    render(<ProfilePage />);
+    // 考勤与请假 2、系统 1：红色数字徽章（语义 Token）
+    const badge2 = screen.getByText("2");
+    expect(badge2.className).toContain("bg-danger");
+    expect(badge2.className).toContain("text-danger-foreground");
+    // 锚定正则匹配：徽章数字并入按钮可访问名（如「系统 1」），并避免与设置栏「已发布的活动」混淆
+    expect(screen.getByRole("button", { name: /^系统/ }).textContent).toContain("1");
+    // 活动 0 未读：无数字徽章
+    expect(screen.getByRole("button", { name: /^活动/ }).textContent).not.toMatch(/\d/);
+  });
+
+  it("点击信箱打开 Modal：渲染消息标题/内容/时间，查询仅限该分类且倒序", async () => {
+    mockUseProfilesReturn([mockProfile()]);
+    const messages = [
+      {
+        id: "n1",
+        user_id: "u1",
+        category: "attendance",
+        title: "请假申请已通过",
+        content: "《贝多芬第五交响曲》排练的请假申请已通过",
+        created_at: "2026-08-18T10:00:00+08:00",
+        read_at: null,
+      },
+    ];
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({ data: messages, error: null });
+      return undefined;
+    });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /考勤与请假/ }));
+    // Modal 标题 = 信箱名
+    expect(screen.getByRole("heading", { name: "考勤与请假" })).toBeInTheDocument();
+    expect(screen.getByText("请假申请已通过")).toBeInTheDocument();
+    expect(screen.getByText("《贝多芬第五交响曲》排练的请假申请已通过")).toBeInTheDocument();
+    // 时间用与页面相同的格式化函数计算期望值，避免时区依赖
+    const expectedTime = formatDateTimeInChina("2026-08-18T10:00:00+08:00");
+    expect(screen.getByText(expectedTime)).toBeInTheDocument();
+    // 查询条件：notifications 表、只查该分类、created_at 倒序
+    expect(mockFrom).toHaveBeenCalledWith("notifications");
+    expect(mockSelect).toHaveBeenCalledWith("*");
+    expect(mockEq).toHaveBeenCalledWith("category", "attendance");
+    expect(mockOrder).toHaveBeenCalledWith("created_at", { ascending: false });
+  });
+
+  it("信箱空列表显示「暂无消息」（系统信箱可正常打开），已读调用传空 ids", async () => {
+    const markCategoryRead = vi.fn().mockResolvedValue(true);
+    mockUseNotificationsContext.mockReturnValue({
+      unreadCounts: { attendance: 0, activity: 0, system: 0 },
+      totalUnread: 0,
+      loading: false,
+      refresh: vi.fn(),
+      markCategoryRead,
+    });
+    mockUseProfilesReturn([mockProfile()]);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /系统/ }));
+    expect(screen.getByRole("heading", { name: "系统" })).toBeInTheDocument();
+    expect(screen.getByText("暂无消息")).toBeInTheDocument();
+    // 该分类本无未读：跳过 update 直接归零（空 ids 语义）
+    await waitFor(() => {
+      expect(markCategoryRead).toHaveBeenCalledWith("system", []);
+    });
+  });
+
+  it("打开信箱即标记已读：只传本次 fetch 到的未读消息 id（已读行不重复标记）", async () => {
+    const markCategoryRead = vi.fn().mockResolvedValue(true);
+    mockUseNotificationsContext.mockReturnValue({
+      unreadCounts: { attendance: 3, activity: 0, system: 0 },
+      totalUnread: 3,
+      loading: false,
+      refresh: vi.fn(),
+      markCategoryRead,
+    });
+    mockUseProfilesReturn([mockProfile()]);
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({
+        data: [
+          { id: "n1", read_at: null },
+          { id: "n2", read_at: "2026-08-18T10:00:00+08:00" },
+        ],
+        error: null,
+      });
+      return undefined;
+    });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /考勤与请假/ }));
+    await waitFor(() => {
+      expect(markCategoryRead).toHaveBeenCalledWith("attendance", ["n1"]);
+    });
+  });
+
+  it("消息查询失败：显示「加载失败」且不标已读（markCategoryRead 不被调用）", async () => {
+    const markCategoryRead = vi.fn().mockResolvedValue(true);
+    mockUseNotificationsContext.mockReturnValue({
+      unreadCounts: { attendance: 3, activity: 0, system: 0 },
+      totalUnread: 3,
+      loading: false,
+      refresh: vi.fn(),
+      markCategoryRead,
+    });
+    mockUseProfilesReturn([mockProfile()]);
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({ data: null, error: { message: "网络错误" } });
+      return undefined;
+    });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /考勤与请假/ }));
+    expect(screen.getByRole("heading", { name: "考勤与请假" })).toBeInTheDocument();
+    expect(screen.getByText("加载失败，请稍后重试")).toBeInTheDocument();
+    expect(screen.queryByText("暂无消息")).toBeNull();
+    // fetch 失败不标已读：用户未看到消息，未读数保持
+    expect(markCategoryRead).not.toHaveBeenCalled();
   });
 
   it("点击占位按钮弹出底部 Modal：标题为按钮名，内容为功能开发中", () => {

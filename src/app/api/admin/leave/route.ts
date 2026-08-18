@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { verifyAdmin } from "@/lib/verify-admin";
+import { createServerSupabase } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
 
@@ -11,7 +12,9 @@ export const runtime = "nodejs";
  *   sign_in_time 非空（成员已实际签到）时不写考勤、申请照常置 approved，并在返回的
  *   warnings 中标注让管理员知晓（避免「已签到但请假」的不可恢复矛盾）；否则只改 status、
  *   不动 sign_in_time（保持签到锁定语义，Issue #141），无考勤行时补插一行（只写状态）；
+ *   通过成功后向申请人插「attendance」通知（best-effort，失败不阻断主操作，Issue #188）；
  * - POST { action: "reject", ids, reject_reason }：驳回，原因必填，同一原因应用到全部勾选；
+ *   驳回成功后向申请人插「attendance」通知（content 附驳回原因，同样 best-effort）；
  * - POST { action: "signed-url", path }：私有桶附件签名 URL（60s），供 admin 查看成员附件。
  *
  * 成员端无需调用本路由（RLS 仅限本人读写自己的申请，附件走客户端 createSignedUrl）。
@@ -19,6 +22,37 @@ export const runtime = "nodejs";
 
 /** approve 时成员已实际签到（sign_in_time 非空）：考勤保持签到记录，仅通过申请 */
 const SIGNED_IN_WARNING = "成员已签到，考勤保持签到记录（请假申请已通过）";
+
+/**
+ * 向申请人插请假处理通知（best-effort，Issue #188）：
+ * 插入失败仅 console 记录，绝不阻断 approve/reject 主操作。
+ */
+async function insertLeaveNotification(
+  supabaseServer: ReturnType<typeof createServerSupabase>,
+  req: {
+    user_id: string;
+    rehearsals?: { repertoire?: string | null; title?: string | null } | null;
+  },
+  kind: "approved" | "rejected",
+  reason?: string,
+) {
+  try {
+    // 排练名优先曲目（repertoire），缺失时回退标题，再兜底「排练」
+    const rehearsalName = req.rehearsals?.repertoire || req.rehearsals?.title || "排练";
+    const { error } = await supabaseServer.from("notifications").insert({
+      user_id: req.user_id,
+      category: "attendance",
+      title: kind === "approved" ? "请假申请已通过" : "请假申请被驳回",
+      content:
+        kind === "approved"
+          ? `《${rehearsalName}》排练的请假申请已通过`
+          : `《${rehearsalName}》排练的请假申请已被驳回，原因：${reason ?? ""}`,
+    });
+    if (error) console.error("[Leave Admin] 通知插入失败", error.message);
+  } catch (err) {
+    console.error("[Leave Admin] 通知插入失败", err);
+  }
+}
 
 /** 非法 JSON / 缺参的统一 400 处理（非法 JSON 返回结构化错误而非 500） */
 async function parseJsonBody(
@@ -102,13 +136,16 @@ export async function POST(request: Request) {
     const processed: string[] = [];
     const failed: { id: string; error: string }[] = [];
     const warnings: { id: string; message: string }[] = [];
+    // 各条通知插入任务（best-effort：insertLeaveNotification 自带 catch 不会 reject，
+    // 循环内仅收集 promise 不串行 await，循环后统一并行完成，避免批量时拖慢整批响应）
+    const notificationTasks: Promise<void>[] = [];
     for (const id of ids as string[]) {
       try {
         if (action === "approve") {
-          // 拉取申请（仅 pending，防并发重复处理已完成的申请）
+          // 拉取申请（仅 pending，防并发重复处理已完成的申请）；join 排练信息供通过通知文案使用
           const { data: reqs, error: fetchErr } = await auth.supabaseServer
             .from("leave_requests")
-            .select("id, rehearsal_id, user_id, target_status")
+            .select("id, rehearsal_id, user_id, target_status, rehearsals(repertoire, title)")
             .eq("id", id)
             .eq("status", "pending");
           if (fetchErr) throw new Error(fetchErr.message);
@@ -178,7 +215,22 @@ export async function POST(request: Request) {
             continue;
           }
           processed.push(id);
+          // 通过通知（best-effort，不阻断主操作；promise 收集后并行完成）
+          notificationTasks.push(insertLeaveNotification(auth.supabaseServer, req, "approved"));
         } else {
+          // 驳回：先拉取申请（仅 pending）——通知需要成员与排练信息，且与更新共用同一 pending 守卫
+          const { data: reqs, error: fetchErr } = await auth.supabaseServer
+            .from("leave_requests")
+            .select("id, rehearsal_id, user_id, target_status, rehearsals(repertoire, title)")
+            .eq("id", id)
+            .eq("status", "pending");
+          if (fetchErr) throw new Error(fetchErr.message);
+          const req = Array.isArray(reqs) && reqs.length > 0 ? reqs[0] : null;
+          if (!req) {
+            failed.push({ id, error: "申请不存在或已处理" });
+            continue;
+          }
+
           const { data: statusRows, error: stErr } = await auth.supabaseServer
             .from("leave_requests")
             .update({ status: "rejected", reject_reason: (reject_reason as string).trim() })
@@ -191,11 +243,23 @@ export async function POST(request: Request) {
             continue;
           }
           processed.push(id);
+          // 驳回通知（best-effort，content 附驳回原因；promise 收集后并行完成）
+          notificationTasks.push(
+            insertLeaveNotification(
+              auth.supabaseServer,
+              req,
+              "rejected",
+              (reject_reason as string).trim(),
+            ),
+          );
         }
       } catch (err) {
         failed.push({ id, error: err instanceof Error ? err.message : String(err) });
       }
     }
+
+    // 并行等待全部通知插入完成（best-effort，失败仅 console 记录，不阻断响应）
+    await Promise.all(notificationTasks);
 
     return NextResponse.json({ success: true, processed, failed, warnings });
   } catch (error: unknown) {

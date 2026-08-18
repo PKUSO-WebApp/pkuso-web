@@ -176,6 +176,44 @@ export type Database = {
           },
         ]
       }
+      notifications: {
+        Row: {
+          category: Database["public"]["Enums"]["notificationCategory"]
+          content: string
+          created_at: string
+          id: string
+          read_at: string | null
+          title: string
+          user_id: string
+        }
+        Insert: {
+          category: Database["public"]["Enums"]["notificationCategory"]
+          content: string
+          created_at?: string
+          id?: string
+          read_at?: string | null
+          title: string
+          user_id: string
+        }
+        Update: {
+          category?: Database["public"]["Enums"]["notificationCategory"]
+          content?: string
+          created_at?: string
+          id?: string
+          read_at?: string | null
+          title?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notifications_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       posts: {
         Row: {
           author_id: string
@@ -486,6 +524,7 @@ export type Database = {
         | "rejected"
         | "withdrawn"
         | "canceled"
+      notificationCategory: "attendance" | "activity" | "system"
       postType: "ensemble" | "gathering"
       profileRole: "member" | "admin"
       profileStatus: "pending" | "approved" | "rejected"
@@ -618,6 +657,7 @@ export const Constants = {
     Enums: {
       attendanceStatus: ["present", "late", "absent", "excused"],
       leaveStatus: ["pending", "approved", "rejected", "withdrawn", "canceled"],
+      notificationCategory: ["attendance", "activity", "system"],
       postType: ["ensemble", "gathering"],
       profileRole: ["member", "admin"],
       profileStatus: ["pending", "approved", "rejected"],

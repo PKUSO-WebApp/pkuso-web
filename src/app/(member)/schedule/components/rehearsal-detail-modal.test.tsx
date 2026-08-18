@@ -177,6 +177,68 @@ describe("RehearsalDetailModal 出勤状态五行映射（Issue #173）", () => 
   });
 });
 
+describe("RehearsalDetailModal 出勤状态颜色（Issue #191）", () => {
+  it("出席（present）→ text-success", () => {
+    render(
+      <RehearsalDetailModal
+        item={makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" })}
+        attendance={{ status: "present", sign_in_time: "2026-08-15T12:05:00" }}
+        onClose={vi.fn()}
+        onLeaveRequest={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("出席").className).toContain("text-success");
+  });
+
+  it("迟到（late）→ text-warning", () => {
+    render(
+      <RehearsalDetailModal
+        item={makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" })}
+        attendance={{ status: "late", sign_in_time: "2026-08-15T12:30:00" }}
+        onClose={vi.fn()}
+        onLeaveRequest={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("迟到").className).toContain("text-warning");
+  });
+
+  it("缺勤（absent，已结束未签到）→ text-danger", () => {
+    render(
+      <RehearsalDetailModal
+        item={makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" })}
+        onClose={vi.fn()}
+        onLeaveRequest={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("缺勤").className).toContain("text-danger");
+  });
+
+  it("请假（excused）→ text-info", () => {
+    render(
+      <RehearsalDetailModal
+        item={makeRehearsal({ start_time: "2026-08-15T08:00:00", end_time: "2026-08-15T10:00:00" })}
+        attendance={{ status: "excused", sign_in_time: null }}
+        onClose={vi.fn()}
+        onLeaveRequest={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("请假").className).toContain("text-info");
+  });
+
+  it("「未签到」保持默认色（text-text，无状态色）", () => {
+    render(
+      <RehearsalDetailModal
+        item={makeRehearsal({ start_time: "2026-08-15T12:00:00", end_time: "2026-08-15T15:00:00" })}
+        onClose={vi.fn()}
+        onLeaveRequest={vi.fn()}
+      />,
+    );
+    const status = screen.getByText("未签到");
+    expect(status.className).toContain("text-text");
+    expect(status.className).not.toMatch(/text-(success|warning|danger|info)/);
+  });
+});
+
 describe("RehearsalDetailModal 排练信息与请假入口（Issue #173）", () => {
   it("展示类型/时间/地点/曲目（完整显示，无缩略）", () => {
     render(

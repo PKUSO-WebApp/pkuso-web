@@ -14,6 +14,15 @@ const STATUS_LABEL: Record<string, string> = {
   excused: "请假",
 };
 
+/** 出勤状态文字色（语义 token，亮/暗双模式；配色语义与请假审批 STATUS_CHIP 一致
+ *  ——成功/警告/危险/信息，此处为文字大字而非 chip，故只映射文字色，无背景类） */
+const STATUS_TEXT_COLOR: Record<string, string> = {
+  present: "text-success",
+  late: "text-warning",
+  absent: "text-danger",
+  excused: "text-info",
+};
+
 /** 红点已查看记录的 localStorage 键前缀（键 = leaveSeen_<申请id>，值为 "1"） */
 const LEAVE_SEEN_PREFIX = "leaveSeen_";
 
@@ -105,26 +114,38 @@ export function RehearsalDetailModal({
   // 结束时刻，父级定时器触发）时 item/attendance/attendanceLoading 依赖不变，memo 不会
   // 重算，「未签到」停留不更新为「缺勤」，与卡片（每渲染重算）行为不一致。
   // 每次渲染重算成本极低，故直接计算。
+  // attendanceColor 与文案同源（同一分支赋值），保证颜色跟随状态；
+  // 未签到等非状态文案留空，渲染时回退默认 text-text（Issue #191）
   let attendanceLabel = "";
+  let attendanceColor = "";
   if (item) {
     if (attendanceLoading) {
       attendanceLabel = "…";
     } else if (attendance?.status === "excused") {
       attendanceLabel = STATUS_LABEL.excused;
+      attendanceColor = STATUS_TEXT_COLOR.excused;
     } else if (attendance?.status === "present" || attendance?.status === "late") {
       attendanceLabel = STATUS_LABEL[attendance.status];
+      attendanceColor = STATUS_TEXT_COLOR[attendance.status];
     } else if (hasSignedIn(attendance?.sign_in_time)) {
       attendanceLabel = STATUS_LABEL[attendance?.status ?? ""] ?? STATUS_LABEL.absent;
+      attendanceColor = STATUS_TEXT_COLOR[attendance?.status ?? ""] ?? STATUS_TEXT_COLOR.absent;
     } else {
       attendanceLabel = blockReason === "ended" ? STATUS_LABEL.absent : "未签到";
+      attendanceColor = blockReason === "ended" ? STATUS_TEXT_COLOR.absent : "";
     }
   }
 
   return (
     <Modal open={!!item} onClose={onClose} title="排练详情">
       <div className="space-y-3">
-        {/* 出勤状态（左上第一行，较大字体，Issue #173） */}
-        <p className="text-lg font-semibold text-text">{attendanceLabel}</p>
+        {/* 出勤状态（左上第一行，较大字体，Issue #173；状态色 Issue #191：
+            出席 text-success / 迟到 text-warning / 缺勤 text-danger / 请假 text-info，
+            未签到等非状态文案保持默认 text-text。同一元素只保留一个 text-* 类，
+            避免 Tailwind 输出顺序导致颜色冲突） */}
+        <p className={`text-lg font-semibold ${attendanceColor || "text-text"}`}>
+          {attendanceLabel}
+        </p>
 
         {/* 排练信息（只读） */}
         <div className="space-y-2 text-xs">

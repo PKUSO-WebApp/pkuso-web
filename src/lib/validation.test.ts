@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isValidPhoneNumber } from "./validation";
+import { isValidEmail, isValidPhoneNumber } from "./validation";
 
 describe("validation", () => {
   describe("isValidPhoneNumber", () => {
@@ -32,6 +32,32 @@ describe("validation", () => {
     it("空串不合法（可选字段为空由表单单独处理）", () => {
       expect(isValidPhoneNumber("")).toBe(false);
       expect(isValidPhoneNumber("   ")).toBe(false);
+    });
+  });
+
+  describe("isValidEmail", () => {
+    it("常规邮箱合法", () => {
+      expect(isValidEmail("a@b.com")).toBe(true);
+      expect(isValidEmail("user+tag@example.com")).toBe(true);
+      expect(isValidEmail("a@b-c.example.com.cn")).toBe(true);
+    });
+
+    it("无 @ / 无域名点不合法", () => {
+      expect(isValidEmail("abc")).toBe(false);
+      expect(isValidEmail("a@b")).toBe(false);
+      expect(isValidEmail("a b@c.com")).toBe(false);
+    });
+
+    it("域名连续点 / 首尾点不合法（对抗返工 Issue #199）", () => {
+      expect(isValidEmail("a@b..com")).toBe(false);
+      expect(isValidEmail("a@.com")).toBe(false);
+      expect(isValidEmail("a@b.com.")).toBe(false);
+      expect(isValidEmail("a@b-.com")).toBe(false);
+    });
+
+    it("空串不合法", () => {
+      expect(isValidEmail("")).toBe(false);
+      expect(isValidEmail("   ")).toBe(false);
     });
   });
 });

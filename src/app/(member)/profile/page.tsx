@@ -7,7 +7,7 @@ import { useNotificationsContext } from "@/context/notification-context";
 import { LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useProfiles } from "@/hooks/useProfiles";
-import { isValidPhoneNumber } from "@/lib/validation";
+import { isValidEmail, isValidPhoneNumber } from "@/lib/validation";
 import { formatDateTimeInChina } from "@/lib/date-utils";
 import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
@@ -45,6 +45,10 @@ export default function ProfilePage() {
   const [confirmPwd, setConfirmPwd] = React.useState("");
   const [isUpdatingPwd, setIsUpdatingPwd] = React.useState(false);
   const pwdSubmittingRef = React.useRef(false); // 同步 guard，阻断竞态窗口
+  // 换绑邮箱（Issue #199）：新邮箱输入 + 提交中状态 + 同步 guard
+  const [newEmail, setNewEmail] = React.useState("");
+  const [isRebindingEmail, setIsRebindingEmail] = React.useState(false);
+  const rebindSubmittingRef = React.useRef(false); // 同步 guard，阻断竞态窗口
 
   // 占位功能弹窗：标题 = 按钮名，内容「功能开发中」；null 表示未打开
   const [placeholderTitle, setPlaceholderTitle] = React.useState<string | null>(null);
@@ -95,6 +99,33 @@ export default function ProfilePage() {
   // 编辑个人信息（联系方式 + 入团时间 + 学院 + 隐私开关）
   const { data: profileData, update: updateProfile } = useProfiles({ userId: user?.id });
   const myProfile = profileData[0];
+
+  // 换绑邮箱后同步 profiles.email（Issue #199）：
+  // user-context 的 user.email 来自 profiles_roster 视图（profiles 表值，见 useAuth），
+  // 与 myProfile.email 同源——换绑只改 auth.users.email，必须用 supabase.auth.getUser()
+  // 取真实 auth email 与 profiles email 对比（对抗返工），不同则补写 email 字段。
+  // 窗口语义：GoTrue 在 updateUser 成功后立即更新 auth.users.email（未确认前旧邮箱仍可登录），
+  // 故未确认窗口内本页会把 profiles.email 提前同步为新邮箱——展示先行、登录未变，可接受。
+  // 防循环：仅在值不同时调用一次 update；成功后 useProfiles 内部把新值合并进本地 data，
+  // myProfile.email 随之与 auth email 一致，依赖变化后再次对比已相同，不再触发。
+  // update/getUser 失败时不合并 data、依赖不变，effect 不会重跑，不会无限循环。
+  React.useEffect(() => {
+    const userId = user?.id;
+    const profileEmail = myProfile?.email;
+    if (!userId || !profileEmail) return;
+    void supabase.auth
+      .getUser()
+      .then(({ data }) => {
+        const authEmail = data.user?.email;
+        if (!authEmail) return;
+        if (profileEmail.toLowerCase() === authEmail.toLowerCase()) return;
+        void updateProfile(userId, { email: authEmail });
+      })
+      .catch((err: unknown) => {
+        console.warn("[Profile] 获取 auth 邮箱失败，跳过 profiles.email 同步", err);
+      });
+  }, [myProfile?.email, user?.id, updateProfile]);
+
   const [isEditModalOpen, setIsEditModalOpen] = React.useState(false);
   const [editPhone, setEditPhone] = React.useState("");
   const [editJoinDate, setEditJoinDate] = React.useState("");
@@ -198,12 +229,42 @@ export default function ProfilePage() {
         alert("密码修改成功");
         setNewPwd("");
         setConfirmPwd("");
-        setIsPwdModalOpen(false);
+        // 换绑提交进行中不关闭弹窗（对抗返工 Issue #199）：用 ref 而非 state——
+        // async 闭包里的 state 是提交时的旧值，ref 同步反映当前是否仍在飞行
+        if (!rebindSubmittingRef.current) setIsPwdModalOpen(false);
       }
     } finally {
       // 无论成败都复位：避免抛异常时 isUpdatingPwd 卡 true，弹窗被守卫锁死无法关闭
       pwdSubmittingRef.current = false;
       setIsUpdatingPwd(false);
+    }
+  };
+
+  // 换绑邮箱（Issue #199）：提交后 Supabase 向新邮箱发确认邮件，点击邮件内链接才完成换绑；
+  // 未确认前 auth 仍用旧邮箱，因此只清空输入、不关闭弹窗（与改密同款 alert 提示）。
+  const handleRebindEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    const email = newEmail.trim();
+    if (!email) return alert("请输入新邮箱");
+    if (!isValidEmail(email)) return alert("邮箱格式不正确");
+    if (email.toLowerCase() === (user.email ?? "").toLowerCase())
+      return alert("新邮箱与当前邮箱相同");
+    // 双重 guard 防重复提交：ref 同步阻断 + state 异步兜底
+    if (rebindSubmittingRef.current || isRebindingEmail) return;
+    rebindSubmittingRef.current = true;
+    setIsRebindingEmail(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ email });
+      if (error) alert(error.message);
+      else {
+        alert("确认邮件已发送至新邮箱，请点击邮件内链接完成换绑（未确认前仍使用旧邮箱）");
+        setNewEmail("");
+      }
+    } finally {
+      // 无论成败都复位：避免抛异常时 isRebindingEmail 卡 true，输入被永久禁用
+      rebindSubmittingRef.current = false;
+      setIsRebindingEmail(false);
     }
   };
 
@@ -299,15 +360,16 @@ export default function ProfilePage() {
         </section>
       </div>
 
-      {/* 修改密码 Modal（底部弹出） */}
+      {/* 账号与密码 Modal（底部弹出）：修改密码 + 换绑邮箱，两区块用 border-t 分隔 */}
       <Modal
         open={isPwdModalOpen}
         onClose={() => {
-          if (!isUpdatingPwd) setIsPwdModalOpen(false);
+          // 任一提交进行中都不允许关闭（改密/换绑各自守卫，互不干扰）
+          if (!isUpdatingPwd && !isRebindingEmail) setIsPwdModalOpen(false);
         }}
         title="修改登录密码"
         position="bottom"
-        closeOnOverlay={!isUpdatingPwd}
+        closeOnOverlay={!isUpdatingPwd && !isRebindingEmail}
       >
         <form onSubmit={handleUpdatePassword} className="mt-4 space-y-3">
           <div>
@@ -348,6 +410,36 @@ export default function ProfilePage() {
             </button>
           </div>
         </form>
+
+        {/* 换绑邮箱（Issue #199）：当前邮箱只读展示 + 新邮箱输入；与改密区块 border-t 分隔 */}
+        <div className="mt-4 border-t border-border pt-4">
+          <p className="text-xs font-medium text-text-muted">换绑邮箱</p>
+          <p className="mt-1 text-xs text-text-subtle">当前邮箱：{email}</p>
+          {/* noValidate：禁用浏览器原生邮箱格式气泡（英文/浏览器语言），统一走中文 alert 校验 */}
+          <form onSubmit={handleRebindEmail} noValidate className="mt-3 space-y-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-text-muted">新邮箱</label>
+              <input
+                type="email"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                className="input"
+                placeholder="输入新邮箱"
+                disabled={isRebindingEmail}
+              />
+            </div>
+            {/* 单主操作按钮右对齐（双按钮行右下角规范的唯一按钮豁免） */}
+            <div className="mt-2 flex justify-end gap-2">
+              <button
+                type="submit"
+                disabled={isRebindingEmail}
+                className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+              >
+                {isRebindingEmail ? "发送中..." : "发送确认邮件"}
+              </button>
+            </div>
+          </form>
+        </div>
       </Modal>
 
       {/* 编辑个人信息 Modal */}

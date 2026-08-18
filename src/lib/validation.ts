@@ -12,3 +12,14 @@
 export function isValidPhoneNumber(phone: string): boolean {
   return /^1\d{10}$/.test(phone.trim());
 }
+
+/**
+ * 邮箱校验：本地部分 `[^\s@]+`，域名部分为「字母/数字开头结尾（可含中划线）的标签，
+ * 至少一个点分标签」（对抗返工 Issue #199：拒绝连续点/首尾点，如 a@b..com、a@.com）。
+ * 不做域名/邮箱存在性验证——真实性由 Supabase Auth 侧唯一约束与确认邮件兜底。
+ */
+export function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(
+    email.trim(),
+  );
+}

@@ -50,7 +50,10 @@ vi.mock("@/hooks/useProfiles", () => ({
 
 vi.mock("@/lib/supabase", () => ({
   supabase: {
-    auth: { updateUser: vi.fn().mockResolvedValue({ error: null }) },
+    auth: {
+      updateUser: vi.fn().mockResolvedValue({ error: null }),
+      getUser: vi.fn(),
+    },
     from: mockFrom,
   },
 }));
@@ -116,6 +119,12 @@ describe("ProfilePage 个人信息页", () => {
     });
     // jsdom 的 alert 未实现，spy 并吞掉，用于断言提示
     vi.spyOn(window, "alert").mockImplementation(() => {});
+    // profiles.email 同步 effect 的 auth 来源（Issue #199 对抗返工）：默认与 myProfile.email
+    // 一致（a@b.com），现有用例不触发补写；差异场景用例按需覆盖
+    vi.mocked(supabase.auth.getUser).mockResolvedValue({
+      data: { user: { id: "u1", email: "a@b.com" } },
+      error: null,
+    } as never);
   });
 
   afterEach(() => {
@@ -748,5 +757,221 @@ describe("ProfilePage 个人信息页", () => {
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
     }
+  });
+
+  // ============================================================
+  // Issue #199：换绑邮箱（当前邮箱只读展示 + 新邮箱提交 + profiles.email 同步）
+  // ============================================================
+  it("换绑成功：调用 updateUser 并提示确认邮件、清空输入", async () => {
+    const updateUser = vi.mocked(supabase.auth.updateUser);
+    updateUser.mockResolvedValue({ error: null } as never);
+    mockUseProfilesReturn([mockProfile()]);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    // 当前邮箱只读展示（弹窗内区块）
+    expect(screen.getByText("当前邮箱：a@b.com")).toBeInTheDocument();
+
+    const emailInput = screen.getByPlaceholderText("输入新邮箱") as HTMLInputElement;
+    fireEvent.change(emailInput, { target: { value: "new@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送确认邮件" }));
+
+    await waitFor(() => {
+      expect(updateUser).toHaveBeenCalledWith({ email: "new@example.com" });
+    });
+    expect(window.alert).toHaveBeenCalledWith(
+      "确认邮件已发送至新邮箱，请点击邮件内链接完成换绑（未确认前仍使用旧邮箱）",
+    );
+    // 成功后清空输入；未确认前不关闭弹窗
+    expect(emailInput.value).toBe("");
+    expect(screen.getByRole("heading", { name: "修改登录密码" })).toBeInTheDocument();
+  });
+
+  it("换绑输入为空/格式错误时提示且不调用 updateUser", async () => {
+    const updateUser = vi.mocked(supabase.auth.updateUser);
+    updateUser.mockResolvedValue({ error: null } as never);
+    mockUseProfilesReturn([mockProfile()]);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    const emailInput = screen.getByPlaceholderText("输入新邮箱") as HTMLInputElement;
+
+    // 空输入
+    fireEvent.click(screen.getByRole("button", { name: "发送确认邮件" }));
+    expect(window.alert).toHaveBeenCalledWith("请输入新邮箱");
+
+    // 格式错误
+    fireEvent.change(emailInput, { target: { value: "abc" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送确认邮件" }));
+    expect(window.alert).toHaveBeenCalledWith("邮箱格式不正确");
+
+    expect(updateUser).not.toHaveBeenCalled();
+  });
+
+  it("新邮箱与当前邮箱相同（含大小写差异）时提示且不调用 updateUser", async () => {
+    const updateUser = vi.mocked(supabase.auth.updateUser);
+    updateUser.mockResolvedValue({ error: null } as never);
+    mockUseProfilesReturn([mockProfile()]);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    fireEvent.change(screen.getByPlaceholderText("输入新邮箱"), {
+      target: { value: "A@b.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送确认邮件" }));
+
+    expect(window.alert).toHaveBeenCalledWith("新邮箱与当前邮箱相同");
+    expect(updateUser).not.toHaveBeenCalled();
+  });
+
+  it("换绑被拒（updateUser 返回 error）时提示错误信息、不清空输入", async () => {
+    const updateUser = vi.mocked(supabase.auth.updateUser);
+    updateUser.mockResolvedValue({ error: { message: "邮箱已被占用" } } as never);
+    mockUseProfilesReturn([mockProfile()]);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    const emailInput = screen.getByPlaceholderText("输入新邮箱") as HTMLInputElement;
+    fireEvent.change(emailInput, { target: { value: "taken@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送确认邮件" }));
+
+    await waitFor(() => {
+      expect(updateUser).toHaveBeenCalledWith({ email: "taken@example.com" });
+    });
+    expect(window.alert).toHaveBeenCalledWith("邮箱已被占用");
+    // 失败不清空，方便用户修改后重试
+    expect(emailInput.value).toBe("taken@example.com");
+  });
+
+  it("换绑防重复提交：提交中双击只调用一次 updateUser，且提交中不可关闭弹窗", async () => {
+    let resolveUpdate!: (v: { error: null }) => void;
+    const pending = new Promise<{ error: null }>((resolve) => {
+      resolveUpdate = resolve;
+    });
+    const updateUser = vi.mocked(supabase.auth.updateUser);
+    updateUser.mockReturnValue(pending as never);
+    mockUseProfilesReturn([mockProfile()]);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    fireEvent.change(screen.getByPlaceholderText("输入新邮箱"), {
+      target: { value: "new@example.com" },
+    });
+
+    const submitBtn = screen.getByRole("button", { name: "发送确认邮件" });
+    fireEvent.click(submitBtn);
+    fireEvent.click(submitBtn);
+    // ref 同步阻断：双击只发一次请求
+    expect(updateUser).toHaveBeenCalledTimes(1);
+    // 提交中按钮进入提交态且禁用，弹窗无法通过守卫关闭
+    expect(screen.getByRole("button", { name: "发送中..." })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(screen.getByRole("heading", { name: "修改登录密码" })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveUpdate({ error: null });
+    });
+  });
+
+  it("换绑提交进行中改密成功：ref 守卫下弹窗保持打开（对抗返工 Issue #199）", async () => {
+    let resolveRebind!: (v: { error: null }) => void;
+    const rebindPending = new Promise<{ error: null }>((resolve) => {
+      resolveRebind = resolve;
+    });
+    const updateUser = vi.mocked(supabase.auth.updateUser);
+    // 第 1 次调用（换绑）挂起；第 2 次调用（改密）立即成功
+    updateUser
+      .mockReturnValueOnce(rebindPending as never)
+      .mockResolvedValueOnce({ error: null } as never);
+    mockUseProfilesReturn([mockProfile()]);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+
+    // 先提交换绑（pending 飞行中）
+    fireEvent.change(screen.getByPlaceholderText("输入新邮箱"), {
+      target: { value: "new@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送确认邮件" }));
+    expect(updateUser).toHaveBeenCalledTimes(1);
+
+    // 再提交改密并成功——若用 state 闭包守卫会误关弹窗，ref 守卫应保持打开
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), { target: { value: "123456" } });
+    fireEvent.change(screen.getByPlaceholderText("再次输入"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认修改" }));
+    // 改密成功 alert 在微任务中执行，waitFor 消化后断言
+    await waitFor(() => {
+      expect(window.alert).toHaveBeenCalledWith("密码修改成功");
+    });
+    expect(screen.getByRole("heading", { name: "修改登录密码" })).toBeInTheDocument();
+
+    // 换绑完成（弹窗此刻仍可正常关闭）
+    await act(async () => {
+      resolveRebind({ error: null });
+    });
+  });
+
+  it("auth email（getUser）与 myProfile.email 一致时不触发 profiles.email 同步", async () => {
+    const update = vi.fn().mockResolvedValue(true);
+    mockUseProfiles.mockReturnValue({
+      data: [mockProfile({ email: "a@b.com" })],
+      loading: false,
+      error: null,
+      saving: false,
+      fetch: vi.fn(),
+      update,
+    } as never);
+    // 真实数据流（对抗返工 Issue #199）：auth 来源（getUser）与 profiles 来源（useProfiles）
+    // 双源对比，此处显式声明两源一致；beforeEach 已有同值默认，覆盖写法保持用例自足
+    vi.mocked(supabase.auth.getUser).mockResolvedValue({
+      data: { user: { id: "u1", email: "a@b.com" } },
+      error: null,
+    } as never);
+    render(<ProfilePage />);
+    // flush getUser 微任务后再断言
+    await act(async () => {});
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("auth email（getUser）与 myProfile.email 不同（换绑已确认）时补写 profiles.email，且仅同步一次", async () => {
+    const update = vi.fn().mockResolvedValue(true);
+    mockUseProfiles.mockReturnValue({
+      data: [mockProfile({ email: "old@a.com" })],
+      loading: false,
+      error: null,
+      saving: false,
+      fetch: vi.fn(),
+      update,
+    } as never);
+    // auth 已更新为新邮箱、profiles 仍为旧值：触发补写
+    vi.mocked(supabase.auth.getUser).mockResolvedValue({
+      data: { user: { id: "u1", email: "new@a.com" } },
+      error: null,
+    } as never);
+    render(<ProfilePage />);
+    await waitFor(() => {
+      expect(update).toHaveBeenCalledWith("u1", { email: "new@a.com" });
+    });
+    // 防循环：effect 仅在依赖变化时触发，值未变不会重跑
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("getUser 失败（reject）时 catch 兜底：跳过同步、不调 update、不产生未捕获异常（对抗观察项 Issue #199）", async () => {
+    // effect 链尾有 catch，reject 被吞掉不会成为 unhandledRejection；console.warn 记录后跳过
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const update = vi.fn().mockResolvedValue(true);
+    mockUseProfiles.mockReturnValue({
+      data: [mockProfile({ email: "old@a.com" })],
+      loading: false,
+      error: null,
+      saving: false,
+      fetch: vi.fn(),
+      update,
+    } as never);
+    vi.mocked(supabase.auth.getUser).mockRejectedValue(new Error("auth 网络失败"));
+    render(<ProfilePage />);
+    // flush getUser 的 reject 微任务（act 内消化，避免 React act 告警）
+    await act(async () => {});
+    // 跳过同步：update 不被调用
+    expect(update).not.toHaveBeenCalled();
+    // catch 兜底生效：console.warn 记录一次
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("[Profile] 获取 auth 邮箱失败"),
+      expect.any(Error),
+    );
   });
 });

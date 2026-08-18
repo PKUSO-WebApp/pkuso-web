@@ -6,7 +6,7 @@ import React from "react";
 import { useAuth } from "../useAuth";
 
 // 复用 useProfiles 的 mockClient 模式 + auth mock
-function mockSupabaseClient(session: unknown, profile: unknown) {
+function mockSupabaseClient(session: unknown, profile: unknown, fromTables?: string[]) {
   const c = (r: unknown) => ({
     eq: () => ({ maybeSingle: () => c(r) }),
     order: () => c(r),
@@ -14,7 +14,11 @@ function mockSupabaseClient(session: unknown, profile: unknown) {
     then: (resolve: (v: unknown) => void) => resolve(r),
   });
   return {
-    from: () => ({ select: () => c(profile) }),
+    from: (table: string) => {
+      // 记录 from 的表名，供「profile 查询走视图」断言使用（Issue #193）
+      fromTables?.push(table);
+      return { select: () => c(profile) };
+    },
     auth: {
       getSession: () => Promise.resolve(session),
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe: vi.fn() } } }),
@@ -63,6 +67,32 @@ describe("useAuth", () => {
     await waitFor(() => expect(result.current.sessionLoading).toBe(false), { timeout: 3000 });
     await waitFor(() => expect(result.current.profileLoading).toBe(false), { timeout: 3000 });
     expect(result.current.profileName).toBe("张三");
+  });
+
+  it("profile 查询走 profiles_roster 视图，本人行经视图拿原值（Issue #193）", async () => {
+    const fromTables: string[] = [];
+    const c = mockSupabaseClient(
+      { data: { session: { user: { id: "u1" } } }, error: null },
+      {
+        data: {
+          id: "u1",
+          full_name: "张三",
+          role: "member",
+          status: "approved",
+          instrument: "长笛",
+          email: "a@b.com",
+        },
+        error: null,
+      },
+      fromTables,
+    );
+    const { result } = renderHook(
+      () => useAuth({ onProfileLoaded: onLoaded, onClearProfile: onClear }, c as never),
+      { wrapper: Wrapper },
+    );
+    // 视图 CASE 中 auth.uid() = id 分支返回原值，email 不丢（等待查询实际完成）
+    await waitFor(() => expect(result.current.profileEmail).toBe("a@b.com"), { timeout: 3000 });
+    expect(fromTables).toEqual(["profiles_roster"]);
   });
 
   it("无 session", async () => {

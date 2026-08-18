@@ -29,6 +29,9 @@ export type ProfileUpdatePayload = Partial<
     | "email"
     | "phone_number"
     | "join_date"
+    | "hide_email"
+    | "hide_phone"
+    | "hide_join_date"
     | "is_section_leader"
   >
 >;
@@ -63,7 +66,11 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
     setLoading(true);
     setError(null);
 
-    let query = client.from("profiles").select("*");
+    // Issue #193：查询改走 profiles_roster 视图（SECURITY DEFINER）——直查 profiles 表
+    // 的敏感三列（email/phone_number/join_date）已被拒绝（42501）。视图列与原表同构
+    // （仅全列 nullable，且掩码只出现在 hide=true 的行且仅敏感三列），
+    // 由下游按 hide 布尔展示「（被隐藏）」，此处断言回 ProfileRow 保持调用方类型不变。
+    let query = client.from("profiles_roster").select("*");
 
     if (status) query = query.eq("status", status);
     if (ids && ids.length > 0) query = query.in("id", ids);

@@ -18,6 +18,25 @@ import { AdminMemberDetailModal } from "./components/member-detail-modal";
 
 type ViewMode = "attendance" | "roster";
 
+/**
+ * 原 join embed 因基表敏感列 email 被列级拒绝而失效：改为按 id 从 profiles_roster 补查姓名+邮箱（Issue #193）。
+ * admin 经视图内 is_admin() 分支拿原值（隐藏对管理员无效）；补查失败返回空 Map，导出降级为「—」。
+ */
+async function fetchRosterProfiles(
+  userIds: string[],
+): Promise<Map<string, { full_name: string | null; email: string | null }>> {
+  if (userIds.length === 0) return new Map();
+  const { supabase } = await import("@/lib/supabase");
+  const { data, error } = await supabase
+    .from("profiles_roster")
+    .select("id, full_name, email")
+    .in("id", userIds);
+  if (error) return new Map();
+  return new Map(
+    (data ?? []).map((r) => [String(r.id), { full_name: r.full_name, email: r.email }]),
+  );
+}
+
 export default function MembersPage() {
   const [currentView, setCurrentView] = React.useState<ViewMode>("attendance");
 
@@ -95,20 +114,25 @@ export default function MembersPage() {
       const { supabase } = await import("@/lib/supabase");
       const { data, error } = await supabase
         .from("attendances")
-        .select("*, profiles!inner(full_name, instrument, email)")
+        .select("*")
         .eq("rehearsal_id", rehearsal.id);
       if (error) throw error;
       if (!data || data.length === 0) {
         alert("该排练暂无出勤记录");
         return;
       }
-      const rows = (data as Array<Record<string, unknown>>).map((r) => [
-        (r.profiles as { full_name?: string } | null)?.full_name ?? "—",
-        (r.profiles as { email?: string } | null)?.email ?? "—",
-        STATUS_LABEL[String(r.status ?? "")] ?? String(r.status ?? "—"),
-        (r.sign_in_time as string) ?? "—",
-      ]);
-      const sheetData = [["姓名", "邮箱", "出勤情况", "签到时间"], ...rows];
+      const rows = data as Array<Record<string, unknown>>;
+      // 原 join embed 因基表敏感列 email 被列级拒绝而失效：按 user_id 从 profiles_roster 补查姓名+邮箱（Issue #193）
+      const roster = await fetchRosterProfiles(rows.map((r) => String(r.user_id)));
+      const sheetData = [
+        ["姓名", "邮箱", "出勤情况", "签到时间"],
+        ...rows.map((r) => [
+          roster.get(String(r.user_id))?.full_name ?? "—",
+          roster.get(String(r.user_id))?.email ?? "—",
+          STATUS_LABEL[String(r.status ?? "")] ?? String(r.status ?? "—"),
+          (r.sign_in_time as string) ?? "—",
+        ]),
+      ];
       const ws = XLSX.utils.aoa_to_sheet(sheetData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "考勤记录");
@@ -138,7 +162,7 @@ export default function MembersPage() {
       // 耗时过长导致 a.click() 被静默拦截。
       const { data, error } = await supabase
         .from("attendances")
-        .select("*, profiles!inner(full_name, instrument, email)")
+        .select("*")
         .in(
           "rehearsal_id",
           filteredRehearsals.map((r) => r.id),
@@ -149,9 +173,13 @@ export default function MembersPage() {
         return;
       }
 
+      const rows = data as Array<Record<string, unknown>>;
+      // 原 join embed 因基表敏感列 email 被列级拒绝而失效：按 user_id 从 profiles_roster 补查姓名+邮箱（Issue #193）
+      const roster = await fetchRosterProfiles(rows.map((r) => String(r.user_id)));
+
       // 前端按 rehearsal_id 分组，逐场构建 sheet
       const grouped = new Map<number, Array<Record<string, unknown>>>();
-      for (const row of data as Array<Record<string, unknown>>) {
+      for (const row of rows) {
         const rehearsalId = row.rehearsal_id as number;
         if (!grouped.has(rehearsalId)) grouped.set(rehearsalId, []);
         grouped.get(rehearsalId)!.push(row);
@@ -167,13 +195,13 @@ export default function MembersPage() {
 
       const wb = XLSX.utils.book_new();
       filteredRehearsals.forEach((rehearsal, index) => {
-        const rows = (grouped.get(rehearsal.id) ?? []).map((r) => [
-          (r.profiles as { full_name?: string } | null)?.full_name ?? "—",
-          (r.profiles as { email?: string } | null)?.email ?? "—",
+        const sheetRows = (grouped.get(rehearsal.id) ?? []).map((r) => [
+          roster.get(String(r.user_id))?.full_name ?? "—",
+          roster.get(String(r.user_id))?.email ?? "—",
           STATUS_LABEL[String(r.status ?? "")] ?? String(r.status ?? "—"),
           (r.sign_in_time as string) ?? "—",
         ]);
-        const sheetData = [["姓名", "邮箱", "出勤情况", "签到时间"], ...rows];
+        const sheetData = [["姓名", "邮箱", "出勤情况", "签到时间"], ...sheetRows];
         const ws = XLSX.utils.aoa_to_sheet(sheetData);
         XLSX.utils.book_append_sheet(wb, ws, sheetNames[index]);
       });

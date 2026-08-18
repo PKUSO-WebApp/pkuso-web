@@ -10,7 +10,17 @@ import { useProfiles } from "@/hooks/useProfiles";
 import { isValidPhoneNumber } from "@/lib/validation";
 import { formatDateTimeInChina } from "@/lib/date-utils";
 import { Modal } from "@/components/ui/Modal";
+import { Toggle } from "@/components/ui/Toggle";
 import type { NotificationCategory, NotificationRow } from "@/types/database";
+
+// 隐私开关选项（Issue #193）：各字段行尾的「公开 / 隐藏」分段开关，随表单一起保存
+const PRIVACY_OPTIONS = ["public", "hidden"] as const;
+const privacyLabel = (v: (typeof PRIVACY_OPTIONS)[number]) => (v === "hidden" ? "隐藏" : "公开");
+const privacyValue = (hide: boolean) => (hide ? "hidden" : "public");
+
+/** 是否为标准 YYYY-MM-DD 日期格式（date input 可表示的格式；历史数据可能为「2024秋」等学期格式） */
+const isStandardDateString = (v: string | null | undefined): boolean =>
+  typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
 // 通知栏目：信箱按钮 → 通知分类映射（Issue #188）
 const notificationItems: { label: string; category: NotificationCategory }[] = [
@@ -82,15 +92,23 @@ export default function ProfilePage() {
       });
   };
 
-  // 编辑个人信息（联系方式 + 学院）
+  // 编辑个人信息（联系方式 + 入团时间 + 学院 + 隐私开关）
   const { data: profileData, update: updateProfile } = useProfiles({ userId: user?.id });
   const myProfile = profileData[0];
   const [isEditModalOpen, setIsEditModalOpen] = React.useState(false);
   const [editPhone, setEditPhone] = React.useState("");
+  const [editJoinDate, setEditJoinDate] = React.useState("");
   const [editCollege, setEditCollege] = React.useState("");
+  const [hideEmail, setHideEmail] = React.useState(false);
+  const [hidePhone, setHidePhone] = React.useState(false);
+  const [hideJoinDate, setHideJoinDate] = React.useState(false);
   const [editError, setEditError] = React.useState<string | null>(null);
   const [isEditSubmitting, setIsEditSubmitting] = React.useState(false);
   const editSubmittingRef = React.useRef(false); // 同步 guard，阻断竞态窗口
+
+  // join_date 是否被用户改动过：历史数据可能为学期格式（如「2024秋」），
+  // date input 无法表示，未改动时保存不写 join_date 字段，保留原值防误清空（Issue #193）
+  const [isJoinDateTouched, setIsJoinDateTouched] = React.useState(false);
 
   // 打开弹窗时用最新 profile 预填
   const handleOpenEditModal = () => {
@@ -100,7 +118,12 @@ export default function ProfilePage() {
       return;
     }
     setEditPhone(myProfile.phone_number ?? "");
+    setEditJoinDate(myProfile.join_date ?? "");
     setEditCollege(myProfile.college ?? "");
+    setHideEmail(myProfile.hide_email);
+    setHidePhone(myProfile.hide_phone);
+    setHideJoinDate(myProfile.hide_join_date);
+    setIsJoinDateTouched(false);
     setEditError(null);
     setIsEditModalOpen(true);
   };
@@ -117,6 +140,19 @@ export default function ProfilePage() {
       return;
     }
 
+    // join_date 写入条件：用户改动过且值与原值不同（手滑点到同一天不写，保留原值）。
+    // 任何实际变化（含标准 YYYY-MM-DD 原值）都需用户确认——移动端手滑打开日期选择器
+    // 默认选中「今天」，若不确认会静默覆盖原日期（对抗返工，Issue #193）。
+    const originalJoinDate = myProfile?.join_date ?? "";
+    const willWriteJoinDate = isJoinDateTouched && editJoinDate.trim() !== originalJoinDate.trim();
+    if (willWriteJoinDate) {
+      const source = originalJoinDate.trim() || "当前为空";
+      const target = editJoinDate.trim() || "（空）";
+      if (!window.confirm(`保存将把入团时间从「${source}」变更为「${target}」，确认？`)) {
+        return;
+      }
+    }
+
     editSubmittingRef.current = true;
     setIsEditSubmitting(true);
     setEditError(null);
@@ -124,6 +160,11 @@ export default function ProfilePage() {
       const ok = await updateProfile(user.id, {
         phone_number: phone || null,
         college: editCollege.trim() || null,
+        hide_email: hideEmail,
+        hide_phone: hidePhone,
+        hide_join_date: hideJoinDate,
+        // 未改动过 join_date（如历史学期格式）或值未变化时不写入，保留原值
+        ...(willWriteJoinDate ? { join_date: editJoinDate || null } : {}),
       });
       if (ok) {
         setIsEditModalOpen(false);
@@ -320,8 +361,30 @@ export default function ProfilePage() {
         closeOnOverlay={!isEditSubmitting}
       >
         <form onSubmit={handleEditSubmit} className="mt-4 space-y-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-text-muted">联系方式</label>
+          {/* 邮箱：不可编辑，仅提供隐藏开关（Issue #193） */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <label className="block text-xs font-medium text-text-muted">邮箱</label>
+              <Toggle
+                options={PRIVACY_OPTIONS}
+                value={privacyValue(hideEmail)}
+                onChange={(v) => setHideEmail(v === "hidden")}
+                getLabel={privacyLabel}
+              />
+            </div>
+            <p className="truncate text-xs text-text-subtle">{myProfile?.email ?? "—"}</p>
+          </div>
+          {/* 联系方式 + 隐藏手机号开关 */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <label className="block text-xs font-medium text-text-muted">联系方式</label>
+              <Toggle
+                options={PRIVACY_OPTIONS}
+                value={privacyValue(hidePhone)}
+                onChange={(v) => setHidePhone(v === "hidden")}
+                getLabel={privacyLabel}
+              />
+            </div>
             <input
               type="text"
               value={editPhone}
@@ -332,6 +395,34 @@ export default function ProfilePage() {
               className="input"
               placeholder="11 位手机号"
             />
+          </div>
+          {/* 入团时间 + 隐藏入团时间开关（TEXT 列，日期输入值格式 YYYY-MM-DD 与列存文本一致） */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <label className="block text-xs font-medium text-text-muted">入团时间</label>
+              <Toggle
+                options={PRIVACY_OPTIONS}
+                value={privacyValue(hideJoinDate)}
+                onChange={(v) => setHideJoinDate(v === "hidden")}
+                getLabel={privacyLabel}
+              />
+            </div>
+            <input
+              type="date"
+              value={editJoinDate}
+              onChange={(e) => {
+                setEditJoinDate(e.target.value);
+                setIsJoinDateTouched(true);
+                setEditError(null);
+              }}
+              className="input"
+            />
+            {/* 原值非标准日期格式（date input 无法显示）时提示当前值，未修改则保存时保留（Issue #193） */}
+            {myProfile?.join_date && !isStandardDateString(myProfile.join_date) && (
+              <p className="text-caption text-text-subtle">
+                当前值：{myProfile.join_date}（非日期格式，未修改则保留）
+              </p>
+            )}
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-text-muted">学院</label>

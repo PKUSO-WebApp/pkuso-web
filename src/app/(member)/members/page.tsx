@@ -1,14 +1,18 @@
 "use client";
 
 import React from "react";
+import { useUser } from "@/context/user-context";
 import { useProfiles } from "@/hooks/useProfiles";
 import { Card } from "@/components/ui/Card";
 import { groupProfilesByInstrument } from "@/lib/roster-utils";
 import { filterByName } from "@/lib/name-search";
+import { maskedValue } from "@/lib/privacy";
 import type { ProfileRow } from "@/types/database";
 import { MemberDetailModal } from "./components/member-detail-modal";
 
 export default function MembersPage() {
+  // 当前登录用户：查看自己时隐私开关不生效，显示原值（Issue #193）
+  const { user: currentUser } = useUser();
   const {
     data: allProfiles,
     loading: rosterLoading,
@@ -70,29 +74,37 @@ export default function MembersPage() {
                     {group}
                   </p>
                   <ul className="space-y-2">
-                    {users.map((u) => (
-                      <li key={u.id}>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedUser(u)}
-                          className="w-full rounded-xl border border-border bg-card px-3 py-2 text-left text-xs hover:bg-muted"
-                        >
-                          <p className="flex flex-wrap items-center gap-1.5 font-medium text-text">
-                            <span>{(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}</span>
-                            {u.is_section_leader && (
-                              <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-caption text-warning">
-                                🏅 声部长
-                              </span>
-                            )}
-                          </p>
-                          <p className="mt-0.5 text-text-muted">学院：{u.college?.trim() || "—"}</p>
-                          <p className="mt-0.5 text-text-muted">邮箱：{u.email ?? "—"}</p>
-                          <p className="mt-0.5 text-text-subtle">
-                            入团时间：{u.join_date?.trim() || "—"}
-                          </p>
-                        </button>
-                      </li>
-                    ))}
+                    {users.map((u) => {
+                      // 查看自己时隐私开关不生效（isSelf=false 即掩码开关失效），查看他人按对方开关掩码
+                      const isSelf = u.id === currentUser?.id;
+                      return (
+                        <li key={u.id}>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedUser(u)}
+                            className="w-full rounded-xl border border-border bg-card px-3 py-2 text-left text-xs hover:bg-muted"
+                          >
+                            <p className="flex flex-wrap items-center gap-1.5 font-medium text-text">
+                              <span>{(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}</span>
+                              {u.is_section_leader && (
+                                <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-caption text-warning">
+                                  🏅 声部长
+                                </span>
+                              )}
+                            </p>
+                            <p className="mt-0.5 text-text-muted">
+                              学院：{u.college?.trim() || "—"}
+                            </p>
+                            <p className="mt-0.5 text-text-muted">
+                              邮箱：{maskedValue(!isSelf && u.hide_email, u.email)}
+                            </p>
+                            <p className="mt-0.5 text-text-subtle">
+                              入团时间：{maskedValue(!isSelf && u.hide_join_date, u.join_date)}
+                            </p>
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               ))}
@@ -104,6 +116,7 @@ export default function MembersPage() {
       <MemberDetailModal
         open={!!selectedUser}
         user={selectedUser}
+        viewerId={currentUser?.id ?? null}
         onClose={() => setSelectedUser(null)}
       />
     </div>

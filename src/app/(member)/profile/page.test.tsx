@@ -69,6 +69,9 @@ function mockProfile(overrides: Partial<ProfileRow> = {}): ProfileRow {
     created_at: null,
     email: "a@b.com",
     full_name: "张三",
+    hide_email: false,
+    hide_join_date: false,
+    hide_phone: false,
     instrument: "小提琴",
     is_section_leader: false,
     join_date: null,
@@ -186,7 +189,12 @@ describe("ProfilePage 个人信息页", () => {
       expect(update).toHaveBeenCalledWith("u1", {
         phone_number: "13800138000",
         college: "光华管理学院",
+        hide_email: false,
+        hide_phone: false,
+        hide_join_date: false,
       });
+      // 未触碰入团时间：payload 不写 join_date（保留原值，防误清空历史格式数据）
+      expect(update.mock.calls[0][1]).not.toHaveProperty("join_date");
     });
     expect(window.alert).toHaveBeenCalledWith("个人信息已更新");
     // 弹窗关闭
@@ -240,6 +248,251 @@ describe("ProfilePage 个人信息页", () => {
     await act(async () => {
       resolveUpdate(true);
     });
+  });
+
+  // ============================================================
+  // Issue #193：编辑弹窗新增入团时间 + 三个隐私开关
+  // ============================================================
+  it("打开编辑弹窗预填日期输入与三个隐私开关（隐藏/公开），邮箱行仅展示不可编辑", () => {
+    mockUseProfilesReturn([
+      mockProfile({
+        phone_number: "13800138000",
+        college: "信息科学技术学院",
+        join_date: "2024-09-01",
+        hide_email: true,
+        hide_phone: false,
+        hide_join_date: true,
+      }),
+    ]);
+    const { container } = render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
+
+    const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+    expect(dateInput.value).toBe("2024-09-01");
+    // 三个隐私开关共 6 个按钮：邮箱「隐藏」激活、手机号「公开」激活、入团时间「隐藏」激活
+    const hiddenButtons = screen.getAllByRole("button", { name: "隐藏" });
+    expect(hiddenButtons).toHaveLength(3);
+    expect(hiddenButtons[0].className).toContain("bg-primary");
+    expect(hiddenButtons[1].className).not.toContain("bg-primary");
+    expect(hiddenButtons[2].className).toContain("bg-primary");
+    expect(screen.getAllByRole("button", { name: "公开" })[1].className).toContain("bg-primary");
+    // 邮箱不可编辑：只读展示当前值
+    expect(screen.getByText("a@b.com")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("邮箱")).toBeNull();
+  });
+
+  it("切换隐私开关并填写入团时间后保存，payload 包含开关值与 join_date", async () => {
+    const update = vi.fn().mockResolvedValue(true);
+    // 标准格式原值被改动：按新语义先弹确认，这里同意覆盖
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockUseProfiles.mockReturnValue({
+      data: [mockProfile({ phone_number: "13800138000", join_date: "2024-09-01" })],
+      loading: false,
+      error: null,
+      saving: false,
+      fetch: vi.fn(),
+      update,
+    } as never);
+    const { container } = render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
+
+    // 手机号隐私开关切到「隐藏」（第二个 Toggle）
+    fireEvent.click(screen.getAllByRole("button", { name: "隐藏" })[1]);
+    // 入团时间改为新日期（touched）
+    const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+    fireEvent.change(dateInput, { target: { value: "2025-03-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(update).toHaveBeenCalledWith("u1", {
+        phone_number: "13800138000",
+        college: null,
+        join_date: "2025-03-01",
+        hide_email: false,
+        hide_phone: true,
+        hide_join_date: false,
+      });
+    });
+  });
+
+  it("历史学期格式入团时间（如「2024秋」）未改动时保存不写 join_date，防误清空", async () => {
+    const update = vi.fn().mockResolvedValue(true);
+    mockUseProfiles.mockReturnValue({
+      data: [mockProfile({ phone_number: "13800138000", join_date: "2024秋" })],
+      loading: false,
+      error: null,
+      saving: false,
+      fetch: vi.fn(),
+      update,
+    } as never);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
+
+    // 原值非日期格式：显示「当前值」只读提示（date input 无法显示学期格式）
+    expect(screen.getByText(/当前值：2024秋/)).toBeInTheDocument();
+    // 未改动直接保存：不弹确认、不写 join_date
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(update).toHaveBeenCalledWith("u1", {
+        phone_number: "13800138000",
+        college: null,
+        hide_email: false,
+        hide_phone: false,
+        hide_join_date: false,
+      });
+      expect(update.mock.calls[0][1]).not.toHaveProperty("join_date");
+    });
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it("学期格式原值被改动（手滑覆盖）时先弹确认框：取消则不保存", async () => {
+    const update = vi.fn().mockResolvedValue(true);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    mockUseProfiles.mockReturnValue({
+      data: [mockProfile({ phone_number: "13800138000", join_date: "2024秋" })],
+      loading: false,
+      error: null,
+      saving: false,
+      fetch: vi.fn(),
+      update,
+    } as never);
+    const { container } = render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
+    const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+    // 手滑打开日期选择器默认选中今天
+    fireEvent.change(dateInput, { target: { value: "2026-08-19" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith(
+        "保存将把入团时间从「2024秋」变更为「2026-08-19」，确认？",
+      );
+    });
+    // 用户取消：不提交、弹窗保持打开
+    expect(update).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "编辑个人信息" })).toBeInTheDocument();
+  });
+
+  it("标准格式原值被改动（手滑覆盖）时也先弹确认：取消则不保存", async () => {
+    const update = vi.fn().mockResolvedValue(true);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    mockUseProfiles.mockReturnValue({
+      data: [mockProfile({ phone_number: "13800138000", join_date: "2024-09-01" })],
+      loading: false,
+      error: null,
+      saving: false,
+      fetch: vi.fn(),
+      update,
+    } as never);
+    const { container } = render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
+    const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+    // 标准格式原值可正常预填，手滑打开日期选择器默认选中「今天」→ 值变化
+    fireEvent.change(dateInput, { target: { value: "2026-08-19" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith(
+        "保存将把入团时间从「2024-09-01」变更为「2026-08-19」，确认？",
+      );
+    });
+    // 用户取消：不提交、弹窗保持打开
+    expect(update).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "编辑个人信息" })).toBeInTheDocument();
+  });
+
+  it("原值为空时填写入团时间：确认文案显示「当前为空」，同意后写入", async () => {
+    const update = vi.fn().mockResolvedValue(true);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockUseProfiles.mockReturnValue({
+      data: [mockProfile({ phone_number: "13800138000", join_date: null })],
+      loading: false,
+      error: null,
+      saving: false,
+      fetch: vi.fn(),
+      update,
+    } as never);
+    const { container } = render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
+    const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+    fireEvent.change(dateInput, { target: { value: "2024-09-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith(
+        "保存将把入团时间从「当前为空」变更为「2024-09-01」，确认？",
+      );
+      expect(update).toHaveBeenCalledWith("u1", {
+        phone_number: "13800138000",
+        college: null,
+        join_date: "2024-09-01",
+        hide_email: false,
+        hide_phone: false,
+        hide_join_date: false,
+      });
+    });
+  });
+
+  it("学期格式原值确认覆盖后保存：payload 写入新日期", async () => {
+    const update = vi.fn().mockResolvedValue(true);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockUseProfiles.mockReturnValue({
+      data: [mockProfile({ phone_number: "13800138000", join_date: "2024秋" })],
+      loading: false,
+      error: null,
+      saving: false,
+      fetch: vi.fn(),
+      update,
+    } as never);
+    const { container } = render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
+    const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+    fireEvent.change(dateInput, { target: { value: "2026-08-19" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(update).toHaveBeenCalledWith("u1", {
+        phone_number: "13800138000",
+        college: null,
+        join_date: "2026-08-19",
+        hide_email: false,
+        hide_phone: false,
+        hide_join_date: false,
+      });
+    });
+  });
+
+  it("入团时间值未变化（手滑点到同一天）时不写入 join_date", async () => {
+    const update = vi.fn().mockResolvedValue(true);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    mockUseProfiles.mockReturnValue({
+      data: [mockProfile({ phone_number: "13800138000", join_date: "2024-09-01" })],
+      loading: false,
+      error: null,
+      saving: false,
+      fetch: vi.fn(),
+      update,
+    } as never);
+    const { container } = render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /个人信息/ }));
+    const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+    // 手滑打开又选中了同一天：值未变化，不写 join_date 也不弹确认（无论原值格式）
+    fireEvent.change(dateInput, { target: { value: "2024-09-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(update).toHaveBeenCalledWith("u1", {
+        phone_number: "13800138000",
+        college: null,
+        hide_email: false,
+        hide_phone: false,
+        hide_join_date: false,
+      });
+      expect(update.mock.calls[0][1]).not.toHaveProperty("join_date");
+    });
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 
   it("渲染通知/设置栏目标题与全部按钮行", () => {

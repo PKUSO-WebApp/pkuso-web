@@ -3,10 +3,48 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 /**
  * E2E 测试账号邮箱后缀。
  * 预清扫与清理只针对这类邮箱的账号，绝不触碰真实账号。
- * 三个 E2E（verify_invitation_code / settings route / notify）共享本工具，
+ * 四个 E2E（verify_invitation_code / settings route / notify / profiles-privacy）共享本工具，
  * 避免各自清理逻辑漂移导致孤儿账号在共享库积压（Issue #129）。
  */
 export const TEST_EMAIL_SUFFIX = "@pkuso.test";
+
+/**
+ * 创建独立的 service role 客户端，专用于清理（profiles DELETE / auth.users DELETE）。
+ *
+ * 为什么必须独立：调用方传入的 client 可能已执行过 signInWithPassword（如 notify /
+ * profiles-privacy E2E 需要真实 JWT），登录后 supabase-js 会把用户 access_token 作为
+ * 后续 REST 请求的 Authorization 头，PostgREST 以 JWT 的 role claim（authenticated）
+ * 判定角色——此时 `client.from("profiles").delete()` 被 RLS 静默拒绝（profiles 无
+ * DELETE 策略，0 行不报错），再删 auth.users 就撞 profiles_id_fkey（23503）报
+ * "Database error deleting user"。实测该失败为概率性（登录与删除之间若 session
+ * 尚未写入，请求仍走 service role 而侥幸成功），此前依赖运气。
+ *
+ * 本函数每次创建全新 client（无任何登录状态），保证删除永远走 service role 路径。
+ * 需 NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY，调用方负责在 env 存在时调用。
+ *
+ * 关键坑（实测）：jsdom 环境下 supabase-js 的默认 storage 是全局 localStorage，
+ * 所有 client 共享同一 storage key。若测试先在某个 client 上 signInWithPassword
+ * （拿真实 JWT），随后创建的"干净" client 会在初始化时从 localStorage 恢复该
+ * session——删除请求带着用户 JWT 而非 service role，PostgREST 按 JWT role claim
+ * 判定为 authenticated，profiles 无 DELETE 策略被 RLS 静默拒（0 行不报错），
+ * 再删 auth.users 就撞 profiles_id_fkey（23503）。因此必须 persistSession: false
+ * （不恢复、不持久化）+ 独立 storageKey（双保险），彻底隔离登录状态。
+ */
+function createCleanAdminClient(): Promise<SupabaseClient> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) {
+    throw new Error("缺少 Supabase 配置，无法创建清理客户端（不应到达：调用方已做 env 检查）");
+  }
+  return import("@supabase/supabase-js").then(({ createClient }) =>
+    createClient(url, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        storageKey: "e2e-clean-admin-client",
+      },
+    }),
+  );
+}
 
 /**
  * 预清扫只清理 10 分钟前创建的测试账号。
@@ -39,10 +77,13 @@ function isAlreadyDeletedError(error: { message: string; status?: number }): boo
  *
  * 任一步失败即抛错：清理失败必须让测试失败，不允许静默孤儿。
  */
-export async function deleteTestUser(client: SupabaseClient, userId: string): Promise<void> {
-  const { error: profileErr } = await client.from("profiles").delete().eq("id", userId);
+export async function deleteTestUser(_client: SupabaseClient, userId: string): Promise<void> {
+  // 必须用独立 service role client：调用方传入的 client 可能已被 signInWithPassword
+  // 污染（其 REST 请求携带用户 JWT → RLS 静默拒删 profiles → deleteUser 撞 FK 23503）
+  const clean = await createCleanAdminClient();
+  const { error: profileErr } = await clean.from("profiles").delete().eq("id", userId);
   if (profileErr) throw new Error(`清理测试 profile 失败: ${profileErr.message}`);
-  const { error: userErr } = await client.auth.admin.deleteUser(userId);
+  const { error: userErr } = await clean.auth.admin.deleteUser(userId);
   if (userErr) throw new Error(`清理测试 auth.user 失败: ${userErr.message}`);
 }
 
@@ -51,14 +92,17 @@ export async function deleteTestUser(client: SupabaseClient, userId: string): Pr
  * 在 beforeAll / 测试开头最先调用，保证测试开始前环境干净，
  * 同时自动清掉历史 CI 崩溃留下的孤儿账号。
  */
-export async function sweepTestUsers(client: SupabaseClient): Promise<void> {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- 保留签名兼容既有调用方
+export async function sweepTestUsers(_client: SupabaseClient): Promise<void> {
+  // 同 deleteTestUser：独立 service role client，防调用方 client 的登录 session 污染
+  const clean = await createCleanAdminClient();
   const cutoffMs = Date.now() - SWEEP_MIN_AGE_MS;
   const cutoffISO = new Date(cutoffMs).toISOString();
 
   // 先删 profiles（按邮箱后缀匹配），解除 auth.users 的外键引用。
   // 只清理 10 分钟前创建的（profiles.created_at 为 timestamptz，
   // 与 ISO 字符串比较由 PostgREST 处理），保护并行文件的活跃用户。
-  const { error: pErr } = await client
+  const { error: pErr } = await clean
     .from("profiles")
     .delete()
     .like("email", `%${TEST_EMAIL_SUFFIX}`)
@@ -72,14 +116,14 @@ export async function sweepTestUsers(client: SupabaseClient): Promise<void> {
   let page = 1;
   const perPage = 200;
   while (true) {
-    const { data, error: listErr } = await client.auth.admin.listUsers({ page, perPage });
+    const { data, error: listErr } = await clean.auth.admin.listUsers({ page, perPage });
     if (listErr) throw new Error(`预清扫列出用户失败: ${listErr.message}`);
     const users = data?.users ?? [];
     const testUsers = users.filter(
       (u) => u.email?.endsWith(TEST_EMAIL_SUFFIX) && new Date(u.created_at).getTime() < cutoffMs,
     );
     for (const u of testUsers) {
-      const { error } = await client.auth.admin.deleteUser(u.id);
+      const { error } = await clean.auth.admin.deleteUser(u.id);
       if (!error) continue;
       // 双删竞态容错：对方已删该用户时视为成功继续（见 isAlreadyDeletedError）
       if (isAlreadyDeletedError(error)) continue;

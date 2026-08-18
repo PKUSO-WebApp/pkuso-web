@@ -25,6 +25,9 @@ const baseUser: ProfileRow = {
   created_at: null,
   email: "zhangsan@example.com",
   full_name: "张三",
+  hide_email: false,
+  hide_join_date: false,
+  hide_phone: false,
   instrument: "第一小提琴",
   is_section_leader: false,
   join_date: "2024-09-01",
@@ -76,5 +79,46 @@ describe("MemberDetailModal（用户侧只读详情）", () => {
   it("user 为 null 时不崩溃", () => {
     render(<MemberDetailModal open user={null} onClose={() => {}} />);
     expect(screen.queryByText("张三")).toBeNull();
+  });
+
+  // ============================================================
+  // Issue #193：他人开启隐私隐藏时对应字段显示「（被隐藏）」，查看自己显示原值
+  // ============================================================
+  it("查看他人：开启隐藏的邮箱/联系方式/入团时间显示「（被隐藏）」", () => {
+    render(
+      <MemberDetailModal
+        open
+        user={{ ...baseUser, hide_email: true, hide_phone: true, hide_join_date: true }}
+        viewerId="other-user"
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getAllByText("（被隐藏）")).toHaveLength(3);
+    expect(screen.queryByText("zhangsan@example.com")).toBeNull();
+    expect(screen.queryByText("13800138000")).toBeNull();
+    expect(screen.queryByText("2024-09-01")).toBeNull();
+    // 未开启隐藏的字段仍显示原值（乐器/学院）
+    expect(screen.getByText("第一小提琴")).toBeInTheDocument();
+    expect(screen.getByText("信息科学技术学院")).toBeInTheDocument();
+  });
+
+  it("查看自己（viewerId 等于成员 id）：隐私开关不生效，全部显示原值", () => {
+    render(
+      <MemberDetailModal
+        open
+        user={{ ...baseUser, hide_email: true, hide_phone: true, hide_join_date: true }}
+        viewerId="user-1"
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByText("zhangsan@example.com")).toBeInTheDocument();
+    expect(screen.getByText("13800138000")).toBeInTheDocument();
+    expect(screen.getByText("2024-09-01")).toBeInTheDocument();
+    expect(screen.queryByText("（被隐藏）")).toBeNull();
+  });
+
+  it("未传 viewerId 时按他人视角掩码（缺省安全兜底）", () => {
+    render(<MemberDetailModal open user={{ ...baseUser, hide_email: true }} onClose={() => {}} />);
+    expect(screen.getByText("（被隐藏）")).toBeInTheDocument();
   });
 });

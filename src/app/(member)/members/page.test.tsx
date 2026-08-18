@@ -2,9 +2,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import MembersPage from "./page";
+import { useUser } from "@/context/user-context";
 import { useProfiles } from "@/hooks/useProfiles";
 import { MemberDetailModal } from "./components/member-detail-modal";
 import type { ProfileRow } from "@/types/database";
+
+vi.mock("@/context/user-context", () => ({
+  useUser: vi.fn(),
+}));
 
 vi.mock("@/hooks/useProfiles", () => ({
   useProfiles: vi.fn(),
@@ -17,6 +22,7 @@ vi.mock("./components/member-detail-modal", () => ({
   ),
 }));
 
+const mockUseUser = vi.mocked(useUser);
 const mockUseProfiles = vi.mocked(useProfiles);
 const mockMemberDetailModal = vi.mocked(MemberDetailModal);
 
@@ -25,6 +31,9 @@ function makeProfile(partial: Partial<ProfileRow> & { id: string; full_name: str
     college: null,
     created_at: null,
     email: null,
+    hide_email: false,
+    hide_join_date: false,
+    hide_phone: false,
     instrument: null,
     is_section_leader: false,
     join_date: null,
@@ -40,6 +49,12 @@ const SEARCH_PLACEHOLDER = "搜索姓名（支持中文/拼音/首字母）";
 describe("MembersPage 成员花名册页", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // 默认查看者：id=me 的成员，与花名册成员（id=1/2/3）不同（他人视角）
+    mockUseUser.mockReturnValue({
+      user: { id: "me", name: "我", role: "member", section: "小提琴" },
+      login: vi.fn(),
+      logout: vi.fn(),
+    });
     mockUseProfiles.mockReturnValue({
       data: [
         makeProfile({ id: "1", full_name: "王梓萱", instrument: "第一小提琴" }),
@@ -132,6 +147,65 @@ describe("MembersPage 成员花名册页", () => {
       }),
       undefined,
     );
+  });
+
+  // ============================================================
+  // Issue #193：他人开启隐私隐藏时列表掩码显示「（被隐藏）」，查看自己显示原值
+  // ============================================================
+  it("他人开启隐藏时列表邮箱/入团时间显示「（被隐藏）」，不显示原值", () => {
+    mockUseProfiles.mockReturnValue({
+      data: [
+        makeProfile({
+          id: "1",
+          full_name: "王梓萱",
+          instrument: "第一小提琴",
+          email: "wang@example.com",
+          join_date: "2024-09-01",
+          hide_email: true,
+          hide_join_date: true,
+        }),
+      ],
+      loading: false,
+      error: null,
+      saving: false,
+      fetch: vi.fn(),
+      update: vi.fn(),
+    } as never);
+    render(<MembersPage />);
+    // 邮箱行 + 入团时间行各一个「（被隐藏）」（文本节点与标签拼接，用部分匹配）
+    expect(screen.getAllByText(/（被隐藏）/)).toHaveLength(2);
+    expect(screen.queryByText(/wang@example\.com/)).toBeNull();
+    expect(screen.queryByText(/2024-09-01/)).toBeNull();
+  });
+
+  it("查看自己时隐私开关不生效，列表显示原值", () => {
+    mockUseUser.mockReturnValue({
+      user: { id: "1", name: "王梓萱", role: "member", section: "第一小提琴" },
+      login: vi.fn(),
+      logout: vi.fn(),
+    });
+    mockUseProfiles.mockReturnValue({
+      data: [
+        makeProfile({
+          id: "1",
+          full_name: "王梓萱",
+          instrument: "第一小提琴",
+          email: "wang@example.com",
+          join_date: "2024-09-01",
+          hide_email: true,
+          hide_join_date: true,
+        }),
+      ],
+      loading: false,
+      error: null,
+      saving: false,
+      fetch: vi.fn(),
+      update: vi.fn(),
+    } as never);
+    render(<MembersPage />);
+    expect(screen.getByText(/wang@example\.com/)).toBeInTheDocument();
+    expect(screen.getByText(/2024-09-01/)).toBeInTheDocument();
+    expect(screen.queryByText(/（被隐藏）/)).toBeNull();
   });
 
   it("加载中显示加载提示", () => {

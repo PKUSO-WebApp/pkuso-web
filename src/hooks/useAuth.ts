@@ -99,8 +99,10 @@ export function useAuth(
       setProfileLoading(true);
       setProfileErrorMsg(null);
 
+      // Issue #193：改走 profiles_roster 视图——直查 profiles 表敏感三列已被拒绝（42501）。
+      // 本查询按本人 id 过滤，视图 CASE 中 auth.uid() = id 分支返回原值（含 email），行为不变。
       const { data, error } = await client
-        .from("profiles")
+        .from("profiles_roster")
         .select("id, status, role, full_name, instrument, email")
         .eq("id", sessionUserId)
         .maybeSingle();

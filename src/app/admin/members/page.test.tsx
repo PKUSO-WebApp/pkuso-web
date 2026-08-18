@@ -57,7 +57,7 @@ const mocks = vi.hoisted(() => {
     },
   ];
 
-  // 导出全部：一次 .in 查询返回的全部出勤记录（覆盖两个排练）
+  // 导出全部：一次 .in 查询返回的全部出勤记录（覆盖两个排练；姓名/邮箱由 profiles_roster 补查）
   const mockAllAttendanceRows = [
     {
       id: 1,
@@ -65,7 +65,6 @@ const mocks = vi.hoisted(() => {
       user_id: "u1",
       status: "absent",
       sign_in_time: null,
-      profiles: { full_name: "张小三", instrument: "小提琴", email: "zhangsan@example.com" },
     },
     {
       id: 2,
@@ -73,7 +72,6 @@ const mocks = vi.hoisted(() => {
       user_id: "u2",
       status: "present",
       sign_in_time: "2026-08-20T19:05:00",
-      profiles: { full_name: "李小四", instrument: "大提琴", email: "lisi@example.com" },
     },
     {
       id: 3,
@@ -81,17 +79,23 @@ const mocks = vi.hoisted(() => {
       user_id: "u3",
       status: "late",
       sign_in_time: "2026-08-21T14:10:00",
-      profiles: { full_name: "王小五", instrument: "长笛", email: "wangwu@example.com" },
     },
   ];
 
   // 导出单场：.eq 查询返回
   const mockSingleAttendanceRows = [
     {
-      profiles: { full_name: "张三", email: "zhangsan@example.com" },
+      user_id: "u1",
       status: "present",
       sign_in_time: "2026-08-20T19:05:00",
     },
+  ];
+
+  // profiles_roster 补查返回（视图无 FK 无法 embed；admin 经 is_admin 拿原值）
+  const mockRosterRows = [
+    { id: "u1", full_name: "张小三", email: "zhangsan@example.com" },
+    { id: "u2", full_name: "李小四", email: "lisi@example.com" },
+    { id: "u3", full_name: "王小五", email: "wangwu@example.com" },
   ];
 
   // supabase 链式 mock：select/eq/in/order/insert 返回链自身，then 由 beforeEach 按查询类型配置返回值
@@ -128,6 +132,7 @@ const mocks = vi.hoisted(() => {
     mockAttendanceRows,
     mockAllAttendanceRows,
     mockSingleAttendanceRows,
+    mockRosterRows,
     mockSelect,
     mockEq,
     mockIn,
@@ -205,9 +210,12 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
     mocks.mockFrom.mockReturnValue(mocks.chain);
     // 恢复排练列表（空区间测试会清空）
     mocks.mockRehearsals.splice(0, mocks.mockRehearsals.length, ...mocks.defaultRehearsals);
-    // 默认按查询类型返回数据：.in → 全部考勤；.eq → 单场考勤
+    // 默认按查询类型返回数据：profiles_roster 补查 → 花名册行；.in → 全部考勤；.eq → 单场考勤
     mocks.mockThen.mockImplementation((resolve: (v: unknown) => void) => {
-      if (mocks.mockIn.mock.calls.length > 0) {
+      const lastFrom = mocks.mockFrom.mock.calls.at(-1)?.[0];
+      if (lastFrom === "profiles_roster") {
+        resolve({ data: mocks.mockRosterRows, error: null });
+      } else if (mocks.mockIn.mock.calls.length > 0) {
         resolve({ data: mocks.mockAllAttendanceRows, error: null });
       } else if (mocks.mockEq.mock.calls.length > 0) {
         resolve({ data: mocks.mockSingleAttendanceRows, error: null });
@@ -466,9 +474,10 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
     await waitFor(() => {
       expect(mocks.mockWriteFile).toHaveBeenCalled();
     });
-    // 只发一次查询：.in 携带全部排练 id（按开始时间倒序），无逐场查询
-    expect(mocks.mockFrom).toHaveBeenCalledTimes(1);
-    expect(mocks.mockIn).toHaveBeenCalledTimes(1);
+    // 只发两次查询：attendances 一次 .in（携带全部排练 id，按开始时间倒序，无逐场查询）
+    // + profiles_roster 一次补查（视图无 FK 无法 embed，Issue #193）
+    expect(mocks.mockFrom).toHaveBeenCalledTimes(2);
+    expect(mocks.mockFrom).toHaveBeenCalledWith("profiles_roster");
     expect(mocks.mockIn).toHaveBeenCalledWith("rehearsal_id", [2, 1]);
     expect(mocks.mockEq).not.toHaveBeenCalled();
     // 每个排练一个 sheet，sheet 名为 曲目_日期（按列表顺序：8-21 在 8-20 之前）
@@ -524,6 +533,43 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
     });
     expect(mocks.mockWriteFile).not.toHaveBeenCalled();
     alertSpy.mockRestore();
+  });
+
+  // ==========================================
+  // Issue #193：导出姓名/邮箱改由 profiles_roster 补查（原 join embed 因视图无 FK 失效）
+  // ==========================================
+  it("导出单场：姓名/邮箱来自 profiles_roster 补查（admin 经视图拿原值）", async () => {
+    render(<MembersPage />);
+    fireEvent.click(screen.getAllByText("📥 导出")[0]);
+
+    await waitFor(() => {
+      expect(mocks.mockWriteFile).toHaveBeenCalled();
+    });
+    expect(mocks.mockFrom).toHaveBeenCalledWith("profiles_roster");
+    expect(mocks.mockAoaToSheet).toHaveBeenCalledWith([
+      ["姓名", "邮箱", "出勤情况", "签到时间"],
+      ["张小三", "zhangsan@example.com", "出席", "2026-08-20T19:05:00"],
+    ]);
+  });
+
+  it("导出全部：每行姓名/邮箱均来自 profiles_roster 补查，无补查记录显示 —", async () => {
+    render(<MembersPage />);
+    fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
+
+    await waitFor(() => {
+      expect(mocks.mockWriteFile).toHaveBeenCalled();
+    });
+    // 排练按开始时间倒序：第一张 sheet（莫扎特，rehearsal_id=2）一行：王小五 迟到
+    expect(mocks.mockAoaToSheet.mock.calls[0][0]).toEqual([
+      ["姓名", "邮箱", "出勤情况", "签到时间"],
+      ["王小五", "wangwu@example.com", "迟到", "2026-08-21T14:10:00"],
+    ]);
+    // 第二张 sheet（贝多芬，rehearsal_id=1）两行：张小三/李小四 带邮箱
+    expect(mocks.mockAoaToSheet.mock.calls[1][0]).toEqual([
+      ["姓名", "邮箱", "出勤情况", "签到时间"],
+      ["张小三", "zhangsan@example.com", "缺席", "—"],
+      ["李小四", "lisi@example.com", "出席", "2026-08-20T19:05:00"],
+    ]);
   });
 
   it("导出单场：查询失败时 alert 错误信息（与导出全部对称）", async () => {

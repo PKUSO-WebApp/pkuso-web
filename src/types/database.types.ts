@@ -87,6 +87,13 @@ export type Database = {
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "attendances_user_id_profiles_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles_roster"
+            referencedColumns: ["id"]
+          },
         ]
       }
       invitation_codes: {
@@ -174,6 +181,13 @@ export type Database = {
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "leave_requests_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles_roster"
+            referencedColumns: ["id"]
+          },
         ]
       }
       notifications: {
@@ -210,6 +224,13 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles_roster"
             referencedColumns: ["id"]
           },
         ]
@@ -262,6 +283,13 @@ export type Database = {
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "posts_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "profiles_roster"
+            referencedColumns: ["id"]
+          },
         ]
       }
       profiles: {
@@ -270,6 +298,9 @@ export type Database = {
           created_at: string | null
           email: string | null
           full_name: string | null
+          hide_email: boolean
+          hide_join_date: boolean
+          hide_phone: boolean
           id: string
           instrument: string | null
           is_section_leader: boolean
@@ -283,6 +314,9 @@ export type Database = {
           created_at?: string | null
           email?: string | null
           full_name?: string | null
+          hide_email?: boolean
+          hide_join_date?: boolean
+          hide_phone?: boolean
           id: string
           instrument?: string | null
           is_section_leader?: boolean
@@ -296,6 +330,9 @@ export type Database = {
           created_at?: string | null
           email?: string | null
           full_name?: string | null
+          hide_email?: boolean
+          hide_join_date?: boolean
+          hide_phone?: boolean
           id?: string
           instrument?: string | null
           is_section_leader?: boolean
@@ -432,6 +469,13 @@ export type Database = {
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "schedule_groups_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "profiles_roster"
+            referencedColumns: ["id"]
+          },
         ]
       }
       schedules: {
@@ -474,6 +518,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "schedules_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "profiles_roster"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "schedules_group_id_fkey"
             columns: ["group_id"]
             isOneToOne: false
@@ -491,7 +542,57 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      profiles_roster: {
+        Row: {
+          college: string | null
+          created_at: string | null
+          email: string | null
+          full_name: string | null
+          hide_email: boolean | null
+          hide_join_date: boolean | null
+          hide_phone: boolean | null
+          id: string | null
+          instrument: string | null
+          is_section_leader: boolean | null
+          join_date: string | null
+          phone_number: string | null
+          role: Database["public"]["Enums"]["profileRole"] | null
+          status: Database["public"]["Enums"]["profileStatus"] | null
+        }
+        Insert: {
+          college?: string | null
+          created_at?: string | null
+          email?: never
+          full_name?: string | null
+          hide_email?: boolean | null
+          hide_join_date?: boolean | null
+          hide_phone?: boolean | null
+          id?: string | null
+          instrument?: string | null
+          is_section_leader?: boolean | null
+          join_date?: never
+          phone_number?: never
+          role?: Database["public"]["Enums"]["profileRole"] | null
+          status?: Database["public"]["Enums"]["profileStatus"] | null
+        }
+        Update: {
+          college?: string | null
+          created_at?: string | null
+          email?: never
+          full_name?: string | null
+          hide_email?: boolean | null
+          hide_join_date?: boolean | null
+          hide_phone?: boolean | null
+          id?: string | null
+          instrument?: string | null
+          is_section_leader?: boolean | null
+          join_date?: never
+          phone_number?: never
+          role?: Database["public"]["Enums"]["profileRole"] | null
+          status?: Database["public"]["Enums"]["profileStatus"] | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       check_invitation_code: {

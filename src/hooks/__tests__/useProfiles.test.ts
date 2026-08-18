@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { useProfiles } from "../useProfiles";
 
-function mockClient<T>(responses: T[]) {
+function mockClient<T>(responses: T[], fromTables?: string[]) {
   let i = 0;
   const chain = (res: T) => ({
     eq: () => chain(res),
@@ -15,11 +15,15 @@ function mockClient<T>(responses: T[]) {
     then: (resolve: (v: T) => void) => resolve(res),
   });
   return {
-    from: () => ({
-      select: () => chain(responses[i++]),
-      update: () => ({ eq: () => ({ select: () => chain(responses[i++]) }) }),
-      insert: () => chain(responses[i++]),
-    }),
+    from: (table: string) => {
+      // 记录 from 的表名，供「查询走视图」断言使用（Issue #193）
+      fromTables?.push(table);
+      return {
+        select: () => chain(responses[i++]),
+        update: () => ({ eq: () => ({ select: () => chain(responses[i++]) }) }),
+        insert: () => chain(responses[i++]),
+      };
+    },
     auth: {
       getSession: () => Promise.resolve({ data: { session: { access_token: "test-token" } } }),
     },
@@ -42,6 +46,24 @@ describe("useProfiles", () => {
     const { result } = renderHook(() => useProfiles({ status: "approved" }, c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.data).toHaveLength(1);
+  });
+
+  it("读取走 profiles_roster 视图（不直查 profiles 表敏感列，Issue #193）", async () => {
+    const fromTables: string[] = [];
+    const c = mockClient(
+      [
+        {
+          data: [{ id: "1", full_name: "张三", hide_email: false, email: "a@b.com" }],
+          error: null,
+        },
+      ],
+      fromTables,
+    );
+    const { result } = renderHook(() => useProfiles({ status: "approved" }, c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // fetch 只发一次查询且走视图；视图行断言回 ProfileRow 后字段可正常消费
+    expect(fromTables).toEqual(["profiles_roster"]);
+    expect(result.current.data[0].email).toBe("a@b.com");
   });
 
   it("fetch 失败", async () => {

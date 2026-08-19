@@ -71,3 +71,24 @@ export function getSignBlockReason(
 export function hasSignedIn(signInTime: string | null | undefined): boolean {
   return signInTime != null && signInTime !== "";
 }
+
+/** 「未签到」展示文案（Issue #213 对抗返工）：absent 占位行的列表标签文案。
+ *  统计口径中占位行仅计入 total、不参与分类、无栏目呈现（口径见 attendance-summary.ts） */
+export const UNSIGNED_LABEL = "未签到";
+
+/**
+ * 是否为 absent 占位行（Issue #213 对抗返工）：absent + 未签到 + 排练未结束。
+ * 与列表展示口径同源（getAttendanceDisplay 复用本函数，见 profile 页）：
+ * 占位行是新建排练的默认预生成，不构成缺勤——列表展示「未签到」；统计中仅计入
+ * total、不计入任何栏目（用户指示「未签到不统计」）；排练已结束（或已签到补签）
+ * 才解除占位、按原始 status 计缺勤。
+ * now 可选参数：默认真实当前时间；测试可注入固定时间避免依赖运行时刻。
+ */
+export function isAbsentPlaceholder(
+  signInTime: string | null | undefined,
+  startTime: string | null,
+  endTime: string | null,
+  now: Date = new Date(),
+): boolean {
+  return !hasSignedIn(signInTime) && getSignBlockReason(startTime, endTime, now) !== "ended";
+}

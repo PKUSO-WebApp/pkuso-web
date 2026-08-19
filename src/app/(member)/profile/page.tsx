@@ -14,8 +14,9 @@ import {
   getLocalDateString,
   parseLocalISO,
 } from "@/lib/date-utils";
-import { getSignBlockReason, hasSignedIn } from "@/lib/attendance-utils";
+import { isAbsentPlaceholder, UNSIGNED_LABEL } from "@/lib/attendance-utils";
 import { STATUS_LABEL, STATUS_TEXT_COLOR } from "@/lib/attendance-status";
+import { summarizeAttendance, type AttendanceSummaryKey } from "@/lib/attendance-summary";
 import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
 import { ThemeModal } from "./components/theme-modal";
@@ -37,6 +38,12 @@ const notificationItems: { label: string; category: NotificationCategory }[] = [
   { label: "活动", category: "activity" },
   { label: "系统", category: "system" },
 ];
+
+// 考勤区间统计的四个已评定栏目（Issue #213 需求修订后）：只声明 key 顺序——
+// 文案取 STATUS_LABEL、颜色取 STATUS_TEXT_COLOR，均从 attendance-status 派生
+// （单一事实源：文案/配色调整只改 attendance-status.ts，统计行自动同步）。
+// 「未签到/未评定」行不参与分类、无栏目呈现（口径见 attendance-summary.ts）
+const ATTENDANCE_SUMMARY_ITEMS: AttendanceSummaryKey[] = ["present", "late", "excused", "absent"];
 
 // 设置栏目按钮均已接线（个人信息/账号与密码/考勤/外观/已发布的活动/问题与反馈 Issue #209/退出登录）
 
@@ -76,9 +83,9 @@ const getAttendanceDisplay = (
   endTime: string | null,
 ): { label: string; className: string } => {
   if (!status) return { label: "—", className: "text-text-muted" };
-  if (status === "absent" && !hasSignedIn(signInTime)) {
-    const blockReason = getSignBlockReason(startTime, endTime, new Date());
-    if (blockReason !== "ended") return { label: "未签到", className: "text-text" };
+  // 占位判定与统计口径同源（isAbsentPlaceholder，见 attendance-utils / attendance-summary）
+  if (status === "absent" && isAbsentPlaceholder(signInTime, startTime, endTime)) {
+    return { label: UNSIGNED_LABEL, className: "text-text" };
   }
   return {
     label: STATUS_LABEL[status] ?? status,
@@ -229,6 +236,13 @@ export default function ProfilePage() {
     if (attendanceStart && v && attendanceStart > v) return;
     fetchAttendance(user.id, attendanceStart, v);
   };
+
+  // 区间统计（Issue #213 对抗复攻返工）：与列表同源派生（不额外查询），渲染期直接
+  // 求值（不用 useMemo）——占位判定依赖实时时钟 now，列表 getAttendanceDisplay 每帧
+  // 取实时时间；若统计侧缓存旧 now（依赖 [attendanceRows] 引用未变不重算），排练跨过
+  // 结束时刻后列表翻转为「缺勤」而统计仍按旧时刻计占位，同屏矛盾。去缓存后两侧同帧
+  // 求值、时钟一致；O(n) 成本与列表渲染同量级，可忽略。口径注释见 attendance-summary.ts
+  const attendanceSummary = summarizeAttendance(attendanceRows);
 
   // 编辑个人信息（联系方式 + 入团时间 + 学院 + 隐私开关）
   const { data: profileData, update: updateProfile } = useProfiles({ userId: user?.id });
@@ -897,6 +911,24 @@ export default function ProfilePage() {
                 );
               })}
           </div>
+          {/* 区间统计（Issue #213）：固定于列表滚动容器下方（列表自身滚动，统计区不滚动）；
+              渲染期直接求值、与列表同帧取时钟（去缓存理由见上方 attendanceSummary 注释）；
+              加载中/失败时隐藏——数据未就绪不展示可能误导的统计（无数据可派生，空区间仍显示全 0） */}
+          {!attendanceLoading && !attendanceError && (
+            <div className="border-t border-border pt-2">
+              <p className="text-xs text-text-muted">
+                <span>{`共 ${attendanceSummary.total} 次排练`}</span>
+                {ATTENDANCE_SUMMARY_ITEMS.map((key) => (
+                  <React.Fragment key={key}>
+                    <span className="mx-1.5">·</span>
+                    <span
+                      className={STATUS_TEXT_COLOR[key]}
+                    >{`${STATUS_LABEL[key]} ${attendanceSummary[key]}`}</span>
+                  </React.Fragment>
+                ))}
+              </p>
+            </div>
+          )}
         </div>
       </Modal>
     </div>

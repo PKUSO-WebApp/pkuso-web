@@ -8,6 +8,7 @@ import { useProfiles } from "@/hooks/useProfiles";
 import { usePosts } from "@/hooks/usePosts";
 import { supabase } from "@/lib/supabase";
 import { formatDateTimeInChina, formatRehearsalRange } from "@/lib/date-utils";
+import { summarizeAttendance, type AttendanceSummaryRow } from "@/lib/attendance-summary";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
 import type { ProfileRow } from "@/types/database";
 
@@ -1446,6 +1447,295 @@ describe("ProfilePage 个人信息页", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // ============================================================
+  // Issue #213：考勤区间统计摘要（与列表同源派生，无额外查询）
+  // 口径（需求修订后）：四类按展示口径计——未结束且未签到的 absent 占位行
+  // （列表「未签到」）与 status null 行（列表「—」）不计入任何栏目，仅计入
+  // total（区间内总排练数，可能大于四类之和）
+  // ============================================================
+  describe("summarizeAttendance 统计口径（Issue #213 需求修订后）", () => {
+    // 固定判定时间：08-10 排练已结束、08-16 排练未结束（与列表占位用例同模式）
+    const now = new Date(2026, 7, 15, 13, 0, 0);
+    /** 便捷构造统计行（默认：已签到 present 行，排练 08-10 已结束） */
+    const row = (overrides: Partial<AttendanceSummaryRow> = {}): AttendanceSummaryRow => ({
+      status: "present",
+      sign_in_time: "2026-08-10T19:00:00",
+      rehearsals: { start_time: "2026-08-10T19:00:00", end_time: "2026-08-10T21:00:00" },
+      ...overrides,
+    });
+
+    it("混合状态：四类按展示口径计数，占位行/null 行不计入任何栏目", () => {
+      const rows: AttendanceSummaryRow[] = [
+        row(), // present
+        row({ status: "late" }),
+        row({ status: "excused" }),
+        // 已结束排练的 absent（未签到但排练已结束）：占位解除 → 缺勤
+        row({ status: "absent", sign_in_time: null }),
+        // 未结束排练的 absent 占位行（列表「未签到」）：不计入任何栏目
+        row({
+          status: "absent",
+          sign_in_time: null,
+          rehearsals: { start_time: "2026-08-16T19:00:00", end_time: "2026-08-16T21:00:00" },
+        }),
+        // status null（未评定，列表「—」）：不计入任何栏目
+        row({ status: null, sign_in_time: null, rehearsals: null }),
+      ];
+      expect(summarizeAttendance(rows, now)).toEqual({
+        total: 6, // 区间内全部行数（含未签到/未评定行）
+        present: 1,
+        late: 1,
+        excused: 1,
+        absent: 1,
+      });
+    });
+
+    it("total 语义：区间内全部行数，可能大于四类之和（未签到/未评定不参与分类）", () => {
+      const rows: AttendanceSummaryRow[] = [
+        row(), // present
+        // 未结束排练的 absent 占位行：只进 total
+        row({
+          status: "absent",
+          sign_in_time: null,
+          rehearsals: { start_time: "2026-08-16T19:00:00", end_time: "2026-08-16T21:00:00" },
+        }),
+        // status null：只进 total
+        row({ status: null, sign_in_time: null, rehearsals: null }),
+      ];
+      const summary = summarizeAttendance(rows, now);
+      expect(summary.total).toBe(3);
+      expect(summary.present + summary.late + summary.excused + summary.absent).toBe(1);
+    });
+
+    it("空区间：全 0", () => {
+      expect(summarizeAttendance([], now)).toEqual({
+        total: 0,
+        present: 0,
+        late: 0,
+        excused: 0,
+        absent: 0,
+      });
+    });
+
+    it("仅未评定（null）行：计入 total，四类全 0", () => {
+      const rows: AttendanceSummaryRow[] = [
+        row({ status: null, sign_in_time: null, rehearsals: null }),
+        row({ status: null, sign_in_time: null, rehearsals: null }),
+      ];
+      expect(summarizeAttendance(rows, now)).toEqual({
+        total: 2,
+        present: 0,
+        late: 0,
+        excused: 0,
+        absent: 0,
+      });
+    });
+
+    it("占位判定随排练是否结束变化：未结束不计缺勤、已结束计缺勤（与展示同源）", () => {
+      const placeholderRow: AttendanceSummaryRow = {
+        status: "absent",
+        sign_in_time: null,
+        rehearsals: { start_time: "2026-08-16T19:00:00", end_time: "2026-08-16T21:00:00" },
+      };
+      // 排练未结束（now 08-15 < 08-16）：占位 → 不计入缺勤
+      expect(summarizeAttendance([placeholderRow], new Date(2026, 7, 15, 13, 0, 0)).absent).toBe(0);
+      // 排练已结束（now 08-19 > 08-16）：占位解除 → 缺勤
+      expect(summarizeAttendance([placeholderRow], new Date(2026, 7, 19, 13, 0, 0)).absent).toBe(1);
+    });
+  });
+
+  it("考勤弹窗显示区间统计：混合状态一行排版 + 语义色与状态标签一致", () => {
+    // 固定判定时间：08-10 排练已结束、08-16 排练未结束（占位判定依赖当前时间）
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 15, 13, 0, 0));
+    mockUseProfilesReturn([mockProfile()]);
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({
+        data: [
+          mockAttendanceRow(), // present（已签到）
+          mockAttendanceRow({ id: 2, status: "late" }),
+          mockAttendanceRow({ id: 3, status: "excused" }),
+          // 已结束排练的 absent：占位解除 → 缺勤
+          mockAttendanceRow({ id: 4, status: "absent", sign_in_time: null }),
+          // 未结束排练的 absent 占位行：列表显示「未签到」，统计不计入任何栏目
+          mockAttendanceRow({
+            id: 5,
+            status: "absent",
+            sign_in_time: null,
+            rehearsals: {
+              start_time: "2026-08-16T19:00:00",
+              end_time: "2026-08-16T21:00:00",
+              location: "排练厅",
+              repertoire: "未来排练曲目",
+            },
+          }),
+        ],
+        error: null,
+      });
+      return undefined;
+    });
+    try {
+      renderPage();
+      fireEvent.click(screen.getByRole("button", { name: "考勤" }));
+      // 统计行：共 5 次排练（total 含占位行），四类各 1；无「未签到」栏目
+      expect(screen.getByText("共 5 次排练")).toBeInTheDocument();
+      expect(screen.getByText("出席 1")).toBeInTheDocument();
+      expect(screen.getByText("迟到 1")).toBeInTheDocument();
+      expect(screen.getByText("请假 1")).toBeInTheDocument();
+      expect(screen.getByText("缺勤 1")).toBeInTheDocument();
+      expect(screen.queryByText("未签到 1")).toBeNull();
+      // 语义色与 STATUS_TEXT_COLOR 一致：出席成功 / 迟到警告 / 请假信息 / 缺勤危险
+      expect(screen.getByText("出席 1").className).toContain("text-success");
+      expect(screen.getByText("迟到 1").className).toContain("text-warning");
+      expect(screen.getByText("请假 1").className).toContain("text-info");
+      expect(screen.getByText("缺勤 1").className).toContain("text-danger");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("空区间：统计显示全 0（列表显示暂无记录）", () => {
+    mockUseProfilesReturn([mockProfile()]);
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({ data: [], error: null });
+      return undefined;
+    });
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "考勤" }));
+    expect(screen.getByText("该区间暂无考勤记录")).toBeInTheDocument();
+    expect(screen.getByText("共 0 次排练")).toBeInTheDocument();
+    expect(screen.getByText("出席 0")).toBeInTheDocument();
+    expect(screen.getByText("迟到 0")).toBeInTheDocument();
+    expect(screen.getByText("请假 0")).toBeInTheDocument();
+    expect(screen.getByText("缺勤 0")).toBeInTheDocument();
+    expect(screen.queryByText("未签到 0")).toBeNull();
+  });
+
+  it("区间变更：统计随新列表同步刷新（派生计算自动，无额外查询）", () => {
+    // 固定判定时间：08-16 排练未结束（占位判定不依赖真实运行时刻）
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 15, 13, 0, 0));
+    mockUseProfilesReturn([mockProfile()]);
+    mockThen
+      .mockImplementationOnce((cb: (v: unknown) => void) => {
+        cb({
+          data: [
+            mockAttendanceRow(), // present
+            mockAttendanceRow({ id: 2, status: "late" }),
+          ],
+          error: null,
+        });
+        return undefined;
+      })
+      .mockImplementationOnce((cb: (v: unknown) => void) => {
+        cb({
+          data: [
+            mockAttendanceRow({
+              id: 3,
+              status: "absent",
+              sign_in_time: null,
+              rehearsals: {
+                start_time: "2026-08-16T19:00:00",
+                end_time: "2026-08-16T21:00:00",
+                location: "排练厅",
+                repertoire: "区间内未来排练",
+              },
+            }),
+          ],
+          error: null,
+        });
+        return undefined;
+      });
+    const { container } = renderPage();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "考勤" }));
+      // 第一次（打开默认查全部）：2 行统计
+      expect(screen.getByText("共 2 次排练")).toBeInTheDocument();
+      expect(screen.getByText("出席 1")).toBeInTheDocument();
+      expect(screen.getByText("迟到 1")).toBeInTheDocument();
+      // 切换区间：新列表驱动统计同步刷新——占位行只进 total，四类全 0
+      const dateInputs = container.querySelectorAll('input[type="date"]');
+      fireEvent.change(dateInputs[0], { target: { value: "2026-08-01" } });
+      expect(screen.getByText("共 1 次排练")).toBeInTheDocument();
+      expect(screen.getByText("出席 0")).toBeInTheDocument();
+      expect(screen.getByText("缺勤 0")).toBeInTheDocument();
+      expect(screen.queryByText("出席 1")).toBeNull();
+      expect(screen.queryByText("迟到 1")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("排练跨过结束时刻：统计与列表同步翻转（渲染期求值，无旧 now 缓存）", () => {
+    // 复现对抗场景：fake time 20:58 打开弹窗（排练 19:00-21:00 未结束，占位）；
+    // 21:05 排练结束，期间一次不更新 attendanceRows 的 re-render（rerender 同树
+    // 保留 state，仅重跑渲染函数读取新时钟）——统计必须与列表同步翻转为缺勤
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 15, 20, 58, 0));
+    mockUseProfilesReturn([mockProfile()]);
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cb({
+        data: [
+          mockAttendanceRow({
+            id: 1,
+            status: "absent",
+            sign_in_time: null,
+            rehearsals: {
+              start_time: "2026-08-15T19:00:00",
+              end_time: "2026-08-15T21:00:00",
+              location: "排练厅",
+              repertoire: "跨时刻排练",
+            },
+          }),
+        ],
+        error: null,
+      });
+      return undefined;
+    });
+    const { rerender } = renderPage();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "考勤" }));
+      // 排练未结束：列表「未签到」，统计不计缺勤（四类全 0）
+      expect(screen.getByText("未签到")).toBeInTheDocument();
+      expect(screen.getByText("缺勤 0")).toBeInTheDocument();
+
+      // 推进时钟越过结束时刻，同树重渲染（attendanceRows 不变，模拟通知未读数等
+      // 无关 re-render）——列表与统计同帧读取新时钟
+      vi.setSystemTime(new Date(2026, 7, 15, 21, 5, 0));
+      rerender(
+        <ThemeProvider>
+          <ProfilePage />
+        </ThemeProvider>,
+      );
+      // 同屏同步翻转：列表「缺勤」与统计「缺勤 1」一致（无旧 now 缓存分歧）
+      expect(screen.getByText("缺勤")).toBeInTheDocument();
+      expect(screen.getByText("缺勤 1")).toBeInTheDocument();
+      expect(screen.getByText("共 1 次排练")).toBeInTheDocument();
+      expect(screen.queryByText("未签到")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("加载中/查询失败：统计区隐藏（不展示误导性旧统计）", async () => {
+    mockUseProfilesReturn([mockProfile()]);
+    const cbs: ((v: unknown) => void)[] = [];
+    mockThen.mockImplementation((cb: (v: unknown) => void) => {
+      cbs.push(cb);
+      return undefined;
+    });
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "考勤" }));
+    // 加载中：列表显示加载中，统计区不渲染
+    expect(screen.getByText("加载中…")).toBeInTheDocument();
+    expect(screen.queryByText(/次排练/)).toBeNull();
+    // 查询失败：统计区同样隐藏
+    await act(async () => {
+      cbs[0]({ data: null, error: { message: "网络错误" } });
+    });
+    expect(screen.getByText("加载失败，请稍后重试")).toBeInTheDocument();
+    expect(screen.queryByText(/次排练/)).toBeNull();
   });
 
   // ============================================================

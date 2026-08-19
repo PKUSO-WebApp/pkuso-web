@@ -201,6 +201,42 @@ describe("Issue #193 profiles 隐私：成员写路径权限回归（真实连�
           .eq("id", userId)
           .maybeSingle();
         expect(afterBare?.college).toBe("测试学院");
+
+        // 6.5 Issue #197 回归：成员 PATCH 自己行的 status/role → 期望 403（42501）
+        //     profiles UPDATE 已收紧为列级白名单（ProfileUpdatePayload 10 列），
+        //     管理字段 status/role 对 authenticated 无列级授权（含 admin 浏览器端；
+        //     审批走 service role API 不受影响）
+        const statusRes = await fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${userId}`, {
+          method: "PATCH",
+          headers: {
+            apikey: anonKey,
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+            prefer: "return=representation",
+          },
+          body: JSON.stringify({ status: "approved" }),
+        });
+        expect(statusRes.status).toBe(403);
+        const statusBody = (await statusRes.json().catch(() => null)) as {
+          code?: string;
+        } | null;
+        expect(statusBody?.code).toBe("42501");
+
+        const roleRes = await fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${userId}`, {
+          method: "PATCH",
+          headers: {
+            apikey: anonKey,
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+            prefer: "return=representation",
+          },
+          body: JSON.stringify({ role: "admin" }),
+        });
+        expect(roleRes.status).toBe(403);
+        const roleBody = (await roleRes.json().catch(() => null)) as {
+          code?: string;
+        } | null;
+        expect(roleBody?.code).toBe("42501");
       } finally {
         // 7. 清理（失败即抛错：不允许静默孤儿，Issue #129）。先 profiles 后 auth.users
         await deleteTestUser(sb, userId);

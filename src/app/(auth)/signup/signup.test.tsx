@@ -486,6 +486,14 @@ describe("SignupPage", () => {
       // 不再通过 supabase.from 直接更新 used_by
       expect(supabase.from).not.toHaveBeenCalled();
     });
+
+    // 等待成功路径 2 秒定时器耗尽并跳转（#181）：不等待则挂起定时器泄漏到后续用例
+    await waitFor(
+      () => {
+        expect(mockReplace).toHaveBeenCalledWith("/login");
+      },
+      { timeout: 3000 },
+    );
   });
 
   it("邀请码验证失败（只读阶段）时不调用 signUp、不创建用户", async () => {
@@ -595,6 +603,14 @@ describe("SignupPage", () => {
     await waitFor(() => {
       expect(screen.getByText("注册成功，请等待管理员审核。")).toBeInTheDocument();
     });
+
+    // 等待成功路径 2 秒定时器耗尽并跳转（#181）：不等待则挂起定时器泄漏到后续用例
+    await waitFor(
+      () => {
+        expect(mockReplace).toHaveBeenCalledWith("/login");
+      },
+      { timeout: 3000 },
+    );
   });
 
   // 邀请码多次使用测试
@@ -642,6 +658,14 @@ describe("SignupPage", () => {
       // 第一次注册成功
       expect(screen.getByText("注册成功，请等待管理员审核。")).toBeInTheDocument();
     });
+
+    // 等待成功路径 2 秒定时器耗尽并跳转（#181）：不等待则挂起定时器泄漏到后续用例
+    await waitFor(
+      () => {
+        expect(mockReplace).toHaveBeenCalledWith("/login");
+      },
+      { timeout: 3000 },
+    );
   });
 
   it("多次使用邀请码 - 达到使用次数上限后失败", async () => {
@@ -687,6 +711,14 @@ describe("SignupPage", () => {
     await waitFor(() => {
       expect(screen.getByText("注册成功，请等待管理员审核。")).toBeInTheDocument();
     });
+
+    // 等待成功路径 2 秒定时器耗尽并跳转（#181）：不等待则挂起定时器泄漏到后续用例
+    await waitFor(
+      () => {
+        expect(mockReplace).toHaveBeenCalledWith("/login");
+      },
+      { timeout: 3000 },
+    );
   });
 
   it("邀请码消耗失败时显示错误提示且不跳转", async () => {

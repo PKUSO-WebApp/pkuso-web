@@ -78,6 +78,8 @@ export default function ProfilePage() {
   const [feedbackLoading, setFeedbackLoading] = React.useState(false);
   const [feedbackError, setFeedbackError] = React.useState(false); // 查询失败态（显示「加载失败」+ 重试）
   const feedbackSeqRef = React.useRef(0);
+  // 删除进行中 id（Issue #210）：防重复删除的同步阻断（CLAUDE.md deletingId 范式）
+  const [deletingFeedbackId, setDeletingFeedbackId] = React.useState<string | null>(null);
 
   /** 拉取反馈列表（created_at 倒序；admin 浏览器端，is_admin() RLS 放行） */
   const fetchFeedback = () => {
@@ -105,6 +107,38 @@ export default function ProfilePage() {
   const handleOpenFeedbackModal = () => {
     setIsFeedbackOpen(true);
     fetchFeedback();
+  };
+
+  /** 删除反馈（Issue #210）：走 service role API route（feedback 无 DELETE RLS 策略）。
+   *  confirm 二次确认；deletingFeedbackId 同步阻断防重复删除；成功后本地移除该行 */
+  const handleDeleteFeedback = async (id: string) => {
+    if (deletingFeedbackId) return; // 同步阻断（setState 异步，deletingFeedbackId 闭包旧值兜底）
+    if (!window.confirm("确定删除这条反馈吗？删除后不可恢复")) return;
+    setDeletingFeedbackId(id);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const response = await window.fetch(`/api/admin/feedback?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: session?.access_token
+          ? { Authorization: `Bearer ${session.access_token}` }
+          : undefined,
+      });
+      const result = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+      } | null;
+      if (response.ok && result?.ok) {
+        setFeedbackRows((prev) => prev.filter((r) => r.id !== id));
+      } else {
+        alert(result?.error || "删除失败");
+      }
+    } catch {
+      alert("网络错误");
+    } finally {
+      setDeletingFeedbackId(null);
+    }
   };
 
   // 全屏编辑时锁定背景滚动（清理时恢复；组件卸载时 cleanup 同样恢复）
@@ -984,8 +1018,8 @@ export default function ProfilePage() {
         </div>
       </Modal>
 
-      {/* 反馈列表 Modal（底部弹出，Issue #209）：只读展示成员匿名反馈（内容 + 提交时间倒序）。
-          表结构无作者列（匿名是结构保证），不显示任何作者信息；无删除/标记操作 */}
+      {/* 反馈列表 Modal（底部弹出，Issue #209/#210）：展示成员匿名反馈（内容 + 提交时间倒序）。
+          表结构无作者列（匿名是结构保证），不显示任何作者信息；支持删除治理（走 service role API） */}
       <Modal
         open={isFeedbackOpen}
         onClose={() => setIsFeedbackOpen(false)}
@@ -1013,11 +1047,22 @@ export default function ProfilePage() {
             <div className="max-h-[60vh] space-y-3 overflow-y-auto pb-1">
               {feedbackRows.map((row) => (
                 <div key={row.id} className="rounded-xl border border-border bg-card p-3">
-                  <p className="whitespace-pre-line text-sm leading-relaxed text-text">
+                  {/* 行头：提交时间 + 删除入口（Issue #210 治理：匿名反馈唯一清理途径） */}
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-caption text-text-muted">
+                      {formatDateTimeInChina(row.created_at)}
+                    </p>
+                    <button
+                      type="button"
+                      disabled={deletingFeedbackId !== null}
+                      onClick={() => void handleDeleteFeedback(row.id)}
+                      className="shrink-0 text-caption text-danger hover:opacity-80 disabled:opacity-50"
+                    >
+                      {deletingFeedbackId === row.id ? "删除中…" : "删除"}
+                    </button>
+                  </div>
+                  <p className="mt-1 whitespace-pre-line text-sm leading-relaxed text-text">
                     {row.content}
-                  </p>
-                  <p className="mt-1 text-caption text-text-muted">
-                    {formatDateTimeInChina(row.created_at)}
                   </p>
                 </div>
               ))}

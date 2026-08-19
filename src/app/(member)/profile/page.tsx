@@ -829,10 +829,12 @@ export default function ProfilePage() {
             value={feedbackContent}
             onChange={(e) => setFeedbackContent(e.target.value)}
             rows={4}
+            maxLength={2000}
             disabled={isFeedbackSubmitting}
             className="w-full rounded-xl border border-border bg-muted px-3 py-3 text-xs leading-[1.6] text-text outline-none focus:border-text-muted"
             placeholder="写下你的问题或建议"
           />
+          {/* maxLength 与 DB CHECK（feedback_content_length_check）一致（Issue #210） */}
           {/* 单主操作按钮右对齐（双按钮行规范的唯一按钮豁免） */}
           <div className="mt-2 flex justify-end gap-2">
             <button

@@ -1485,4 +1485,110 @@ describe("反馈列表（Issue #209）", () => {
     expect(screen.getByText("最新反馈")).toBeInTheDocument();
     expect(screen.queryByText("过期反馈")).toBeNull();
   });
+
+  // ---- Issue #210：反馈治理（删除入口，走 service role API route）----
+
+  it("删除：confirm 取消不调用删除 API", async () => {
+    setupSupabaseMock({ fetchData: [sampleFeedback()] });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /反馈列表/ }));
+    await waitFor(() => {
+      expect(screen.getByText("希望增加曲库功能")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    expect(confirmSpy).toHaveBeenCalledWith("确定删除这条反馈吗？删除后不可恢复");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(screen.getByText("希望增加曲库功能")).toBeInTheDocument();
+  });
+
+  it("删除成功：调用 DELETE API（带 Bearer）并从列表移除", async () => {
+    setupSupabaseMock({ fetchData: [sampleFeedback()] });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /反馈列表/ }));
+    await waitFor(() => {
+      expect(screen.getByText("希望增加曲库功能")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith("/api/admin/feedback?id=f1", {
+        method: "DELETE",
+        headers: { Authorization: "Bearer test-token" },
+      });
+      expect(screen.queryByText("希望增加曲库功能")).toBeNull();
+    });
+  });
+
+  it("删除失败（404）：alert 提示且行保留", async () => {
+    setupSupabaseMock({ fetchData: [sampleFeedback()] });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: () => Promise.resolve({ error: "反馈不存在或已被删除" }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /反馈列表/ }));
+    await waitFor(() => {
+      expect(screen.getByText("希望增加曲库功能")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith("反馈不存在或已被删除");
+    });
+    expect(screen.getByText("希望增加曲库功能")).toBeInTheDocument();
+  });
+
+  it("删除进行中：按钮显示「删除中…」且全部禁用，防重复删除", async () => {
+    setupSupabaseMock({
+      fetchData: [
+        sampleFeedback(),
+        sampleFeedback({
+          id: "f2",
+          content: "签到太麻烦",
+          created_at: "2026-08-17T09:00:00+08:00",
+        }),
+      ],
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let resolveFetch!: (v: unknown) => void;
+    const fetchSpy = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /反馈列表/ }));
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: "删除" })).toHaveLength(2);
+    });
+    fireEvent.click(screen.getAllByRole("button", { name: "删除" })[0]);
+    // handler 先 await getSession 再调 fetch——等待 fetch 被调用（此时 promise 挂起，resolveFetch 已赋值）
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalled();
+    });
+    // 进行中：第一行按钮显示「删除中…」，两行删除按钮全部禁用
+    expect(screen.getByRole("button", { name: "删除中…" })).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: "删除" })[0]).toBeDisabled();
+    // 完成：列表移除 f1，f2 按钮恢复
+    await act(async () => {
+      resolveFetch({ ok: true, json: () => Promise.resolve({ ok: true }) });
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("希望增加曲库功能")).toBeNull();
+      expect(screen.getByText("签到太麻烦")).toBeInTheDocument();
+    });
+  });
 });

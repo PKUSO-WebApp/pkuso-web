@@ -1450,8 +1450,10 @@ describe("ProfilePage 个人信息页", () => {
 
   // ============================================================
   // Issue #205：已发布的活动（本人公告管理，含锁定帖）
+  // Issue #212：成员面板移除锁定/解锁入口（非 admin 改 is_locked 被 DBA 触发器拒绝），
+  //            锁定帖仅只读展示 🔒 徽章，锁定操作收敛到 admin 端
   // ============================================================
-  describe("已发布的活动（Issue #205）", () => {
+  describe("已发布的活动（Issue #205 / #212）", () => {
     type UpdateFn = (id: string, payload: Record<string, unknown>) => Promise<boolean>;
     type RemoveFn = (id: string) => Promise<boolean>;
 
@@ -1481,7 +1483,7 @@ describe("ProfilePage 个人信息页", () => {
     /**
      * 注入 usePosts mock。用 mockImplementation 每次渲染返回闭包持有的最新列表，
      * 模拟真实 usePosts 的乐观更新：update/remove 成功后 data 引用变化，
-     * 驱动列表/面板派生重算、锁定徽章即时刷新（与 admin community 测试同模式）。
+     * 驱动列表/面板派生重算（与 admin community 测试同模式）。
      */
     function mockPublishedPosts(
       initialData: unknown[] = [],
@@ -1566,7 +1568,7 @@ describe("ProfilePage 个人信息页", () => {
       expect(screen.getAllByText("🔒 已锁定")).toHaveLength(1);
     });
 
-    it("点帖子进入管理面板：标题入标题栏、类型/发布时间展示、操作行三按钮", () => {
+    it("点帖子进入管理面板：标题入标题栏、类型/发布时间展示、操作行编辑/删除双按钮右下角", () => {
       openPublishedPosts();
       fireEvent.click(screen.getByText("重奏招募")); // 点帖子
       // 面板标题 = 帖子标题，类型徽章 + 发布时间
@@ -1574,63 +1576,27 @@ describe("ProfilePage 个人信息页", () => {
       expect(screen.getByText("重奏")).toBeInTheDocument();
       const expectedTime = formatDateTimeInChina("2026-08-01T10:00:00");
       expect(screen.getByText(`发布时间：${expectedTime}`)).toBeInTheDocument();
-      // 操作行：编辑 / 锁定 / 删除（右下角）
+      // 操作行：编辑 / 删除 双按钮（Issue #212：锁定收敛到 admin 端，成员面板不渲染锁定入口）
       expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "锁定" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "删除" })).toBeInTheDocument();
-      // 操作行右下角（justify-end，Issue #182）
-      expect(screen.getByRole("button", { name: "锁定" }).parentElement!.className).toContain(
+      expect(screen.queryByRole("button", { name: "锁定" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "解锁" })).toBeNull();
+      // 双按钮操作行右下角（justify-end，Issue #182）
+      expect(screen.getByRole("button", { name: "删除" }).parentElement!.className).toContain(
         "justify-end",
       );
     });
 
-    it("点「锁定」：update 切换 is_locked=true，按钮变「解锁」且标题栏出现锁定徽章", async () => {
-      const { update } = mockPublishedPosts([makePost()]);
+    it("锁定帖进入面板：标题栏带 🔒 徽章（headerExtra 只读展示），无锁定/解锁按钮", () => {
+      mockPublishedPosts([makePost({ is_locked: true })]);
       renderPage();
       fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
       fireEvent.click(screen.getByText("重奏招募")); // 进入面板
-      fireEvent.click(screen.getByRole("button", { name: "锁定" }));
-      await waitFor(() => {
-        expect(update).toHaveBeenCalledWith("p1", { is_locked: true });
-      });
-      // 乐观更新同步：面板按钮变「解锁」、锁定状态入标题（headerExtra 徽章）
-      await waitFor(() => {
-        expect(screen.getByRole("button", { name: "解锁" })).toBeInTheDocument();
-      });
+      // 只读状态入标题（headerExtra），内容区不重复展示
       expect(screen.getByText("🔒 已锁定")).toBeInTheDocument();
-    });
-
-    it("锁定帖进入面板：标题栏带 🔒 徽章，点「解锁」后 update is_locked=false 且徽章消失", async () => {
-      const { update } = mockPublishedPosts([makePost({ is_locked: true })]);
-      renderPage();
-      fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
-      fireEvent.click(screen.getByText("重奏招募")); // 进入面板
-      // 只读状态入标题（headerExtra）
-      expect(screen.getByText("🔒 已锁定")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "解锁" }));
-      await waitFor(() => {
-        expect(update).toHaveBeenCalledWith("p1", { is_locked: false });
-      });
-      await waitFor(() => {
-        expect(screen.queryByText("🔒 已锁定")).toBeNull();
-      });
-      expect(screen.getByRole("button", { name: "锁定" })).toBeInTheDocument();
-    });
-
-    it("锁定失败（update 0 行返回 false）：alert 提示且状态不变（不假成功）", async () => {
-      const update = vi.fn<UpdateFn>().mockResolvedValue(false);
-      mockPublishedPosts([makePost()], { update });
-      renderPage();
-      fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
-      fireEvent.click(screen.getByText("重奏招募")); // 进入面板
-      fireEvent.click(screen.getByRole("button", { name: "锁定" }));
-      await waitFor(() => {
-        expect(update).toHaveBeenCalledWith("p1", { is_locked: true });
-      });
-      expect(window.alert).toHaveBeenCalledWith("操作失败");
-      // 状态未变：仍为「锁定」按钮、无徽章
-      expect(screen.getByRole("button", { name: "锁定" })).toBeInTheDocument();
-      expect(screen.queryByText("🔒 已锁定")).toBeNull();
+      // Issue #212：成员无锁定操作入口（数据层由 DBA 触发器保障，前端无锁定失败路径）
+      expect(screen.queryByRole("button", { name: "锁定" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "解锁" })).toBeNull();
     });
 
     it("点「删除」：confirm 后调用 remove，面板关闭回列表、帖子移除（空态）", async () => {
@@ -1664,7 +1630,7 @@ describe("ProfilePage 个人信息页", () => {
       expect(screen.getByRole("heading", { name: "重奏招募" })).toBeInTheDocument();
     });
 
-    it("删除进行中：操作行三按钮互斥禁用、弹窗关闭被拦截，完成后回列表", async () => {
+    it("删除进行中：操作行双按钮互斥禁用、弹窗关闭被拦截，完成后回列表", async () => {
       vi.spyOn(window, "confirm").mockReturnValue(true);
       let resolveRemove!: (ok: boolean) => void;
       const removeMock = vi.fn<RemoveFn>().mockImplementation(
@@ -1678,10 +1644,9 @@ describe("ProfilePage 个人信息页", () => {
       fireEvent.click(screen.getByRole("button", { name: "已发布的活动" }));
       fireEvent.click(screen.getByText("重奏招募")); // 进入面板
       fireEvent.click(screen.getByRole("button", { name: "删除" }));
-      // busy：删除按钮显示「删除中…」并禁用，编辑/锁定同步禁用（防操作已删帖子）
+      // busy：删除按钮显示「删除中…」并禁用，编辑同步禁用（防操作已删帖子）
       expect((screen.getByText("删除中…") as HTMLButtonElement).disabled).toBe(true);
       expect((screen.getByText("编辑") as HTMLButtonElement).disabled).toBe(true);
-      expect((screen.getByText("锁定") as HTMLButtonElement).disabled).toBe(true);
       // busy：遮罩关闭按钮不渲染，标题栏「关闭」点击被守卫拦截
       expect(screen.queryByLabelText("关闭弹窗")).toBeNull();
       fireEvent.click(screen.getByText("关闭"));

@@ -893,6 +893,214 @@ describe("ProfilePage 个人信息页", () => {
     expect(root.className).not.toContain("overflow-hidden");
   });
 
+  // ============================================================
+  // Issue #214：账号与密码弹窗 tab 化（修改密码 / 换绑邮箱 两区块）
+  // ============================================================
+  it("打开账号与密码弹窗：渲染两个 tab，默认激活「修改密码」，换绑区块隐藏", () => {
+    mockUseProfilesReturn([mockProfile()]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    // 弹窗标题与入口同名「账号与密码」
+    expect(screen.getByRole("heading", { name: "账号与密码" })).toBeInTheDocument();
+    // 两个 tab 按钮（Toggle 两选项）
+    const pwdTab = screen.getByRole("button", { name: "修改密码" });
+    const emailTab = screen.getByRole("button", { name: "换绑邮箱" });
+    // 默认激活「修改密码」（激活态 bg-primary），换绑未激活
+    expect(pwdTab.className).toContain("bg-primary");
+    expect(emailTab.className).not.toContain("bg-primary");
+    // 默认显示改密区块，换绑区块隐藏
+    expect(screen.getByPlaceholderText("至少 6 位")).toBeInTheDocument();
+    expect(screen.queryByText("当前邮箱：a@b.com")).toBeNull();
+    expect(screen.queryByPlaceholderText("输入新邮箱")).toBeNull();
+  });
+
+  it("切换 tab：显示对应区块且不清空另一区块输入", () => {
+    mockUseProfilesReturn([mockProfile()]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    // 改密区块填写输入
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), { target: { value: "123456" } });
+    fireEvent.change(screen.getByPlaceholderText("再次输入"), { target: { value: "123456" } });
+
+    // 切到换绑：改密区块隐藏，换绑区块可见
+    fireEvent.click(screen.getByRole("button", { name: "换绑邮箱" }));
+    expect(screen.queryByPlaceholderText("至少 6 位")).toBeNull();
+    expect(screen.getByText("当前邮箱：a@b.com")).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("输入新邮箱"), {
+      target: { value: "new@example.com" },
+    });
+
+    // 切回改密：输入保留（state 在组件层，切换不清空）
+    fireEvent.click(screen.getByRole("button", { name: "修改密码" }));
+    expect((screen.getByPlaceholderText("至少 6 位") as HTMLInputElement).value).toBe("123456");
+    expect((screen.getByPlaceholderText("再次输入") as HTMLInputElement).value).toBe("123456");
+    expect(screen.queryByPlaceholderText("输入新邮箱")).toBeNull();
+
+    // 再切到换绑：新邮箱输入同样保留
+    fireEvent.click(screen.getByRole("button", { name: "换绑邮箱" }));
+    expect((screen.getByPlaceholderText("输入新邮箱") as HTMLInputElement).value).toBe(
+      "new@example.com",
+    );
+  });
+
+  it("提交中允许切换 tab（决策：两区块提交各自守卫，关闭守卫仍拦截任一提交中关闭）", async () => {
+    let resolveUpdate!: (v: { error: null }) => void;
+    const pending = new Promise<{ error: null }>((resolve) => {
+      resolveUpdate = resolve;
+    });
+    const updateUser = vi.mocked(supabase.auth.updateUser);
+    updateUser.mockReturnValue(pending as never);
+    mockUseProfilesReturn([mockProfile()]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), { target: { value: "123456" } });
+    fireEvent.change(screen.getByPlaceholderText("再次输入"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认修改" }));
+    // ref 同步阻断：只发一次请求
+    expect(updateUser).toHaveBeenCalledTimes(1);
+    // 提交中：tab 未禁用，可切到换绑区块查看/填写
+    fireEvent.click(screen.getByRole("button", { name: "换绑邮箱" }));
+    expect(screen.getByPlaceholderText("输入新邮箱")).toBeInTheDocument();
+    // 提交中：弹窗关闭守卫仍拦截（isUpdatingPwd 在守卫内）
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(screen.getByRole("heading", { name: "账号与密码" })).toBeInTheDocument();
+    // 改密完成：弹窗正常关闭
+    await act(async () => {
+      resolveUpdate({ error: null });
+    });
+    expect(screen.queryByRole("heading", { name: "账号与密码" })).toBeNull();
+  });
+
+  it("改密飞行中切到换绑填未提交输入：改密完成不关窗、换绑输入保留（对抗返工 Issue #214）", async () => {
+    let resolveUpdate!: (v: { error: null }) => void;
+    const pending = new Promise<{ error: null }>((resolve) => {
+      resolveUpdate = resolve;
+    });
+    const updateUser = vi.mocked(supabase.auth.updateUser);
+    updateUser.mockReturnValueOnce(pending as never);
+    mockUseProfilesReturn([mockProfile()]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    // 改密提交（pending 飞行中）
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), { target: { value: "123456" } });
+    fireEvent.change(screen.getByPlaceholderText("再次输入"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认修改" }));
+    expect(updateUser).toHaveBeenCalledTimes(1);
+    // 提交中切到换绑 tab 填新邮箱（未提交）
+    fireEvent.click(screen.getByRole("button", { name: "换绑邮箱" }));
+    fireEvent.change(screen.getByPlaceholderText("输入新邮箱"), {
+      target: { value: "new@example.com" },
+    });
+    // 改密完成：换绑输入非空 → 弹窗不关闭、输入保留
+    await act(async () => {
+      resolveUpdate({ error: null });
+    });
+    expect(screen.getByRole("heading", { name: "账号与密码" })).toBeInTheDocument();
+    expect((screen.getByPlaceholderText("输入新邮箱") as HTMLInputElement).value).toBe(
+      "new@example.com",
+    );
+  });
+
+  it("关闭后重开弹窗：默认回到「修改密码」tab（对抗返工 Issue #214）", () => {
+    mockUseProfilesReturn([mockProfile()]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    // 切到换绑 tab 后关闭
+    fireEvent.click(screen.getByRole("button", { name: "换绑邮箱" }));
+    expect(screen.getByPlaceholderText("输入新邮箱")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("heading", { name: "账号与密码" })).toBeNull();
+    // 重开：入口重置 tab → 默认回到改密区块
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    expect(screen.getByPlaceholderText("至少 6 位")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("输入新邮箱")).toBeNull();
+  });
+
+  it("换绑成功后同会话改密成功：弹窗正常关闭（newEmailRef 随 state 清空，对抗复攻 Issue #214）", async () => {
+    const updateUser = vi.mocked(supabase.auth.updateUser);
+    updateUser.mockResolvedValue({ error: null } as never);
+    mockUseProfilesReturn([mockProfile()]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    // 换绑成功：弹窗保持打开、输入清空（ref 同步清空）
+    fireEvent.click(screen.getByRole("button", { name: "换绑邮箱" }));
+    fireEvent.change(screen.getByPlaceholderText("输入新邮箱"), {
+      target: { value: "new@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送确认邮件" }));
+    await waitFor(() => {
+      expect(updateUser).toHaveBeenCalledTimes(1);
+    });
+    expect((screen.getByPlaceholderText("输入新邮箱") as HTMLInputElement).value).toBe("");
+    // 切回改密 tab 提交改密并成功：换绑输入已清空 → 弹窗正常关闭
+    fireEvent.click(screen.getByRole("button", { name: "修改密码" }));
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), { target: { value: "123456" } });
+    fireEvent.change(screen.getByPlaceholderText("再次输入"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认修改" }));
+    await waitFor(() => {
+      expect(updateUser).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.queryByRole("heading", { name: "账号与密码" })).toBeNull();
+  });
+
+  it("换绑成功后跨会话改密成功：重开弹窗改密仍正常关闭（对抗复攻 Issue #214）", async () => {
+    const updateUser = vi.mocked(supabase.auth.updateUser);
+    updateUser.mockResolvedValue({ error: null } as never);
+    mockUseProfilesReturn([mockProfile()]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    // 换绑成功
+    fireEvent.click(screen.getByRole("button", { name: "换绑邮箱" }));
+    fireEvent.change(screen.getByPlaceholderText("输入新邮箱"), {
+      target: { value: "new@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送确认邮件" }));
+    await waitFor(() => {
+      expect(updateUser).toHaveBeenCalledTimes(1);
+    });
+    // 关闭弹窗（无飞行，正常关闭）
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("heading", { name: "账号与密码" })).toBeNull();
+    // 重开（默认回到改密 tab）提交改密并成功：弹窗正常关闭
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    fireEvent.change(screen.getByPlaceholderText("至少 6 位"), { target: { value: "123456" } });
+    fireEvent.change(screen.getByPlaceholderText("再次输入"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认修改" }));
+    await waitFor(() => {
+      expect(updateUser).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.queryByRole("heading", { name: "账号与密码" })).toBeNull();
+  });
+
+  it("换绑飞行中「取消」按钮禁用（与 onClose 守卫一致，reviewer 复核 Issue #214）", async () => {
+    let resolveRebind!: (v: { error: null }) => void;
+    const pending = new Promise<{ error: null }>((resolve) => {
+      resolveRebind = resolve;
+    });
+    const updateUser = vi.mocked(supabase.auth.updateUser);
+    updateUser.mockReturnValueOnce(pending as never);
+    mockUseProfilesReturn([mockProfile()]);
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    // 切到换绑 tab 提交（pending 飞行中）
+    fireEvent.click(screen.getByRole("button", { name: "换绑邮箱" }));
+    fireEvent.change(screen.getByPlaceholderText("输入新邮箱"), {
+      target: { value: "new@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送确认邮件" }));
+    expect(updateUser).toHaveBeenCalledTimes(1);
+    // 提交中切回改密 tab：「取消」同步禁用（任一提交飞行中不可关窗）
+    fireEvent.click(screen.getByRole("button", { name: "修改密码" }));
+    expect((screen.getByRole("button", { name: "取消" }) as HTMLButtonElement).disabled).toBe(true);
+    // 换绑完成：「取消」恢复可用
+    await act(async () => {
+      resolveRebind({ error: null });
+    });
+    expect((screen.getByRole("button", { name: "取消" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
   it("改密防重复提交：提交中双击只调用一次 updateUser，完成后弹窗关闭", async () => {
     let resolveUpdate!: (v: { error: null }) => void;
     const pending = new Promise<{ error: null }>((resolve) => {
@@ -914,13 +1122,13 @@ describe("ProfilePage 个人信息页", () => {
     // 提交中按钮进入提交态且禁用，弹窗无法通过守卫关闭
     expect(screen.getByRole("button", { name: "提交中..." })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-    expect(screen.getByRole("heading", { name: "修改登录密码" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "账号与密码" })).toBeInTheDocument();
 
     // 提交完成后（finally 复位）弹窗正常关闭
     await act(async () => {
       resolveUpdate({ error: null });
     });
-    expect(screen.queryByRole("heading", { name: "修改登录密码" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "账号与密码" })).toBeNull();
   });
 
   it("改密失败(reject)时 finally 复位：弹窗不锁死、可正常关闭", async () => {
@@ -959,7 +1167,7 @@ describe("ProfilePage 个人信息页", () => {
       const closeBtn = screen.getByRole("button", { name: "关闭" });
       expect(closeBtn).not.toBeDisabled();
       fireEvent.click(closeBtn);
-      expect(screen.queryByRole("heading", { name: "修改登录密码" })).toBeNull();
+      expect(screen.queryByRole("heading", { name: "账号与密码" })).toBeNull();
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
     }
@@ -974,6 +1182,8 @@ describe("ProfilePage 个人信息页", () => {
     mockUseProfilesReturn([mockProfile()]);
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    // 切到换绑邮箱 tab（默认激活修改密码，Issue #214）
+    fireEvent.click(screen.getByRole("button", { name: "换绑邮箱" }));
     // 当前邮箱只读展示（弹窗内区块）
     expect(screen.getByText("当前邮箱：a@b.com")).toBeInTheDocument();
 
@@ -989,7 +1199,7 @@ describe("ProfilePage 个人信息页", () => {
     );
     // 成功后清空输入；未确认前不关闭弹窗
     expect(emailInput.value).toBe("");
-    expect(screen.getByRole("heading", { name: "修改登录密码" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "账号与密码" })).toBeInTheDocument();
   });
 
   it("换绑输入为空/格式错误时提示且不调用 updateUser", async () => {
@@ -998,6 +1208,8 @@ describe("ProfilePage 个人信息页", () => {
     mockUseProfilesReturn([mockProfile()]);
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    // 切到换绑邮箱 tab（默认激活修改密码，Issue #214）
+    fireEvent.click(screen.getByRole("button", { name: "换绑邮箱" }));
     const emailInput = screen.getByPlaceholderText("输入新邮箱") as HTMLInputElement;
 
     // 空输入
@@ -1018,6 +1230,8 @@ describe("ProfilePage 个人信息页", () => {
     mockUseProfilesReturn([mockProfile()]);
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    // 切到换绑邮箱 tab（默认激活修改密码，Issue #214）
+    fireEvent.click(screen.getByRole("button", { name: "换绑邮箱" }));
     fireEvent.change(screen.getByPlaceholderText("输入新邮箱"), {
       target: { value: "A@b.com" },
     });
@@ -1033,6 +1247,8 @@ describe("ProfilePage 个人信息页", () => {
     mockUseProfilesReturn([mockProfile()]);
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    // 切到换绑邮箱 tab（默认激活修改密码，Issue #214）
+    fireEvent.click(screen.getByRole("button", { name: "换绑邮箱" }));
     const emailInput = screen.getByPlaceholderText("输入新邮箱") as HTMLInputElement;
     fireEvent.change(emailInput, { target: { value: "taken@example.com" } });
     fireEvent.click(screen.getByRole("button", { name: "发送确认邮件" }));
@@ -1055,6 +1271,8 @@ describe("ProfilePage 个人信息页", () => {
     mockUseProfilesReturn([mockProfile()]);
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
+    // 切到换绑邮箱 tab（默认激活修改密码，Issue #214）
+    fireEvent.click(screen.getByRole("button", { name: "换绑邮箱" }));
     fireEvent.change(screen.getByPlaceholderText("输入新邮箱"), {
       target: { value: "new@example.com" },
     });
@@ -1067,7 +1285,7 @@ describe("ProfilePage 个人信息页", () => {
     // 提交中按钮进入提交态且禁用，弹窗无法通过守卫关闭
     expect(screen.getByRole("button", { name: "发送中..." })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-    expect(screen.getByRole("heading", { name: "修改登录密码" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "账号与密码" })).toBeInTheDocument();
 
     await act(async () => {
       resolveUpdate({ error: null });
@@ -1088,14 +1306,16 @@ describe("ProfilePage 个人信息页", () => {
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: "账号与密码" }));
 
-    // 先提交换绑（pending 飞行中）
+    // 切到换绑邮箱 tab，先提交换绑（pending 飞行中）
+    fireEvent.click(screen.getByRole("button", { name: "换绑邮箱" }));
     fireEvent.change(screen.getByPlaceholderText("输入新邮箱"), {
       target: { value: "new@example.com" },
     });
     fireEvent.click(screen.getByRole("button", { name: "发送确认邮件" }));
     expect(updateUser).toHaveBeenCalledTimes(1);
 
-    // 再提交改密并成功——若用 state 闭包守卫会误关弹窗，ref 守卫应保持打开
+    // 切回改密 tab，再提交改密并成功——若用 state 闭包守卫会误关弹窗，ref 守卫应保持打开
+    fireEvent.click(screen.getByRole("button", { name: "修改密码" }));
     fireEvent.change(screen.getByPlaceholderText("至少 6 位"), { target: { value: "123456" } });
     fireEvent.change(screen.getByPlaceholderText("再次输入"), { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "确认修改" }));
@@ -1103,7 +1323,7 @@ describe("ProfilePage 个人信息页", () => {
     await waitFor(() => {
       expect(window.alert).toHaveBeenCalledWith("密码修改成功");
     });
-    expect(screen.getByRole("heading", { name: "修改登录密码" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "账号与密码" })).toBeInTheDocument();
 
     // 换绑完成（弹窗此刻仍可正常关闭）
     await act(async () => {

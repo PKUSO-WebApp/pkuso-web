@@ -56,6 +56,7 @@ function makePost(overrides: Record<string, unknown> = {}) {
     current_sections: null,
     missing_sections: null,
     is_locked: false,
+    locked_by: null,
     profiles: { full_name: "张三", instrument: "小提琴" },
     ...overrides,
   };
@@ -248,12 +249,44 @@ describe("AdminPostDetailPage 公告详情（Issue #179：Modal→页面）", ()
         content: "你的重奏帖子《测试公告》已被管理员锁定",
       });
     });
-    // 解锁（is_locked true→false）：不插通知，插入次数保持 1
+    // 解锁（is_locked true→false）：新语义同样插通知（共 2 次：锁定 + 已被解锁）
     fireEvent.click(screen.getByText("解锁"));
     await waitFor(() => {
       expect(update).toHaveBeenCalledWith("post-1", { is_locked: false });
     });
-    expect(mocks.insert).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(mocks.insert).toHaveBeenCalledTimes(2);
+      expect(mocks.insert).toHaveBeenLastCalledWith({
+        user_id: "user-1",
+        category: "activity",
+        title: "帖子已被解锁",
+        content: "你的重奏帖子《测试公告》已被管理员解锁",
+      });
+    });
+  });
+
+  it("解锁（is_locked true→false）→ 插「已被解锁」通知", async () => {
+    const { update } = renderDetail(makePost({ is_locked: true, locked_by: "admin" }));
+    fireEvent.click(screen.getByText("解锁"));
+    await waitFor(() => {
+      expect(update).toHaveBeenCalledWith("post-1", { is_locked: false });
+    });
+    await waitFor(() => {
+      expect(mocks.insert).toHaveBeenCalledWith({
+        user_id: "user-1",
+        category: "activity",
+        title: "帖子已被解锁",
+        content: "你的重奏帖子《测试公告》已被管理员解锁",
+      });
+    });
+  });
+
+  it("用户锁定的帖子：显示徽标、不提供锁定/解锁按钮，删除仍可用", async () => {
+    renderDetail(makePost({ is_locked: true, locked_by: "user" }));
+    expect(screen.getByText("帖子被用户锁定，管理员无法解锁")).toBeTruthy();
+    expect(screen.queryByText("解锁")).toBeNull();
+    expect(screen.queryByText("锁定")).toBeNull();
+    expect(screen.getByText("删除")).toBeTruthy();
   });
 
   it("作者=操作者：删除自己的帖子不插通知", async () => {

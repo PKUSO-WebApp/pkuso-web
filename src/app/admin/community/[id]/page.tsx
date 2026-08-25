@@ -13,13 +13,14 @@ const TYPE_LABEL: Record<PostType, string> = {
   gathering: "团建",
 };
 
-async function insertPostNotification(post: PostRow, kind: "deleted" | "locked") {
+async function insertPostNotification(post: PostRow, kind: "deleted" | "locked" | "unlocked") {
   try {
+    const verb = kind === "deleted" ? "删除" : kind === "locked" ? "锁定" : "解锁";
     const { error } = await supabase.from("notifications").insert({
       user_id: post.author_id,
       category: "activity",
-      title: kind === "deleted" ? "帖子已被删除" : "帖子已被锁定",
-      content: `你的${TYPE_LABEL[post.type as PostType]}帖子《${post.title}》已被管理员${kind === "deleted" ? "删除" : "锁定"}`,
+      title: `帖子已被${verb}`,
+      content: `你的${TYPE_LABEL[post.type as PostType]}帖子《${post.title}》已被管理员${verb}`,
     });
     if (error) console.error("[AdminCommunity] 通知插入失败", error.message);
   } catch (err) {
@@ -62,17 +63,21 @@ export default function AdminPostDetailPage() {
     return { ...r, profiles };
   }, [rawPosts, params.id]);
 
+  // 用户锁定的帖子：管理员不可解锁（仅展示徽标，不提供锁定/解锁按钮；删除不受限）
+  const userLocked = post?.locked_by === "user";
+
   const handleToggleLock = async () => {
-    if (!post || lockingId) return;
+    if (!post || lockingId || userLocked) return;
     setLockingId(post.id);
-    const ok = await update(post.id, { is_locked: !post.is_locked });
+    const unlocking = post.is_locked;
+    const ok = await update(post.id, { is_locked: !unlocking });
     setLockingId(null);
     if (!ok) {
       alert("操作失败");
       return;
     }
-    if (!post.is_locked && post.author_id !== adminId) {
-      await insertPostNotification(post, "locked");
+    if (post.author_id !== adminId) {
+      await insertPostNotification(post, unlocking ? "unlocked" : "locked");
     }
   };
 
@@ -120,14 +125,21 @@ export default function AdminPostDetailPage() {
 
       {/* 底部操作行：锁定/解锁 + 删除，居中全宽大按钮（参照小程序 sign-in 按钮；admin 仅可锁定/删除，不可编辑） */}
       <div className="mt-3 space-y-2 px-4">
-        <button
-          type="button"
-          onClick={() => void handleToggleLock()}
-          disabled={lockingId !== null}
-          className="flex h-11 w-full items-center justify-center rounded-xl bg-muted text-base font-medium text-text disabled:opacity-50"
-        >
-          {lockingId ? "处理中…" : post.is_locked ? "解锁" : "锁定"}
-        </button>
+        {userLocked && (
+          <p className="rounded-xl bg-warning-bg/80 px-3 py-2 text-center text-sm text-warning">
+            帖子被用户锁定，管理员无法解锁
+          </p>
+        )}
+        {!userLocked && (
+          <button
+            type="button"
+            onClick={() => void handleToggleLock()}
+            disabled={lockingId !== null}
+            className="flex h-11 w-full items-center justify-center rounded-xl bg-muted text-base font-medium text-text disabled:opacity-50"
+          >
+            {lockingId ? "处理中…" : post.is_locked ? "解锁" : "锁定"}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => void handleDelete()}

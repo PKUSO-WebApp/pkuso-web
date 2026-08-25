@@ -42,6 +42,7 @@ function makePost(overrides: Partial<PostRowWithAuthor> = {}): PostRowWithAuthor
     author_id: "u1",
     created_at: "2026-08-01T10:00:00",
     is_locked: false,
+    locked_by: null,
     profiles: { full_name: "张三", instrument: "小提琴" },
     ...overrides,
   };

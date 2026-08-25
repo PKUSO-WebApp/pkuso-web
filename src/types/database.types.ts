@@ -316,6 +316,7 @@ export type Database = {
           created_at: string | null
           email: string | null
           full_name: string | null
+          hide_college: boolean
           hide_email: boolean
           hide_join_date: boolean
           hide_phone: boolean
@@ -325,13 +326,17 @@ export type Database = {
           join_date: string | null
           phone_number: string | null
           role: Database["public"]["Enums"]["profileRole"] | null
+          session_started_at: string | null
+          session_token: string | null
           status: Database["public"]["Enums"]["profileStatus"] | null
+          wechat_openid: string | null
         }
         Insert: {
           college?: string | null
           created_at?: string | null
           email?: string | null
           full_name?: string | null
+          hide_college?: boolean
           hide_email?: boolean
           hide_join_date?: boolean
           hide_phone?: boolean
@@ -341,13 +346,17 @@ export type Database = {
           join_date?: string | null
           phone_number?: string | null
           role?: Database["public"]["Enums"]["profileRole"] | null
+          session_started_at?: string | null
+          session_token?: string | null
           status?: Database["public"]["Enums"]["profileStatus"] | null
+          wechat_openid?: string | null
         }
         Update: {
           college?: string | null
           created_at?: string | null
           email?: string | null
           full_name?: string | null
+          hide_college?: boolean
           hide_email?: boolean
           hide_join_date?: boolean
           hide_phone?: boolean
@@ -357,7 +366,10 @@ export type Database = {
           join_date?: string | null
           phone_number?: string | null
           role?: Database["public"]["Enums"]["profileRole"] | null
+          session_started_at?: string | null
+          session_token?: string | null
           status?: Database["public"]["Enums"]["profileStatus"] | null
+          wechat_openid?: string | null
         }
         Relationships: []
       }
@@ -566,6 +578,7 @@ export type Database = {
           created_at: string | null
           email: string | null
           full_name: string | null
+          hide_college: boolean | null
           hide_email: boolean | null
           hide_join_date: boolean | null
           hide_phone: boolean | null
@@ -582,6 +595,7 @@ export type Database = {
           created_at?: string | null
           email?: never
           full_name?: string | null
+          hide_college?: boolean | null
           hide_email?: boolean | null
           hide_join_date?: boolean | null
           hide_phone?: boolean | null
@@ -598,6 +612,7 @@ export type Database = {
           created_at?: string | null
           email?: never
           full_name?: string | null
+          hide_college?: boolean | null
           hide_email?: boolean | null
           hide_join_date?: boolean | null
           hide_phone?: boolean | null
@@ -613,6 +628,15 @@ export type Database = {
       }
     }
     Functions: {
+      cancel_leave_on_sign_in: {
+        Args: { p_rehearsal_id: number }
+        Returns: {
+          attachment_path: string
+          previous_status: Database["public"]["Enums"]["leaveStatus"]
+          request_id: string
+          status: Database["public"]["Enums"]["leaveStatus"]
+        }[]
+      }
       check_invitation_code: {
         Args: { p_code: string }
         Returns: {
@@ -623,7 +647,39 @@ export type Database = {
           used_count: number
         }[]
       }
+      get_my_profile_entry: {
+        Args: never
+        Returns: {
+          email: string
+          full_name: string
+          status: Database["public"]["Enums"]["profileStatus"]
+        }[]
+      }
+      get_my_session: {
+        Args: never
+        Returns: {
+          session_started_at: string
+          session_token: string
+        }[]
+      }
       is_admin: { Args: never; Returns: boolean }
+      sign_in_attendance: {
+        Args: { p_code: string; p_rehearsal_id: number }
+        Returns: {
+          id: number
+          rehearsal_id: number
+          sign_in_time: string
+          status: Database["public"]["Enums"]["attendanceStatus"]
+          user_id: string
+        }[]
+      }
+      touch_session: {
+        Args: never
+        Returns: {
+          session_started_at: string
+          session_token: string
+        }[]
+      }
       verify_and_use_invitation_code: {
         Args: { p_code: string; p_user_id: string }
         Returns: {

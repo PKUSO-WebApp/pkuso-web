@@ -6,8 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 北大交响乐团管理系统(PKUSO)。Next.js 16(App Router)+ React 19 + TypeScript(strict)+ Tailwind CSS v4 + Supabase,部署于 Vercel。界面文案、代码注释、提交信息均为中文。
 
-**微信小程序 + 国内后端迁移的长期规划见 `docs/wechat-miniprogram-migration-plan.md`**（含架构决策、政策风险、两周 demo 计划；执行小程序相关任务前先读该文档）。
-
 ## 常用命令
 
 ```bash

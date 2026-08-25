@@ -1,0 +1,192 @@
+"use client";
+
+import React from "react";
+import { useParams, useRouter } from "next/navigation";
+import { useRehearsals } from "@/hooks/useRehearsals";
+import { useSchedule } from "@/hooks/useSchedule";
+import { Modal } from "@/components/ui/Modal";
+import {
+  CreateRehearsalForm,
+  type CreateFormState,
+} from "../../../../(member)/schedule/components/create-rehearsal-form";
+import { formatLocalISO, parseLocalISO, getLocalDateString } from "@/lib/date-utils";
+import type { RehearsalRow } from "@/types/database";
+
+function buildInitialForm(item: RehearsalRow): CreateFormState {
+  return {
+    type: (item.type ?? "full") as "full" | "section",
+    targetSection: item.target_section ?? "",
+    startTime: item.start_time ? parseLocalISO(item.start_time) : null,
+    endTime: item.end_time ? parseLocalISO(item.end_time) : null,
+    location: item.location ?? "",
+    repertoire: item.repertoire ?? "",
+    signInCode: item.sign_in_code ?? "",
+  };
+}
+
+export default function AdminEditRehearsalPage() {
+  const router = useRouter();
+  const params = useParams<{ id: string }>();
+  const id = Number(params.id);
+  const { data: schedules, loading } = useRehearsals();
+
+  const item = React.useMemo(() => schedules?.find((r) => r.id === id) ?? null, [schedules, id]);
+
+  if (loading) {
+    return (
+      <div className="flex h-full min-h-0 flex-col pb-safe">
+        <PageHeader onBack={() => router.back()} />
+        <p className="py-12 text-center text-xs text-text-muted">加载中…</p>
+      </div>
+    );
+  }
+
+  if (!item) {
+    return (
+      <div className="flex h-full min-h-0 flex-col pb-safe">
+        <PageHeader onBack={() => router.back()} />
+        <p className="py-12 text-center text-xs text-text-muted">未找到该排练</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col pb-safe">
+      <PageHeader onBack={() => router.back()} />
+      <section className="flex-1 min-h-0 overflow-y-auto">
+        {/* key=id：进入即按当前排练预填表单（懒初始化，避免 setState-in-effect） */}
+        <EditForm key={id} item={item} />
+      </section>
+    </div>
+  );
+}
+
+function EditForm({ item }: { item: RehearsalRow }) {
+  const router = useRouter();
+  const { update } = useRehearsals();
+  const { checkConflict } = useSchedule();
+  const id = item.id;
+
+  const [form, setForm] = React.useState<CreateFormState>(() => buildInitialForm(item));
+  const [submitting, setSubmitting] = React.useState(false);
+  const submittingRef = React.useRef(false);
+  const [conflictModalOpen, setConflictModalOpen] = React.useState(false);
+
+  const handleChange = (
+    field: keyof CreateFormState,
+    value: string | "full" | "section" | Date | null,
+  ) => {
+    if (field === "startTime" && value instanceof Date) {
+      const endTime = new Date(value.getTime() + 3 * 60 * 60 * 1000);
+      setForm((p) => ({ ...p, startTime: value, endTime }));
+    } else {
+      setForm((p) => ({ ...p, [field]: value }));
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submittingRef.current || submitting) return;
+    if (!form.startTime || !form.endTime || !form.location || !form.repertoire) return;
+    if (form.endTime <= form.startTime) {
+      alert("结束时间必须晚于开始时间");
+      return;
+    }
+    if (form.type === "full" && (!form.signInCode || !/^\d{4}$/.test(form.signInCode))) {
+      alert("合排需要设置4位数字签到密码");
+      return;
+    }
+
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      const date = getLocalDateString(form.startTime);
+      const startTimeStr = `${String(form.startTime.getHours()).padStart(2, "0")}:${String(form.startTime.getMinutes()).padStart(2, "0")}`;
+      const endTimeStr = `${String(form.endTime.getHours()).padStart(2, "0")}:${String(form.endTime.getMinutes()).padStart(2, "0")}`;
+      const conflictResult = await checkConflict(date, startTimeStr, endTimeStr, id);
+      if (conflictResult) {
+        setConflictModalOpen(true);
+        return;
+      }
+
+      const payload: Record<string, unknown> = {
+        type: form.type,
+        target_section: form.type === "section" ? form.targetSection || null : null,
+        start_time: formatLocalISO(form.startTime),
+        end_time: formatLocalISO(form.endTime),
+        location: form.location,
+        repertoire: form.repertoire,
+        sign_in_code: form.type === "full" ? form.signInCode : null,
+      };
+
+      const ok = await update(id, payload);
+      if (!ok) {
+        alert("更新失败");
+        return;
+      }
+      alert("已保存");
+      router.push(`/admin/rehearsals/${id}`);
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <CreateRehearsalForm
+        form={form}
+        submitting={submitting}
+        editing
+        notifyByEmail={false}
+        onNotifyByEmailChange={() => {}}
+        onChange={handleChange}
+        onSubmit={handleSubmit}
+        onCancel={() => router.back()}
+      />
+
+      <Modal
+        open={conflictModalOpen}
+        onClose={() => setConflictModalOpen(false)}
+        title="时间冲突"
+        position="bottom"
+      >
+        <p className="text-sm text-text-muted">
+          有存在的预约与即将修改的排练时间冲突，是否前往schedule页面管理预约？
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setConflictModalOpen(false)}
+            className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push("/admin/schedule")}
+            className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90"
+          >
+            前往管理
+          </button>
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+function PageHeader({ onBack }: { onBack: () => void }) {
+  return (
+    <header className="mb-2 flex items-center gap-2">
+      <button
+        type="button"
+        onClick={onBack}
+        className="rounded-full px-2 py-1 text-lg text-text-muted hover:bg-muted"
+        aria-label="返回"
+      >
+        ‹
+      </button>
+      <h1 className="text-lg font-semibold text-text">编辑排练日程</h1>
+    </header>
+  );
+}

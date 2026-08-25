@@ -84,6 +84,10 @@ src/app/
 
 **不再通过 `isAdmin` 条件分支混合 UI**。开发 member 端新功能时不需要关心 admin 代码，反之亦然。唯一共享的部分是 hooks、lib、UI 原语、类型定义。
 
+### 迁移状态（2026-08）
+
+微信小程序 → Web 的界面迁移**已完成**：Web 端已承接小程序的核心交互（排练/公告详情改为页面路由、tab 长背景修复等）。**此后所有改动只针对 admin 端**，member 端保持现状、不要改动（除非用户明确指示）。member 端仍保留 Modal 式交互，属有意保留，非遗漏。
+
 ## 分支工作流
 
 - 分支命名: `<type>/<简述>`,type = feat|fix|docs|refactor|test|chore|build|ci

@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => ({
   batchInsert: vi.fn().mockResolvedValue(null),
   checkConflict: vi.fn().mockResolvedValue(null),
   remove: vi.fn().mockResolvedValue(true),
+  routerPush: vi.fn(),
 }));
 
 /** 替换 mock 排练列表（保持引用不变，触发 useRehearsals 的 data 更新） */
@@ -111,10 +112,10 @@ vi.mock("@/hooks/useProfiles", () => ({
   }),
 }));
 
-// Mock next/navigation（useRouter：冲突弹窗「前往管理」跳转，测试不触达）
+// Mock next/navigation（useRouter：卡片点击跳转详情页）
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
-    push: vi.fn(),
+    push: mocks.routerPush,
     replace: vi.fn(),
     refresh: vi.fn(),
     back: vi.fn(),
@@ -235,88 +236,25 @@ describe("AdminRehearsalsPage 窗口过滤（Issue #173）", () => {
   });
 });
 
-describe("AdminRehearsalsPage 详情弹窗（Issue #173）", () => {
+describe("AdminRehearsalsPage 卡片导航（Issue #173：Modal→页面）", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 7, 15, 21, 0, 0));
     setData([]);
-    mocks.remove.mockClear();
+    mocks.routerPush.mockClear();
   });
 
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
-    vi.restoreAllMocks();
   });
 
-  /** 渲染单条明天合排并点击卡片打开详情 */
-  function openDetail() {
+  it("点击卡片跳转到详情页路由（/admin/rehearsals/[id]）", () => {
     setData([makeRehearsal(1, "2026-08-16T20:00:00", "明天排练")]);
     render(<AdminRehearsalsPage />);
-    // 卡片去按钮化：卡片本身是按钮（可访问名含曲目），点击打开详情
+    // 卡片本身是按钮（可访问名含曲目），点击跳转
     fireEvent.click(screen.getByRole("button", { name: /明天排练/ }));
-    expect(screen.getByText("排练详情")).toBeTruthy();
-  }
-
-  it("点击卡片打开详情弹窗：展示类型/时间/地点/曲目/签到码", () => {
-    openDetail();
-    expect(screen.getByRole("dialog")).toBeTruthy();
-    // 字段标签（卡片上不存在的 label 文案，仅弹窗内出现）
-    expect(screen.getByText("排练类型")).toBeTruthy();
-    expect(screen.getByText("时间")).toBeTruthy();
-    expect(screen.getByText("地点")).toBeTruthy();
-    expect(screen.getByText("曲目")).toBeTruthy();
-    // 签到码（卡片已移除展示，仅详情弹窗出现）
-    expect(screen.getByText("签到码")).toBeTruthy();
-    expect(screen.getByText("8848")).toBeTruthy();
-    // 底部操作按钮：删除在前、编辑在后，并列右下角（Issue #182）
-    const deleteBtn = screen.getByRole("button", { name: "删除" });
-    const editBtn = screen.getByRole("button", { name: "编辑" });
-    expect(editBtn.parentElement).toBe(deleteBtn.parentElement);
-    expect(deleteBtn.parentElement!.className).toContain("justify-end");
-    expect(
-      deleteBtn.compareDocumentPosition(editBtn) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
-  it("删除流：window.confirm「确认删除？」通过 → 调用 remove 并关闭弹窗", () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    openDetail();
-    fireEvent.click(screen.getByRole("button", { name: "删除" }));
-    expect(confirmSpy).toHaveBeenCalledWith("确认删除？");
-    expect(mocks.remove).toHaveBeenCalledTimes(1);
-    expect(mocks.remove).toHaveBeenCalledWith(1);
-    // 删除后关闭详情弹窗
-    expect(screen.queryByText("排练详情")).toBeNull();
-  });
-
-  it("删除流：取消确认 → 不调用 remove，弹窗保留", () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    openDetail();
-    fireEvent.click(screen.getByRole("button", { name: "删除" }));
-    expect(confirmSpy).toHaveBeenCalledWith("确认删除？");
-    expect(mocks.remove).not.toHaveBeenCalled();
-    expect(screen.getByText("排练详情")).toBeTruthy();
-  });
-
-  it("编辑流：详情弹窗「编辑」→ 关闭详情并打开编辑弹窗（复用 CreateRehearsalModal 编辑模式）", () => {
-    openDetail();
-    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
-    // 详情关闭、编辑弹窗打开
-    expect(screen.queryByText("排练详情")).toBeNull();
-    expect(screen.getByText("编辑排练日程")).toBeTruthy();
-    // 表单已回填（地点/曲目/签到码），提交按钮为「保存」
-    expect(screen.getByDisplayValue("排练厅")).toBeTruthy();
-    expect(screen.getByDisplayValue("明天排练")).toBeTruthy();
-    expect(screen.getByDisplayValue("8848")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "保存" })).toBeTruthy();
-  });
-
-  it("详情弹窗可关闭（关闭按钮）", () => {
-    openDetail();
-    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-    expect(screen.queryByText("排练详情")).toBeNull();
-    // 列表仍渲染
-    expect(screen.getByText("明天排练")).toBeTruthy();
+    expect(mocks.routerPush).toHaveBeenCalledTimes(1);
+    expect(mocks.routerPush).toHaveBeenCalledWith("/admin/rehearsals/1");
   });
 });

@@ -9,7 +9,7 @@ type ToggleProps<T extends string> = {
 
 export function Toggle<T extends string>({ options, value, onChange, getLabel }: ToggleProps<T>) {
   return (
-    <div className="inline-flex rounded-full bg-muted p-1 text-xs">
+    <div className="inline-flex w-fit rounded-full bg-muted p-1 text-xs">
       {options.map((opt) => {
         const active = value === opt;
         return (

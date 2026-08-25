@@ -570,6 +570,45 @@ export type Database = {
           },
         ]
       }
+      system_notifications: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          publisher_id: string | null
+          title: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          id?: string
+          publisher_id?: string | null
+          title: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          publisher_id?: string | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "system_notifications_publisher_id_fkey"
+            columns: ["publisher_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "system_notifications_publisher_id_fkey"
+            columns: ["publisher_id"]
+            isOneToOne: false
+            referencedRelation: "profiles_roster"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       profiles_roster: {

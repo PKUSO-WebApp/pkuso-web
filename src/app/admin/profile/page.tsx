@@ -11,7 +11,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
 import { useInvitationCodes } from "@/hooks/useInvitationCodes";
 import { formatDateTimeInChina } from "@/lib/date-utils";
-import type { FeedbackRow, InvitationCodeRow } from "@/types/database";
+import type { FeedbackRow, InvitationCodeRow, SystemNotificationRow } from "@/types/database";
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -138,6 +138,97 @@ export default function ProfilePage() {
       alert("网络错误");
     } finally {
       setDeletingFeedbackId(null);
+    }
+  };
+
+  // ---- 发布系统通知（Issue #227）----
+  // 状态机：打开弹窗拉历史；发布走 service role API（向全体 approved 成员广播）。
+  // 撰写区：标题 + 内容 + 发布按钮（双 guard：publishingRef 同步 + isPublishing state）；
+  // 历史列表：system_notifications 倒序、只读。竞态守卫用递增序号（快速开关丢弃过期响应）。
+  const [isNotifyOpen, setIsNotifyOpen] = React.useState(false);
+  const [notifyTitle, setNotifyTitle] = React.useState("");
+  const [notifyContent, setNotifyContent] = React.useState("");
+  const [isPublishing, setIsPublishing] = React.useState(false);
+  const publishingRef = React.useRef(false); // 同步 guard，阻断竞态窗口
+  const [publishError, setPublishError] = React.useState<string | null>(null);
+  const [publishSuccess, setPublishSuccess] = React.useState(false);
+  const [notifyRows, setNotifyRows] = React.useState<SystemNotificationRow[]>([]);
+  const [notifyLoading, setNotifyLoading] = React.useState(false);
+  const [notifyError, setNotifyError] = React.useState(false); // 查询失败态（显示「加载失败」+ 重试）
+  const notifySeqRef = React.useRef(0);
+
+  /** 拉取系统通知历史（created_at 倒序；admin 浏览器端，is_admin() RLS 放行） */
+  const fetchNotifyHistory = () => {
+    const seq = ++notifySeqRef.current;
+    setNotifyLoading(true);
+    setNotifyError(false);
+    void supabase
+      .from("system_notifications")
+      .select("id, title, content, created_at")
+      .order("created_at", { ascending: false })
+      .then(({ data, error }) => {
+        // 仅最新一次打开弹窗的响应生效（快速开关时丢弃过期响应）
+        if (seq !== notifySeqRef.current) return;
+        setNotifyLoading(false);
+        if (error) {
+          console.error("[Admin Profile] 系统通知历史查询失败", error.message);
+          setNotifyError(true);
+          setNotifyRows([]);
+          return;
+        }
+        setNotifyRows((data as SystemNotificationRow[] | null) ?? []);
+      });
+  };
+
+  const handleOpenNotifyModal = () => {
+    setIsNotifyOpen(true);
+    fetchNotifyHistory();
+  };
+
+  /** 发布系统通知（Issue #227）：POST /api/admin/notify-system（service role 广播）。
+   *  双 guard（publishingRef + isPublishing）防重复提交；成功后清空输入、刷新历史 */
+  const handlePublishNotify = async () => {
+    const title = notifyTitle.trim();
+    const content = notifyContent.trim();
+    if (!title || !content) {
+      setPublishError("标题与内容均不能为空");
+      return;
+    }
+    if (publishingRef.current || isPublishing) return; // 双 guard
+    publishingRef.current = true;
+    setIsPublishing(true);
+    setPublishError(null);
+    setPublishSuccess(false);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const response = await window.fetch("/api/admin/notify-system", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ title, content }),
+      });
+      const result = (await response.json().catch(() => null)) as {
+        success?: boolean;
+        count?: number;
+        error?: string;
+      } | null;
+      if (response.ok && result?.success) {
+        setNotifyTitle("");
+        setNotifyContent("");
+        setPublishSuccess(true);
+        fetchNotifyHistory(); // 发布后刷新历史
+      } else {
+        setPublishError(result?.error || "发布失败");
+      }
+    } catch {
+      setPublishError("网络错误");
+    } finally {
+      publishingRef.current = false;
+      setIsPublishing(false);
     }
   };
 
@@ -484,6 +575,15 @@ export default function ProfilePage() {
         className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
       >
         💬 反馈列表
+      </button>
+
+      {/* 发布系统通知（Issue #227）：向全体已批准成员广播站内通知 + 历史列表 */}
+      <button
+        type="button"
+        onClick={handleOpenNotifyModal}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
+      >
+        📢 发布系统通知
       </button>
 
       <button
@@ -1072,6 +1172,98 @@ export default function ProfilePage() {
           <button
             type="button"
             onClick={() => setIsFeedbackOpen(false)}
+            className="w-full rounded-xl border border-border bg-surface py-2.5 text-sm font-medium text-text-muted hover:bg-muted"
+          >
+            关闭
+          </button>
+        </div>
+      </Modal>
+
+      {/* 发布系统通知 Modal（底部弹出，Issue #227）：撰写区（标题+内容+发布）+ 历史列表。
+           仅站内通知，向全体已批准成员广播；历史只读展示标题/内容/发布时间倒序。 */}
+      <Modal
+        open={isNotifyOpen}
+        onClose={() => setIsNotifyOpen(false)}
+        title="发布系统通知"
+        position="bottom"
+      >
+        <div className="mt-4 space-y-3 pb-safe">
+          {/* 撰写区 */}
+          <div className="space-y-2 rounded-xl border border-border bg-card p-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-text-muted">标题</label>
+              <input
+                type="text"
+                value={notifyTitle}
+                onChange={(e) => setNotifyTitle(e.target.value)}
+                maxLength={100}
+                className="input"
+                placeholder="通知标题（必填，≤100 字）"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-text-muted">内容</label>
+              <textarea
+                value={notifyContent}
+                onChange={(e) => setNotifyContent(e.target.value)}
+                maxLength={2000}
+                rows={4}
+                className="w-full rounded-lg border border-border bg-surface p-2 text-sm text-text leading-relaxed outline-none"
+                placeholder="通知正文（必填，≤2000 字）"
+              />
+            </div>
+            {/* 双按钮操作行右下角（Issue #182）：单一主操作靠右 */}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={isPublishing || !notifyTitle.trim() || !notifyContent.trim()}
+                onClick={handlePublishNotify}
+                className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+              >
+                {isPublishing ? "发布中…" : "发布"}
+              </button>
+            </div>
+            {publishError && <p className="text-xs text-danger">{publishError}</p>}
+            {publishSuccess && <p className="text-xs text-success">已发布给全体已批准成员</p>}
+          </div>
+
+          {/* 历史列表 */}
+          <p className="text-xs font-medium text-text-muted">已发布通知</p>
+          {notifyLoading ? (
+            <p className="py-6 text-center text-xs text-text-muted">加载中…</p>
+          ) : notifyError ? (
+            <div className="py-6 text-center">
+              <p className="text-xs text-danger">加载失败，请稍后重试</p>
+              <button
+                type="button"
+                onClick={fetchNotifyHistory}
+                className="mt-3 rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted"
+              >
+                重试
+              </button>
+            </div>
+          ) : notifyRows.length === 0 ? (
+            <p className="py-6 text-center text-xs text-text-muted">暂无通知</p>
+          ) : (
+            // 罗列内容可滚动（max-h 容器，CLAUDE.md）
+            <div className="max-h-[40vh] space-y-3 overflow-y-auto pb-1">
+              {notifyRows.map((row) => (
+                <div key={row.id} className="rounded-xl border border-border bg-card p-3">
+                  <p className="text-caption text-text-muted">
+                    {formatDateTimeInChina(row.created_at)}
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-text">{row.title}</p>
+                  <p className="mt-1 whitespace-pre-line text-sm leading-relaxed text-text">
+                    {row.content}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setIsNotifyOpen(false)}
             className="w-full rounded-xl border border-border bg-surface py-2.5 text-sm font-medium text-text-muted hover:bg-muted"
           >
             关闭

@@ -20,6 +20,7 @@ export type InvitationCodeRow = PublicSchema["Tables"]["invitation_codes"]["Row"
 export type LeaveRequestRow = PublicSchema["Tables"]["leave_requests"]["Row"];
 export type NotificationRow = PublicSchema["Tables"]["notifications"]["Row"];
 export type FeedbackRow = PublicSchema["Tables"]["feedback"]["Row"];
+export type SystemNotificationRow = PublicSchema["Tables"]["system_notifications"]["Row"];
 
 // ---- 枚举类型(从 database.types.ts Enums 派生) ----
 export type ProfileStatus = PublicSchema["Enums"]["profileStatus"];

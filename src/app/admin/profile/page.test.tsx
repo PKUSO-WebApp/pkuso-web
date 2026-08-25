@@ -1592,3 +1592,199 @@ describe("反馈列表（Issue #209）", () => {
     });
   });
 });
+
+// ---- Issue #227：发布系统通知（向全体已批准成员广播 + 历史列表）----
+
+describe("发布系统通知（Issue #227）", () => {
+  const sampleNotify = (overrides: Record<string, unknown> = {}) => ({
+    id: "n1",
+    title: "元旦汇演通知",
+    content: "请于 12 月 31 日 19:00 到场",
+    created_at: "2026-08-20T10:00:00+08:00",
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("渲染「发布系统通知」按钮（在反馈列表下方）", () => {
+    render(<ProfilePage />);
+    const notifyBtn = screen.getByRole("button", { name: /发布系统通知/ });
+    const feedbackBtn = screen.getByRole("button", { name: /反馈列表/ });
+    // DOM 顺序：反馈列表在前，发布系统通知在后
+    expect(
+      notifyBtn.compareDocumentPosition(feedbackBtn) & Node.DOCUMENT_POSITION_PRECEDING,
+    ).toBeTruthy();
+  });
+
+  it("打开弹窗时查询 system_notifications 表：标题 + 内容 + 时间倒序渲染", async () => {
+    const rows = [
+      sampleNotify(),
+      sampleNotify({
+        id: "n2",
+        title: "旧通知",
+        content: "旧内容",
+        created_at: "2026-08-19T09:00:00+08:00",
+      }),
+    ];
+    const { orderMock } = setupSupabaseMock({ fetchData: rows });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /发布系统通知/ }));
+
+    await waitFor(() => {
+      expect(supabase.from).toHaveBeenCalledWith("system_notifications");
+      expect(orderMock).toHaveBeenCalledWith("created_at", { ascending: false });
+      expect(screen.getByText("元旦汇演通知")).toBeInTheDocument();
+      expect(screen.getByText("旧通知")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(formatDateTimeInChina("2026-08-20T10:00:00+08:00")),
+    ).toBeInTheDocument();
+  });
+
+  it("空历史显示「暂无通知」", async () => {
+    setupSupabaseMock({ fetchData: [] });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /发布系统通知/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("暂无通知")).toBeInTheDocument();
+    });
+  });
+
+  it("标题或内容为空时「发布」按钮禁用", async () => {
+    setupSupabaseMock({ fetchData: [] });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /发布系统通知/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("暂无通知")).toBeInTheDocument();
+    });
+    const publishBtn = screen.getByRole("button", { name: "发布" });
+    expect(publishBtn).toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText(/通知标题/), {
+      target: { value: "重要通知" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/通知正文/), {
+      target: { value: "请准时参加" },
+    });
+    expect(screen.getByRole("button", { name: "发布" })).toBeEnabled();
+  });
+
+  it("发布成功：调用 POST API（带 Bearer）→ 清空输入 + 显示成功 + 刷新历史", async () => {
+    setupSupabaseMock({ fetchData: [] }); // 发布前空历史；发布后刷新仍返回空（fetchSpy 为成功）
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true, count: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /发布系统通知/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("暂无通知")).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByPlaceholderText(/通知标题/), {
+      target: { value: " 元旦汇演通知 " },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/通知正文/), {
+      target: { value: "请于 12 月 31 日 19:00 到场" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发布" }));
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "/api/admin/notify-system",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({ Authorization: "Bearer test-token" }),
+        }),
+      );
+    });
+    const callBody = JSON.parse((fetchSpy.mock.calls[0][1] as { body: string }).body);
+    expect(callBody).toEqual({
+      title: "元旦汇演通知", // 已 trim
+      content: "请于 12 月 31 日 19:00 到场",
+    });
+    await waitFor(() => {
+      expect(screen.getByText("已发布给全体已批准成员")).toBeInTheDocument();
+    });
+    // 输入已清空
+    expect((screen.getByPlaceholderText(/通知标题/) as HTMLInputElement).value).toBe("");
+  });
+
+  it("发布失败：显示错误信息且不刷新为成功态", async () => {
+    setupSupabaseMock({ fetchData: [] });
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({ error: "标题与内容均不能为空" }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /发布系统通知/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("暂无通知")).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByPlaceholderText(/通知标题/), {
+      target: { value: "重要通知" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/通知正文/), {
+      target: { value: "内容" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发布" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("标题与内容均不能为空")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("已发布给全体已批准成员")).toBeNull();
+  });
+
+  it("防重复提交：首次点击后 fetch 挂起，按钮禁用且二次点击不再调用", async () => {
+    setupSupabaseMock({ fetchData: [] });
+    let resolveFetch!: (v: unknown) => void;
+    const fetchSpy = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /发布系统通知/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("暂无通知")).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByPlaceholderText(/通知标题/), {
+      target: { value: "重要通知" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/通知正文/), {
+      target: { value: "内容" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发布" }));
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalled();
+    });
+    // 进行中：按钮显示「发布中…」并禁用
+    expect(screen.getByRole("button", { name: "发布中…" })).toBeDisabled();
+    // 二次点击不应再发请求
+    fireEvent.click(screen.getByRole("button", { name: "发布中…" }));
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFetch({ ok: true, json: () => Promise.resolve({ success: true, count: 2 }) });
+    });
+    await waitFor(() => {
+      expect(screen.getByText("已发布给全体已批准成员")).toBeInTheDocument();
+    });
+  });
+});

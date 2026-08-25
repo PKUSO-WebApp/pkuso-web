@@ -12,7 +12,7 @@ import type { LeaveRequestWithDetails } from "@/types/database";
  * 管理端「请假审批」区块（Issue #142），位于入团审批区块下方。
  * - Toggle 切换 待审批 / 已处理；
  * - 二级筛选 Toggle「全部/请假/补请假」（Issue #156）：与 待审批/已处理 正交，
- *   不新增 DB 字段，按关联排练是否已结束分类（未结束=请假，已结束=补请假），
+ *   不新增 DB 字段，按申请提交时间相对排练结束时间分类（提交时间 ≥ 结束时间=补请假，否则=请假，Issue #224），
  *   切换任一方筛选都会清空勾选，避免批量操作误伤隐藏行；
  * - 待审批 tab：checkbox 勾选 + 全选，批量操作栏「批量通过」（二次确认）/
  *   「批量驳回」（原因必填弹窗，同一原因应用到全部勾选）；
@@ -38,7 +38,7 @@ function rehearsalName(r: LeaveRequestWithDetails["rehearsals"]): string {
   return r?.repertoire ?? r?.title ?? "排练";
 }
 
-/** 请假分类标签（Issue #156）：按关联排练是否已结束判断，不新增 DB 字段 */
+/** 请假分类标签（Issue #224）：按提交时间相对排练结束时间固定判定，不随当前时间漂移 */
 const CATEGORY_LABEL = { leave: "请假", retro: "补请假" } as const;
 const CATEGORY_CHIP = {
   leave: "bg-muted text-text-muted",
@@ -47,23 +47,21 @@ const CATEGORY_CHIP = {
 type LeaveCategory = keyof typeof CATEGORY_LABEL;
 
 /**
- * 排练是否已结束：end_time 优先；缺失时按 start_time+3h 兜底（排练通常 2-3 小时）；
- * 两者都缺失（或解析失败）视为未结束。now 与存储的本地时间比较（无时区字符串按本地解析）。
+ * 申请分类（Issue #224）：以提交时间固定判定，不随当前时间漂移。
+ * 提交时间晚于（含等于）排练结束时间 → 补请假；否则 → 请假。
+ * 排练结束时间 end_time 优先；缺失时按 start_time+3h 兜底；均缺失/解析失败则兜底为「请假」。
+ * 注：管理端按提交时间固定分类，与成员端「我要补请假」入口按查看时刻（now）判定的口径不同，属预期差异。
  */
-function isRehearsalEnded(r: LeaveRequestWithDetails["rehearsals"], now = Date.now()): boolean {
-  if (!r) return false;
-  const end = r.end_time
-    ? Date.parse(r.end_time)
-    : r.start_time
-      ? Date.parse(r.start_time) + 3 * 60 * 60 * 1000
-      : Number.NaN;
-  if (Number.isNaN(end)) return false;
-  return now > end;
-}
-
-/** 申请分类：关联排练已结束 → 补请假；否则 → 请假 */
 function getLeaveCategory(r: LeaveRequestWithDetails): LeaveCategory {
-  return isRehearsalEnded(r.rehearsals) ? "retro" : "leave";
+  const reh = r.rehearsals;
+  const end = reh?.end_time
+    ? Date.parse(reh.end_time)
+    : reh?.start_time
+      ? Date.parse(reh.start_time) + 3 * 60 * 60 * 1000
+      : Number.NaN;
+  const submitted = Date.parse(r.created_at);
+  if (Number.isNaN(end) || Number.isNaN(submitted)) return "leave";
+  return submitted >= end ? "retro" : "leave";
 }
 
 type LeaveManagementProps = {
@@ -288,7 +286,7 @@ export function LeaveManagement({ onPendingCountChange }: LeaveManagementProps =
                     </p>
                     <p className="mt-0.5 truncate text-xs text-text-subtle">{item.reason}</p>
                   </div>
-                  {/* 分类 chip：未结束排练=请假、已结束=补请假（Issue #156） */}
+                  {/* 分类 chip：提交时间 ≥ 排练结束时间=补请假，否则=请假（Issue #224） */}
                   <span
                     className={`mt-0.5 shrink-0 rounded-full px-2 py-1 text-label ${
                       CATEGORY_CHIP[cat]

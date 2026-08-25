@@ -339,82 +339,103 @@ describe("LeaveManagement 请假审批区块（管理端）", () => {
     expect(onChange).toHaveBeenCalledWith(1);
   });
 
-  // ---- 请假/补请假分类筛选（Issue #156） ----
-  // 排练时间用相对 now 的时间戳构造，避免测试随运行日期漂移
+  // ---- 请假/补请假分类筛选（Issue #156 / #224） ----
+  // 分类以「提交时间（created_at）是否 ≥ 排练结束时间」判定，与当前时间（now）无关，
+  // 因此使用固定日期构造，且排练时间用本地格式（无 Z，与生产数据一致），
+  // created_at 用带 Z 的 UTC 串，覆盖北京时区下的解析路径。
 
-  it("分类筛选：未结束排练的申请=请假、已结束排练=补请假，全部/请假/补请假正确分组", () => {
-    const futureEnd = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
-    const pastEnd = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  it("分类筛选：提交时间早于结束=请假、晚于结束=补请假，全部/请假/补请假正确分组", () => {
+    // 未来排练 + 提前提交 → 请假
+    // 已结束排练 + 当时及时提交（提交早于结束）→ 仍「请假」（核心回归点：不因 now 漂移变成补请假）
+    // 已结束排练 + 结束后才提交 → 补请假
     adminMock.requests = [
       makeRequest({
         id: "lr-1",
         reason: "未来排练请假",
+        created_at: "2026-08-20T10:00:00Z",
         rehearsals: {
           repertoire: "未来曲目",
           title: null,
-          start_time: futureEnd,
-          end_time: futureEnd,
+          start_time: "2026-09-01T13:00:00",
+          end_time: "2026-09-01T16:00:00",
           location: "排练厅",
         },
       }),
       makeRequest({
         id: "lr-2",
-        reason: "已结束排练补请",
+        reason: "已结束及时提交",
+        created_at: "2026-07-20T10:00:00Z",
         rehearsals: {
           repertoire: "历史曲目",
           title: null,
-          start_time: pastEnd,
-          end_time: pastEnd,
+          start_time: "2026-08-01T13:00:00",
+          end_time: "2026-08-01T16:00:00",
+          location: "排练厅",
+        },
+      }),
+      makeRequest({
+        id: "lr-3",
+        reason: "已结束补请",
+        created_at: "2026-08-05T10:00:00Z",
+        rehearsals: {
+          repertoire: "历史曲目B",
+          title: null,
+          start_time: "2026-08-01T13:00:00",
+          end_time: "2026-08-01T16:00:00",
           location: "排练厅",
         },
       }),
     ];
     render(<LeaveManagement />);
 
-    // 默认「全部」：两条都显示
+    // 默认「全部」：三条都显示
     expect(screen.getByText(/未来排练请假/)).toBeInTheDocument();
-    expect(screen.getByText(/已结束排练补请/)).toBeInTheDocument();
+    expect(screen.getByText(/已结束及时提交/)).toBeInTheDocument();
+    expect(screen.getByText(/已结束补请/)).toBeInTheDocument();
 
-    // 「补请假」：只剩已结束排练的申请
+    // 「补请假」：只剩结束后才提交的申请
     fireEvent.click(screen.getByRole("button", { name: "补请假" }));
     expect(screen.queryByText(/未来排练请假/)).toBeNull();
-    expect(screen.getByText(/已结束排练补请/)).toBeInTheDocument();
+    expect(screen.queryByText(/已结束及时提交/)).toBeNull();
+    expect(screen.getByText(/已结束补请/)).toBeInTheDocument();
 
-    // 「请假」：只剩未结束排练的申请
+    // 「请假」：提前提交与当时及时提交都命中（校验核心回归点）
     fireEvent.click(screen.getByRole("button", { name: "请假" }));
     expect(screen.getByText(/未来排练请假/)).toBeInTheDocument();
-    expect(screen.queryByText(/已结束排练补请/)).toBeNull();
+    expect(screen.getByText(/已结束及时提交/)).toBeInTheDocument();
+    expect(screen.queryByText(/已结束补请/)).toBeNull();
 
-    // 切回「全部」：两条都显示
+    // 切回「全部」：三条都显示
     fireEvent.click(screen.getByRole("button", { name: "全部" }));
     expect(screen.getByText(/未来排练请假/)).toBeInTheDocument();
-    expect(screen.getByText(/已结束排练补请/)).toBeInTheDocument();
+    expect(screen.getByText(/已结束及时提交/)).toBeInTheDocument();
+    expect(screen.getByText(/已结束补请/)).toBeInTheDocument();
   });
 
-  it("end_time 缺失时按 start_time+3h 兜底判断分类", () => {
-    // 5 小时前开始、无 end_time → start+3h 已过 → 补请假
-    const olderStart = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
-    // 1 小时前开始、无 end_time → start+3h 未到 → 请假
-    const recentStart = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  it("end_time 缺失时按 start_time+3h 兜底，依据提交时间判断分类", () => {
+    // 较早开始、end_time 缺失 → 兜底 end = start+3h；提交时间晚于兜底 end → 补请假
+    // 较晚开始、end_time 缺失 → 兜底 end = start+3h；提交时间早于兜底 end → 请假
     adminMock.requests = [
       makeRequest({
         id: "lr-1",
-        reason: "较早开始",
+        reason: "较早开始补请",
+        created_at: "2026-08-02T10:00:00Z",
         rehearsals: {
           repertoire: "曲目A",
           title: null,
-          start_time: olderStart,
+          start_time: "2026-08-01T10:00:00",
           end_time: null,
           location: "排练厅",
         },
       }),
       makeRequest({
         id: "lr-2",
-        reason: "较晚开始",
+        reason: "较晚开始请假",
+        created_at: "2026-07-30T10:00:00Z",
         rehearsals: {
           repertoire: "曲目B",
           title: null,
-          start_time: recentStart,
+          start_time: "2026-08-01T12:00:00",
           end_time: null,
           location: "排练厅",
         },
@@ -423,35 +444,35 @@ describe("LeaveManagement 请假审批区块（管理端）", () => {
     render(<LeaveManagement />);
 
     fireEvent.click(screen.getByRole("button", { name: "补请假" }));
-    expect(screen.getByText(/较早开始/)).toBeInTheDocument();
-    expect(screen.queryByText(/较晚开始/)).toBeNull();
+    expect(screen.getByText(/较早开始补请/)).toBeInTheDocument();
+    expect(screen.queryByText(/较晚开始请假/)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "请假" }));
-    expect(screen.queryByText(/较早开始/)).toBeNull();
-    expect(screen.getByText(/较晚开始/)).toBeInTheDocument();
+    expect(screen.queryByText(/较早开始补请/)).toBeNull();
+    expect(screen.getByText(/较晚开始请假/)).toBeInTheDocument();
   });
 
-  it("每条申请显示分类 chip：未结束=请假、已结束=补请假", () => {
-    const futureEnd = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
-    const pastEnd = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  it("每条申请显示分类 chip：提交时间早于结束=请假、晚于结束=补请假", () => {
     adminMock.requests = [
       makeRequest({
         id: "lr-1",
+        created_at: "2026-08-20T10:00:00Z",
         rehearsals: {
           repertoire: "曲目A",
           title: null,
-          start_time: futureEnd,
-          end_time: futureEnd,
+          start_time: "2026-09-01T13:00:00",
+          end_time: "2026-09-01T16:00:00",
           location: "排练厅",
         },
       }),
       makeRequest({
         id: "lr-2",
+        created_at: "2026-08-05T10:00:00Z",
         rehearsals: {
           repertoire: "曲目B",
           title: null,
-          start_time: pastEnd,
-          end_time: pastEnd,
+          start_time: "2026-08-01T13:00:00",
+          end_time: "2026-08-01T16:00:00",
           location: "排练厅",
         },
       }),
@@ -466,27 +487,59 @@ describe("LeaveManagement 请假审批区块（管理端）", () => {
     expect(within(pastRow).getByText("补请假")).toBeInTheDocument();
   });
 
-  it("切换分类筛选清空勾选；全选仅选中当前筛选下的行", () => {
-    const futureEnd = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
-    const pastEnd = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  it("核心回归：已结束排练但提交时间早于结束 → 筛选「请假」命中、「补请假」不命中", () => {
+    // 场景：排练早已结束（now 已大幅漂移），但申请在排练结束前及时提交，
+    // 旧逻辑按 now 判定会被误判为补请假；新逻辑按 created_at 判定应为「请假」。
+    const pastEnd = "2026-08-01T16:00:00";
     adminMock.requests = [
       makeRequest({
         id: "lr-1",
+        reason: "暂缓未处理但当时已提交",
+        created_at: "2026-07-20T10:00:00Z",
         rehearsals: {
           repertoire: "曲目A",
           title: null,
-          start_time: futureEnd,
-          end_time: futureEnd,
+          start_time: "2026-08-01T13:00:00",
+          end_time: pastEnd,
+          location: "排练厅",
+        },
+      }),
+    ];
+    render(<LeaveManagement />);
+
+    // 默认「全部」可见
+    expect(screen.getByText(/暂缓未处理但当时已提交/)).toBeInTheDocument();
+
+    // 「请假」筛选命中（提交时间早于结束）
+    fireEvent.click(screen.getByRole("button", { name: "请假" }));
+    expect(screen.getByText(/暂缓未处理但当时已提交/)).toBeInTheDocument();
+
+    // 「补请假」筛选不命中
+    fireEvent.click(screen.getByRole("button", { name: "补请假" }));
+    expect(screen.queryByText(/暂缓未处理但当时已提交/)).toBeNull();
+  });
+
+  it("切换分类筛选清空勾选；全选仅选中当前筛选下的行", () => {
+    adminMock.requests = [
+      makeRequest({
+        id: "lr-1",
+        created_at: "2026-08-20T10:00:00Z",
+        rehearsals: {
+          repertoire: "曲目A",
+          title: null,
+          start_time: "2026-09-01T13:00:00",
+          end_time: "2026-09-01T16:00:00",
           location: "排练厅",
         },
       }),
       makeRequest({
         id: "lr-2",
+        created_at: "2026-08-05T10:00:00Z",
         rehearsals: {
           repertoire: "曲目B",
           title: null,
-          start_time: pastEnd,
-          end_time: pastEnd,
+          start_time: "2026-08-01T13:00:00",
+          end_time: "2026-08-01T16:00:00",
           location: "排练厅",
         },
       }),
@@ -508,15 +561,16 @@ describe("LeaveManagement 请假审批区块（管理端）", () => {
   });
 
   it("分类筛选无匹配时提示「该分类下暂无申请」", () => {
-    const pastEnd = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    // 仅一条「补请假」（提交时间晚于结束），筛选「请假」应无匹配
     adminMock.requests = [
       makeRequest({
         id: "lr-1",
+        created_at: "2026-08-05T10:00:00Z",
         rehearsals: {
           repertoire: "曲目A",
           title: null,
-          start_time: pastEnd,
-          end_time: pastEnd,
+          start_time: "2026-08-01T13:00:00",
+          end_time: "2026-08-01T16:00:00",
           location: "排练厅",
         },
       }),

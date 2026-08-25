@@ -33,9 +33,18 @@ const ACCOUNT_TAB_OPTIONS = ["password", "email"] as const;
 type AccountTab = (typeof ACCOUNT_TAB_OPTIONS)[number];
 const accountTabLabel = (v: AccountTab) => (v === "password" ? "修改密码" : "换绑邮箱");
 
-/** 是否为标准 YYYY-MM-DD 日期格式（date input 可表示的格式；历史数据可能为「2024秋」等学期格式） */
-const isStandardDateString = (v: string | null | undefined): boolean =>
-  typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+// 入团时间学期选择器（profiles_join_date_format_ck 约束：join_date 仅允许
+// 「YYYY春 / YYYY秋」或空；date input 产出的 ISO 格式已不被库接受）
+const SEMESTER_PATTERN = /^\d{4}(春|秋)$/;
+/** 学期选项：明年秋 → 2000春，倒序（新学期在前，常用项靠前） */
+function buildSemesterOptions(now: Date): string[] {
+  const options: string[] = [];
+  for (let y = now.getFullYear() + 1; y >= 2000; y--) {
+    options.push(`${y}秋`, `${y}春`);
+  }
+  return options;
+}
+const SEMESTER_OPTIONS = buildSemesterOptions(new Date());
 
 // 通知栏目：信箱按钮 → 通知分类映射（Issue #188）
 const notificationItems: { label: string; category: NotificationCategory }[] = [
@@ -335,9 +344,9 @@ export default function ProfilePage() {
       return;
     }
 
-    // join_date 写入条件：用户改动过且值与原值不同（手滑点到同一天不写，保留原值）。
-    // 任何实际变化（含标准 YYYY-MM-DD 原值）都需用户确认——移动端手滑打开日期选择器
-    // 默认选中「今天」，若不确认会静默覆盖原日期（对抗返工，Issue #193）。
+    // join_date 写入条件：用户改动过且值与原值不同（选回原值不写，保留原值）。
+    // 任何实际变化都需二次确认——防止误选学期静默覆盖原值（对抗返工，Issue #193；
+    // 学期选择器无日期控件「默认今天」的误触问题，确认框对防误改仍有价值，保留）。
     const originalJoinDate = myProfile?.join_date ?? "";
     const willWriteJoinDate = isJoinDateTouched && editJoinDate.trim() !== originalJoinDate.trim();
     if (willWriteJoinDate) {
@@ -750,7 +759,7 @@ export default function ProfilePage() {
               placeholder="11 位手机号"
             />
           </div>
-          {/* 入团时间 + 隐藏入团时间开关（TEXT 列，日期输入值格式 YYYY-MM-DD 与列存文本一致） */}
+          {/* 入团时间 + 隐藏入团时间开关（TEXT 列，学期选择器：库约束仅允许 YYYY春/秋 或空） */}
           <div className="space-y-1">
             <div className="flex items-center justify-between gap-2">
               <label className="block text-xs font-medium text-text-muted">入团时间</label>
@@ -761,8 +770,7 @@ export default function ProfilePage() {
                 getLabel={privacyLabel}
               />
             </div>
-            <input
-              type="date"
+            <select
               value={editJoinDate}
               onChange={(e) => {
                 setEditJoinDate(e.target.value);
@@ -770,13 +778,18 @@ export default function ProfilePage() {
                 setEditError(null);
               }}
               className="input"
-            />
-            {/* 原值非标准日期格式（date input 无法显示）时提示当前值，未修改则保存时保留（Issue #193） */}
-            {myProfile?.join_date && !isStandardDateString(myProfile.join_date) && (
-              <p className="text-caption text-text-subtle">
-                当前值：{myProfile.join_date}（非日期格式，未修改则保留）
-              </p>
-            )}
+            >
+              <option value="">未设置</option>
+              {/* 历史脏值兜底：不在学期格式内的存量原值仍可显示与保留（未改动则保存不写该字段） */}
+              {editJoinDate !== "" && !SEMESTER_PATTERN.test(editJoinDate) && (
+                <option value={editJoinDate}>{editJoinDate}</option>
+              )}
+              {SEMESTER_OPTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-text-muted">学院</label>

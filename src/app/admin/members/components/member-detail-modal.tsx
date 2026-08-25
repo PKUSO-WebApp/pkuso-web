@@ -228,7 +228,7 @@ function MemberEditForm({
           value={form.join_date}
           onChange={(e) => setField("join_date", e.target.value)}
           className="input"
-          placeholder="如：2024-09-01"
+          placeholder="如：2026秋"
         />
       </div>
       {/* 在团情况（入团时间下方，二元 Toggle）：在团 → 团员 / 不在团 → 团友 */}

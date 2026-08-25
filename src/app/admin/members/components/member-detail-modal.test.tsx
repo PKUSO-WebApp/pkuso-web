@@ -60,7 +60,7 @@ const baseUser: ProfileRow = {
   instrument: "第一小提琴",
   is_section_leader: false,
   is_in_orchestra: true,
-  join_date: "2024-09-01",
+  join_date: "2024秋",
   phone_number: "13800138000",
   role: "member",
   status: "approved",
@@ -100,9 +100,7 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
     expect((screen.getByPlaceholderText("11 位手机号") as HTMLInputElement).value).toBe(
       "13800138000",
     );
-    expect((screen.getByPlaceholderText("如：2024-09-01") as HTMLInputElement).value).toBe(
-      "2024-09-01",
-    );
+    expect((screen.getByPlaceholderText("如：2026秋") as HTMLInputElement).value).toBe("2024秋");
     expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("第一小提琴");
     expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
   });
@@ -191,7 +189,7 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
         college: "信息科学技术学院",
         email: "zhangsan@example.com",
         phone_number: "18812345678",
-        join_date: "2024-09-01",
+        join_date: "2024秋",
         is_section_leader: true,
         is_in_orchestra: true,
       });

@@ -127,6 +127,7 @@ function mockProfile(overrides: Partial<ProfileRow> = {}): ProfileRow {
     wechat_openid: null,
     instrument: "小提琴",
     is_section_leader: false,
+    is_in_orchestra: true,
     join_date: null,
     phone_number: null,
     role: "member",

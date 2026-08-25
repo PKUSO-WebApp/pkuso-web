@@ -1594,6 +1594,7 @@ describe("反馈列表（Issue #209）", () => {
 });
 
 // ---- Issue #227：发布系统通知（向全体已批准成员广播 + 历史列表）----
+// 弹窗内 Tab 分离「发送通知」/「历史通知」（默认发送）；历史相关断言需先切 tab
 
 describe("发布系统通知（Issue #227）", () => {
   const sampleNotify = (overrides: Record<string, unknown> = {}) => ({
@@ -1613,14 +1614,31 @@ describe("发布系统通知（Issue #227）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("渲染「发布系统通知」按钮（在反馈列表下方）", () => {
+  it("渲染「发布系统通知」按钮（乐团事务组内，位于设置组「反馈列表」上方）", () => {
     render(<ProfilePage />);
     const notifyBtn = screen.getByRole("button", { name: /发布系统通知/ });
     const feedbackBtn = screen.getByRole("button", { name: /反馈列表/ });
-    // DOM 顺序：反馈列表在前，发布系统通知在后
+    // DOM 顺序（分组化后）：乐团事务组在前 → 发布系统通知先于设置组的反馈列表
     expect(
-      notifyBtn.compareDocumentPosition(feedbackBtn) & Node.DOCUMENT_POSITION_PRECEDING,
+      notifyBtn.compareDocumentPosition(feedbackBtn) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("Tab 分离：默认「发送通知」（撰写可见历史隐藏），切「历史通知」后反之", async () => {
+    setupSupabaseMock({ fetchData: [sampleNotify()] });
+    render(<ProfilePage />);
+    fireEvent.click(screen.getByRole("button", { name: /发布系统通知/ }));
+
+    // 默认 tab：撰写区可见，历史列表不渲染
+    expect(screen.getByPlaceholderText(/通知标题/)).toBeInTheDocument();
+    expect(screen.queryByText("元旦汇演通知")).toBeNull();
+
+    // 切到历史 tab：撰写区隐藏，历史渲染
+    fireEvent.click(screen.getByRole("button", { name: "历史通知" }));
+    await waitFor(() => {
+      expect(screen.getByText("元旦汇演通知")).toBeInTheDocument();
+    });
+    expect(screen.queryByPlaceholderText(/通知标题/)).toBeNull();
   });
 
   it("打开弹窗时查询 system_notifications 表：标题 + 内容 + 时间倒序渲染", async () => {
@@ -1636,6 +1654,8 @@ describe("发布系统通知（Issue #227）", () => {
     const { orderMock } = setupSupabaseMock({ fetchData: rows });
     render(<ProfilePage />);
     fireEvent.click(screen.getByRole("button", { name: /发布系统通知/ }));
+    // 历史列表在「历史通知」tab 下渲染
+    fireEvent.click(screen.getByRole("button", { name: "历史通知" }));
 
     await waitFor(() => {
       expect(supabase.from).toHaveBeenCalledWith("system_notifications");
@@ -1652,6 +1672,7 @@ describe("发布系统通知（Issue #227）", () => {
     setupSupabaseMock({ fetchData: [] });
     render(<ProfilePage />);
     fireEvent.click(screen.getByRole("button", { name: /发布系统通知/ }));
+    fireEvent.click(screen.getByRole("button", { name: "历史通知" }));
 
     await waitFor(() => {
       expect(screen.getByText("暂无通知")).toBeInTheDocument();
@@ -1663,9 +1684,7 @@ describe("发布系统通知（Issue #227）", () => {
     render(<ProfilePage />);
     fireEvent.click(screen.getByRole("button", { name: /发布系统通知/ }));
 
-    await waitFor(() => {
-      expect(screen.getByText("暂无通知")).toBeInTheDocument();
-    });
+    // 默认「发送通知」tab：撰写区直接可见
     const publishBtn = screen.getByRole("button", { name: "发布" });
     expect(publishBtn).toBeDisabled();
 
@@ -1688,9 +1707,7 @@ describe("发布系统通知（Issue #227）", () => {
     render(<ProfilePage />);
     fireEvent.click(screen.getByRole("button", { name: /发布系统通知/ }));
 
-    await waitFor(() => {
-      expect(screen.getByText("暂无通知")).toBeInTheDocument();
-    });
+    // 默认「发送通知」tab：直接撰写并发布
     fireEvent.change(screen.getByPlaceholderText(/通知标题/), {
       target: { value: " 元旦汇演通知 " },
     });
@@ -1731,9 +1748,7 @@ describe("发布系统通知（Issue #227）", () => {
     render(<ProfilePage />);
     fireEvent.click(screen.getByRole("button", { name: /发布系统通知/ }));
 
-    await waitFor(() => {
-      expect(screen.getByText("暂无通知")).toBeInTheDocument();
-    });
+    // 默认「发送通知」tab：直接撰写并发布
     fireEvent.change(screen.getByPlaceholderText(/通知标题/), {
       target: { value: "重要通知" },
     });
@@ -1761,9 +1776,7 @@ describe("发布系统通知（Issue #227）", () => {
     render(<ProfilePage />);
     fireEvent.click(screen.getByRole("button", { name: /发布系统通知/ }));
 
-    await waitFor(() => {
-      expect(screen.getByText("暂无通知")).toBeInTheDocument();
-    });
+    // 默认「发送通知」tab：直接撰写并发布
     fireEvent.change(screen.getByPlaceholderText(/通知标题/), {
       target: { value: "重要通知" },
     });

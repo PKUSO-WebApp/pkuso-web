@@ -2,12 +2,22 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { POST } from "./route";
 import type { Database } from "@/types/database.types";
-import { deleteTestUser, sweepTestUsers } from "@/__tests__/e2e-utils";
+import {
+  deleteTestUser,
+  sweepTestUsers,
+  sweepTestNotifications,
+  TEST_NOTIFY_TITLE_PREFIX,
+} from "@/__tests__/e2e-utils";
 
 // ============================================================
 // POST /api/admin/notify-system 端到端测试（需 Supabase service role）
 // 参考 leave route 的端到端模式：临时 admin + 临时成员 → 调 handler → 断言广播 → 清理。
 // 缺少环境变量或测试环境准备失败（网络波动）时整组优雅跳过。
+//
+// ⚠️ 广播会落到真实成员信箱（route 拉全体 approved）：标题必须用
+// TEST_NOTIFY_TITLE_PREFIX 前缀 + 运行级时间戳的唯一标记，
+// 清理按精确标题全量删除（含真实成员收到的），否则每次运行都会
+// 给真实用户留下永久垃圾（曾积压 24 条发到 8 个真实成员）。
 // ============================================================
 function envReady(): boolean {
   return !!process.env.NEXT_PUBLIC_SUPABASE_URL && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -32,6 +42,10 @@ describe("POST /api/admin/notify-system", () => {
   let adminUserId = "";
   let memberUserId = "";
   let pendingUserId = "";
+  // 本轮广播的唯一标记（标题/内容带时间戳）：断言与清理共用，
+  // 精确匹配保证不误删真实通知、也不误删并行运行的其他轮次
+  let broadcastTitle = "";
+  let broadcastContent = "";
 
   beforeAll(async () => {
     if (!envReady()) {
@@ -52,6 +66,12 @@ describe("POST /api/admin/notify-system", () => {
       );
       const stamp = Date.now();
       await sweepTestUsers(dbSb);
+      // 预清扫历史残留的测试广播（CI 超时被杀等导致 afterAll 未执行的场景）
+      await sweepTestNotifications(dbSb);
+
+      // 本轮广播的唯一标记：[e2e] 前缀供预清扫识别，时间戳保证运行间不串扰
+      broadcastTitle = `${TEST_NOTIFY_TITLE_PREFIX} 元旦汇演通知 ${stamp}`;
+      broadcastContent = `请于 12 月 31 日 19:00 到场 [e2e:${stamp}]`;
 
       // 1. 临时 admin
       const adminEmail = `ns-admin-${stamp}@pkuso.test`;
@@ -129,12 +149,17 @@ describe("POST /api/admin/notify-system", () => {
         cleanupErrors.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
       }
     };
-    // 清理广播产生的通知与本测试创建的系统通知历史
-    await step("notifications", () =>
+    // 清理顺序：先按精确标题全量清（含真实成员误投递 + 测试账号信箱），
+    // 再按 user_id 兜底清测试账号信箱，最后清历史存档与临时用户。
+    // 每步独立容错：任一步失败记录并继续，最终汇总抛错让测试失败（不允许静默垃圾）
+    await step("notifications(按标题全量)", () =>
+      dbSb.from("notifications").delete().eq("title", broadcastTitle),
+    );
+    await step("notifications(测试账号信箱)", () =>
       dbSb.from("notifications").delete().in("user_id", [adminUserId, memberUserId, pendingUserId]),
     );
     await step("system_notifications", () =>
-      dbSb.from("system_notifications").delete().eq("publisher_id", adminUserId),
+      dbSb.from("system_notifications").delete().eq("title", broadcastTitle),
     );
     await step("admin user", () => deleteTestUser(dbSb, adminUserId));
     await step("member user", () => deleteTestUser(dbSb, memberUserId));
@@ -161,8 +186,8 @@ describe("POST /api/admin/notify-system", () => {
 
   it("发布成功：向全体已批准成员广播（pending 除外）", { timeout: 30000 }, async () => {
     if (!ready) return;
-    const title = "元旦汇演通知";
-    const content = "请于 12 月 31 日 19:00 到场";
+    const title = broadcastTitle;
+    const content = broadcastContent;
     const res2 = await POST(authRequest(adminToken, { title, content }));
     const body = (await res2.json()) as { success?: boolean; count?: number; error?: string };
     expect(res2.status).toBe(200);

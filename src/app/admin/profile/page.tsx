@@ -143,9 +143,11 @@ export default function ProfilePage() {
 
   // ---- 发布系统通知（Issue #227）----
   // 状态机：打开弹窗拉历史；发布走 service role API（向全体 approved 成员广播）。
-  // 撰写区：标题 + 内容 + 发布按钮（双 guard：publishingRef 同步 + isPublishing state）；
-  // 历史列表：system_notifications 倒序、只读。竞态守卫用递增序号（快速开关丢弃过期响应）。
+  // Tab 分离「发送通知」/「历史通知」（默认发送）；撰写区：标题 + 内容 + 发布按钮
+  // （双 guard：publishingRef 同步 + isPublishing state）；历史列表：system_notifications
+  // 倒序、只读。竞态守卫用递增序号（快速开关丢弃过期响应）。
   const [isNotifyOpen, setIsNotifyOpen] = React.useState(false);
+  const [notifyTab, setNotifyTab] = React.useState<"发送通知" | "历史通知">("发送通知");
   const [notifyTitle, setNotifyTitle] = React.useState("");
   const [notifyContent, setNotifyContent] = React.useState("");
   const [isPublishing, setIsPublishing] = React.useState(false);
@@ -182,6 +184,7 @@ export default function ProfilePage() {
 
   const handleOpenNotifyModal = () => {
     setIsNotifyOpen(true);
+    setNotifyTab("发送通知"); // 每次打开回到默认 tab
     fetchNotifyHistory();
   };
 
@@ -533,67 +536,75 @@ export default function ProfilePage() {
         </div>
       </section>
 
-      {/* 管理邀请码 */}
-      <button
-        type="button"
-        onClick={handleOpenManageModal}
-        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
-      >
-        📋 管理邀请码
-      </button>
+      {/* 乐团事务（分类对齐 member 端「我的」页：小节标题 + divide-y 卡片行，无 emoji 装饰） */}
+      <section>
+        <h2 className="text-xs font-medium text-text-muted">乐团事务</h2>
+        <div className="mt-2 divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface">
+          {/* 管理邀请码 */}
+          <button
+            type="button"
+            onClick={handleOpenManageModal}
+            className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+          >
+            管理邀请码
+          </button>
+          {/* 生成邀请码 */}
+          <button
+            type="button"
+            onClick={handleOpenGenModal}
+            className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+          >
+            生成邀请码
+          </button>
+          {/* 发布系统通知（Issue #227）：向全体已批准成员广播站内通知 + 历史列表 */}
+          <button
+            type="button"
+            onClick={handleOpenNotifyModal}
+            className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+          >
+            发布系统通知
+          </button>
+        </div>
+      </section>
 
-      {/* 生成邀请码 */}
-      <button
-        type="button"
-        onClick={handleOpenGenModal}
-        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
-      >
-        ✨ 生成邀请码
-      </button>
-
-      <button
-        type="button"
-        onClick={() => setIsPwdModalOpen(true)}
-        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
-      >
-        🔒 修改密码
-      </button>
-
-      {/* 邮件签名设置 */}
-      <button
-        type="button"
-        onClick={handleOpenSigModal}
-        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
-      >
-        📧 邮件签名设置
-      </button>
-
-      {/* 反馈列表（Issue #209）：成员匿名反馈，只读列表 */}
-      <button
-        type="button"
-        onClick={handleOpenFeedbackModal}
-        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
-      >
-        💬 反馈列表
-      </button>
-
-      {/* 发布系统通知（Issue #227）：向全体已批准成员广播站内通知 + 历史列表 */}
-      <button
-        type="button"
-        onClick={handleOpenNotifyModal}
-        className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-medium text-text hover:bg-muted"
-      >
-        📢 发布系统通知
-      </button>
-
-      <button
-        type="button"
-        onClick={handleLogout}
-        className="flex w-full items-center justify-center gap-2 rounded-full bg-danger-bg px-4 py-2.5 text-sm font-medium text-danger shadow-sm hover:opacity-90"
-      >
-        <LogOut className="h-4 w-4" />
-        退出登录
-      </button>
+      {/* 设置 */}
+      <section>
+        <h2 className="text-xs font-medium text-text-muted">设置</h2>
+        <div className="mt-2 divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface">
+          <button
+            type="button"
+            onClick={() => setIsPwdModalOpen(true)}
+            className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+          >
+            修改密码
+          </button>
+          {/* 邮件签名设置 */}
+          <button
+            type="button"
+            onClick={handleOpenSigModal}
+            className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+          >
+            邮件签名设置
+          </button>
+          {/* 反馈列表（Issue #209）：成员匿名反馈，只读列表 */}
+          <button
+            type="button"
+            onClick={handleOpenFeedbackModal}
+            className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+          >
+            反馈列表
+          </button>
+          {/* 退出登录：最后一行，红色文字（与 member 端一致，保留 LogOut 图标） */}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium text-danger hover:bg-muted"
+          >
+            <LogOut className="h-4 w-4" />
+            退出登录
+          </button>
+        </div>
+      </section>
 
       {/* 修改密码 Modal */}
       <Modal
@@ -1179,7 +1190,7 @@ export default function ProfilePage() {
         </div>
       </Modal>
 
-      {/* 发布系统通知 Modal（底部弹出，Issue #227）：撰写区（标题+内容+发布）+ 历史列表。
+      {/* 发布系统通知 Modal（底部弹出，Issue #227）：Tab 分离「发送通知」/「历史通知」。
            仅站内通知，向全体已批准成员广播；历史只读展示标题/内容/发布时间倒序。 */}
       <Modal
         open={isNotifyOpen}
@@ -1188,76 +1199,87 @@ export default function ProfilePage() {
         position="bottom"
       >
         <div className="mt-4 space-y-3 pb-safe">
-          {/* 撰写区 */}
-          <div className="space-y-2 rounded-xl border border-border bg-card p-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-text-muted">标题</label>
-              <input
-                type="text"
-                value={notifyTitle}
-                onChange={(e) => setNotifyTitle(e.target.value)}
-                maxLength={100}
-                className="input"
-                placeholder="通知标题（必填，≤100 字）"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-text-muted">内容</label>
-              <textarea
-                value={notifyContent}
-                onChange={(e) => setNotifyContent(e.target.value)}
-                maxLength={2000}
-                rows={4}
-                className="w-full rounded-lg border border-border bg-surface p-2 text-sm text-text leading-relaxed outline-none"
-                placeholder="通知正文（必填，≤2000 字）"
-              />
-            </div>
-            {/* 双按钮操作行右下角（Issue #182）：单一主操作靠右 */}
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                disabled={isPublishing || !notifyTitle.trim() || !notifyContent.trim()}
-                onClick={handlePublishNotify}
-                className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
-              >
-                {isPublishing ? "发布中…" : "发布"}
-              </button>
-            </div>
-            {publishError && <p className="text-xs text-danger">{publishError}</p>}
-            {publishSuccess && <p className="text-xs text-success">已发布给全体已批准成员</p>}
+          {/* Tab 切换（居中）：撰写与罗列分离，避免同屏堆叠 */}
+          <div className="flex justify-center">
+            <Toggle
+              options={["发送通知", "历史通知"] as const}
+              value={notifyTab}
+              onChange={setNotifyTab}
+            />
           </div>
 
-          {/* 历史列表 */}
-          <p className="text-xs font-medium text-text-muted">已发布通知</p>
-          {notifyLoading ? (
-            <p className="py-6 text-center text-xs text-text-muted">加载中…</p>
-          ) : notifyError ? (
-            <div className="py-6 text-center">
-              <p className="text-xs text-danger">加载失败，请稍后重试</p>
-              <button
-                type="button"
-                onClick={fetchNotifyHistory}
-                className="mt-3 rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted"
-              >
-                重试
-              </button>
+          {notifyTab === "发送通知" ? (
+            /* 撰写区 */
+            <div className="space-y-2 rounded-xl border border-border bg-card p-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-text-muted">标题</label>
+                <input
+                  type="text"
+                  value={notifyTitle}
+                  onChange={(e) => setNotifyTitle(e.target.value)}
+                  maxLength={100}
+                  className="input"
+                  placeholder="通知标题（必填，≤100 字）"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-text-muted">内容</label>
+                <textarea
+                  value={notifyContent}
+                  onChange={(e) => setNotifyContent(e.target.value)}
+                  maxLength={2000}
+                  rows={4}
+                  className="w-full rounded-lg border border-border bg-surface p-2 text-sm text-text leading-relaxed outline-none"
+                  placeholder="通知正文（必填，≤2000 字）"
+                />
+              </div>
+              {/* 双按钮操作行右下角（Issue #182）：单一主操作靠右 */}
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={isPublishing || !notifyTitle.trim() || !notifyContent.trim()}
+                  onClick={handlePublishNotify}
+                  className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+                >
+                  {isPublishing ? "发布中…" : "发布"}
+                </button>
+              </div>
+              {publishError && <p className="text-xs text-danger">{publishError}</p>}
+              {publishSuccess && <p className="text-xs text-success">已发布给全体已批准成员</p>}
             </div>
-          ) : notifyRows.length === 0 ? (
-            <p className="py-6 text-center text-xs text-text-muted">暂无通知</p>
           ) : (
-            // 罗列内容可滚动（max-h 容器，CLAUDE.md）
-            <div className="max-h-[40vh] space-y-3 overflow-y-auto pb-1">
-              {notifyRows.map((row) => (
-                <div key={row.id} className="rounded-xl border border-border bg-card p-3">
-                  <p className="text-caption text-text-muted">
-                    {formatDateTimeInChina(row.created_at)}
-                  </p>
-                  <p className="mt-1 text-sm font-medium text-text">{row.title}</p>
-                  <p className="mt-1 whitespace-pre-line text-sm leading-relaxed text-text">
-                    {row.content}
-                  </p>
+            /* 历史列表（只读，created_at 倒序；罗列内容可滚动，CLAUDE.md） */
+            <div>
+              {notifyLoading ? (
+                <p className="py-6 text-center text-xs text-text-muted">加载中…</p>
+              ) : notifyError ? (
+                <div className="py-6 text-center">
+                  <p className="text-xs text-danger">加载失败，请稍后重试</p>
+                  <button
+                    type="button"
+                    onClick={fetchNotifyHistory}
+                    className="mt-3 rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted"
+                  >
+                    重试
+                  </button>
                 </div>
-              ))}
+              ) : notifyRows.length === 0 ? (
+                <p className="py-6 text-center text-xs text-text-muted">暂无通知</p>
+              ) : (
+                <div className="max-h-[40vh] space-y-3 overflow-y-auto pb-1">
+                  {notifyRows.map((row) => (
+                    <div key={row.id} className="rounded-xl border border-border bg-card p-3">
+                      <p className="text-caption text-text-muted">
+                        {formatDateTimeInChina(row.created_at)}
+                      </p>
+                      <p className="mt-1 text-sm font-medium text-text">{row.title}</p>
+                      <p className="mt-1 whitespace-pre-line text-sm leading-relaxed text-text">
+                        {row.content}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

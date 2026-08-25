@@ -33,6 +33,7 @@ export type ProfileUpdatePayload = Partial<
     | "hide_phone"
     | "hide_join_date"
     | "is_section_leader"
+    | "is_in_orchestra"
   >
 >;
 

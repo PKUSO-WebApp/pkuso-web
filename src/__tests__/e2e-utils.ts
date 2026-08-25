@@ -9,6 +9,18 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const TEST_EMAIL_SUFFIX = "@pkuso.test";
 
 /**
+ * E2E 测试广播的通知标题前缀。
+ *
+ * 背景（实测事故）：notify-system E2E 的 POST handler 会向**全体 approved 成员**
+ * 广播——包括生产库里的真实用户。若标题用与真实通知无异的固定文案，
+ * afterAll 只清理临时测试账号的信箱，真实用户收到的测试广播就成了永久垃圾
+ * （曾积压 24 条「元旦汇演通知」发到 8 个真实成员）。
+ * 约定：所有 E2E 广播的标题一律以本前缀开头 + 运行级时间戳结尾，
+ * 清扫按前缀/精确标题匹配，绝不触碰真实管理员发布的系统通知。
+ */
+export const TEST_NOTIFY_TITLE_PREFIX = "[e2e]";
+
+/**
  * 创建独立的 service role 客户端，专用于清理（profiles DELETE / auth.users DELETE）。
  *
  * 为什么必须独立：调用方传入的 client 可能已执行过 signInWithPassword（如 notify /
@@ -132,4 +144,36 @@ export async function sweepTestUsers(_client: SupabaseClient): Promise<void> {
     if (users.length < perPage) break;
     page += 1;
   }
+}
+
+/**
+ * 预清扫历史残留的测试广播通知（notifications 信箱行 + system_notifications 历史行）。
+ *
+ * 为什么需要：afterAll 清理只在进程正常结束时执行；CI 超时被杀 / 本地 Ctrl-C
+ * 都会跳过 afterAll，当次广播的垃圾只能靠下一次运行的预清扫兜底。
+ *
+ * 匹配规则：标题以 TEST_NOTIFY_TITLE_PREFIX（"[e2e]"）开头。真实管理员不会以
+ * 该前缀发通知，误删面为零。与 sweepTestUsers 同样只清 10 分钟前的残留，
+ * 保护并行 E2E 文件刚写入的活跃数据（同一 10 分钟窗口理由，见 SWEEP_MIN_AGE_MS）。
+ * 独立 service role client 的原因同 deleteTestUser（防调用方 client 登录态污染）。
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- 保留签名兼容既有调用方（同 sweepTestUsers）
+export async function sweepTestNotifications(_client: SupabaseClient): Promise<void> {
+  const clean = await createCleanAdminClient();
+  const cutoffISO = new Date(Date.now() - SWEEP_MIN_AGE_MS).toISOString();
+
+  // 先清信箱行（真实成员 + 测试账号收到的），再清历史存档
+  const { error: inboxErr } = await clean
+    .from("notifications")
+    .delete()
+    .like("title", `${TEST_NOTIFY_TITLE_PREFIX}%`)
+    .lt("created_at", cutoffISO);
+  if (inboxErr) throw new Error(`预清扫测试广播信箱失败: ${inboxErr.message}`);
+
+  const { error: historyErr } = await clean
+    .from("system_notifications")
+    .delete()
+    .like("title", `${TEST_NOTIFY_TITLE_PREFIX}%`)
+    .lt("created_at", cutoffISO);
+  if (historyErr) throw new Error(`预清扫测试系统通知历史失败: ${historyErr.message}`);
 }

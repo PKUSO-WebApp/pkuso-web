@@ -34,6 +34,7 @@ const baseUser: ProfileRow = {
   wechat_openid: null,
   instrument: "第一小提琴",
   is_section_leader: false,
+  is_in_orchestra: true,
   join_date: "2024-09-01",
   phone_number: "13800138000",
   role: "member",

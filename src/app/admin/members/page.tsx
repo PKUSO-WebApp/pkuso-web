@@ -384,6 +384,9 @@ export default function MembersPage() {
                             <p className="mt-0.5 text-text-muted">邮箱：{u.email ?? "—"}</p>
                             <p className="mt-0.5 text-text-subtle">
                               入团时间：{u.join_date?.trim() || "—"}
+                              {/* 在团情况后缀：true → 团员 / false → 团友；NULL（未设置）不显示 */}
+                              {u.is_in_orchestra === true && " 团员"}
+                              {u.is_in_orchestra === false && " 团友"}
                             </p>
                           </button>
                         </li>

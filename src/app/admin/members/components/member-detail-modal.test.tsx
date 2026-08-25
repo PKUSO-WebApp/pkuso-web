@@ -59,6 +59,7 @@ const baseUser: ProfileRow = {
   wechat_openid: null,
   instrument: "第一小提琴",
   is_section_leader: false,
+  is_in_orchestra: true,
   join_date: "2024-09-01",
   phone_number: "13800138000",
   role: "member",
@@ -110,6 +111,34 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
     renderModal({ user: { ...baseUser, is_section_leader: true } });
     expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
     expect(screen.getByText("🏅 声部长")).toBeInTheDocument();
+  });
+
+  it("在团情况：入团时间下方展示 Toggle，默认跟随成员数据（在团）", () => {
+    renderModal();
+    expect(screen.getByText("在团情况")).toBeInTheDocument();
+    // Toggle 两个选项都渲染，激活项为「在团」（is_in_orchestra: true）
+    const onBtn = screen.getByRole("button", { name: "在团" });
+    const offBtn = screen.getByRole("button", { name: "不在团" });
+    expect(onBtn.className).toContain("bg-primary");
+    expect(offBtn.className).not.toContain("bg-primary");
+  });
+
+  it("不在团成员打开时 Toggle 激活「不在团」", () => {
+    renderModal({ user: { ...baseUser, is_in_orchestra: false } });
+    expect(screen.getByRole("button", { name: "不在团" }).className).toContain("bg-primary");
+    expect(screen.getByRole("button", { name: "在团" }).className).not.toContain("bg-primary");
+  });
+
+  it("切到「不在团」后保存：payload.is_in_orchestra = false", async () => {
+    const { onSave } = renderModal();
+    fireEvent.click(screen.getByRole("button", { name: "不在团" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith(
+        "user-1",
+        expect.objectContaining({ is_in_orchestra: false }),
+      );
+    });
   });
 
   it("手机号格式错误时提示错误且不保存", async () => {
@@ -164,6 +193,7 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
         phone_number: "18812345678",
         join_date: "2024-09-01",
         is_section_leader: true,
+        is_in_orchestra: true,
       });
       expect(onClose).toHaveBeenCalled();
     });

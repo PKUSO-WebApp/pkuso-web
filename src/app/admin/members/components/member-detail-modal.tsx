@@ -2,10 +2,14 @@
 
 import React from "react";
 import { Modal } from "@/components/ui/Modal";
+import { Toggle } from "@/components/ui/Toggle";
 import { INSTRUMENT_ORDER, OTHER_INSTRUMENT_GROUP } from "@/constants/instruments";
 import { isValidPhoneNumber } from "@/lib/validation";
 import type { ProfileRow } from "@/types/database";
 import type { ProfileUpdatePayload } from "@/hooks/useProfiles";
+
+/** 在团情况二选一（编辑表单用）：在团 → is_in_orchestra=true，不在团 → false */
+const ORCHESTRA_STATUS_OPTIONS = ["在团", "不在团"] as const;
 
 type AdminMemberDetailModalProps = {
   open: boolean;
@@ -24,6 +28,7 @@ type FormState = {
   phone_number: string;
   join_date: string;
   is_section_leader: boolean;
+  is_in_orchestra: boolean;
 };
 
 /** admin 侧成员详情弹窗：可编辑全部字段，保存走 supabase 直连（RLS admin UPDATE 策略） */
@@ -95,6 +100,8 @@ function MemberEditForm({
     phone_number: user.phone_number ?? "",
     join_date: user.join_date ?? "",
     is_section_leader: user.is_section_leader,
+    // 历史数据可能为 NULL（未设置）：表单为二元选择，默认按在团处理，保存时写入显式布尔
+    is_in_orchestra: user.is_in_orchestra ?? true,
   }));
   const [formError, setFormError] = React.useState<string | null>(null);
   const submittingRef = React.useRef(false); // 同步 guard，阻断竞态窗口
@@ -139,6 +146,7 @@ function MemberEditForm({
         phone_number: phone || null,
         join_date: form.join_date.trim() || null,
         is_section_leader: form.is_section_leader,
+        is_in_orchestra: form.is_in_orchestra,
       });
       if (ok) {
         // 先解除提交状态（setSubmitting 同步更新 ref），再关闭，避免 handleClose 守卫拦截
@@ -221,6 +229,15 @@ function MemberEditForm({
           onChange={(e) => setField("join_date", e.target.value)}
           className="input"
           placeholder="如：2024-09-01"
+        />
+      </div>
+      {/* 在团情况（入团时间下方，二元 Toggle）：在团 → 团员 / 不在团 → 团友 */}
+      <div>
+        <label className="mb-1 block text-xs font-medium text-text-muted">在团情况</label>
+        <Toggle
+          options={ORCHESTRA_STATUS_OPTIONS}
+          value={form.is_in_orchestra ? "在团" : "不在团"}
+          onChange={(v) => setField("is_in_orchestra", v === "在团")}
         />
       </div>
       <label className="flex items-center gap-2">

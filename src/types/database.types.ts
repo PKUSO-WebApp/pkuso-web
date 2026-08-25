@@ -322,6 +322,7 @@ export type Database = {
           hide_phone: boolean
           id: string
           instrument: string | null
+          is_in_orchestra: boolean | null
           is_section_leader: boolean
           join_date: string | null
           phone_number: string | null
@@ -342,6 +343,7 @@ export type Database = {
           hide_phone?: boolean
           id: string
           instrument?: string | null
+          is_in_orchestra?: boolean | null
           is_section_leader?: boolean
           join_date?: string | null
           phone_number?: string | null
@@ -362,6 +364,7 @@ export type Database = {
           hide_phone?: boolean
           id?: string
           instrument?: string | null
+          is_in_orchestra?: boolean | null
           is_section_leader?: boolean
           join_date?: string | null
           phone_number?: string | null

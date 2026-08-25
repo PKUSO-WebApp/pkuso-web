@@ -76,7 +76,7 @@ describe("Issue #193 profiles 隐私：成员写路径权限回归（真实连�
         role: "member",
         college: "初始学院",
         phone_number: "13800000000",
-        join_date: "2024-09-01",
+        join_date: "2024秋", // 学期格式（profiles_join_date_format_ck 约束只允许 \d{4}春/秋）
         hide_email: false,
         hide_phone: false,
         hide_join_date: false,
@@ -148,7 +148,7 @@ describe("Issue #193 profiles 隐私：成员写路径权限回归（真实连�
         expect(selfRows[0].hide_email).toBe(true);
         // 其余隐私开关未动，本人视角原值可见
         expect(selfRows[0].phone_number).toBe("13800000000");
-        expect(selfRows[0].join_date).toBe("2024-09-01");
+        expect(selfRows[0].join_date).toBe("2024秋");
 
         // 5.5 匿名视角（无 JWT，anon 角色）：行可见（status=approved）但 email 被掩码为 NULL
         const anonRes = await fetch(

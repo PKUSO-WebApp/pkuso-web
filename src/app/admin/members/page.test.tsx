@@ -96,10 +96,11 @@ const mocks = vi.hoisted(() => {
   ];
 
   // profiles_roster 补查返回（视图无 FK 无法 embed；admin 经 is_admin 拿原值）
+  // is_in_orchestra 三态覆盖：在团 / 不在团 / 未设置（—）
   const mockRosterRows = [
-    { id: "u1", full_name: "张小三", email: "zhangsan@example.com" },
-    { id: "u2", full_name: "李小四", email: "lisi@example.com" },
-    { id: "u3", full_name: "王小五", email: "wangwu@example.com" },
+    { id: "u1", full_name: "张小三", email: "zhangsan@example.com", is_in_orchestra: true },
+    { id: "u2", full_name: "李小四", email: "lisi@example.com", is_in_orchestra: false },
+    { id: "u3", full_name: "王小五", email: "wangwu@example.com", is_in_orchestra: null },
   ];
 
   // supabase 链式 mock：select/eq/in/order/insert 返回链自身，then 由 beforeEach 按查询类型配置返回值
@@ -552,8 +553,8 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
     });
     expect(mocks.mockFrom).toHaveBeenCalledWith("profiles_roster");
     expect(mocks.mockAoaToSheet).toHaveBeenCalledWith([
-      ["姓名", "邮箱", "出勤情况", "签到时间"],
-      ["张小三", "zhangsan@example.com", "出席", "2026-08-20T19:05:00"],
+      ["姓名", "邮箱", "出勤情况", "在团情况", "签到时间"],
+      ["张小三", "zhangsan@example.com", "出席", "在团", "2026-08-20T19:05:00"],
     ]);
   });
 
@@ -564,16 +565,16 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
     await waitFor(() => {
       expect(mocks.mockWriteFile).toHaveBeenCalled();
     });
-    // 排练按开始时间倒序：第一张 sheet（莫扎特，rehearsal_id=2）一行：王小五 迟到
+    // 排练按开始时间倒序：第一张 sheet（莫扎特，rehearsal_id=2）一行：王小五 迟到（未设置在团 → —）
     expect(mocks.mockAoaToSheet.mock.calls[0][0]).toEqual([
-      ["姓名", "邮箱", "出勤情况", "签到时间"],
-      ["王小五", "wangwu@example.com", "迟到", "2026-08-21T14:10:00"],
+      ["姓名", "邮箱", "出勤情况", "在团情况", "签到时间"],
+      ["王小五", "wangwu@example.com", "迟到", "—", "2026-08-21T14:10:00"],
     ]);
-    // 第二张 sheet（贝多芬，rehearsal_id=1）两行：张小三/李小四 带邮箱
+    // 第二张 sheet（贝多芬，rehearsal_id=1）两行：张小三(在团)/李小四(不在团)
     expect(mocks.mockAoaToSheet.mock.calls[1][0]).toEqual([
-      ["姓名", "邮箱", "出勤情况", "签到时间"],
-      ["张小三", "zhangsan@example.com", "缺席", "—"],
-      ["李小四", "lisi@example.com", "出席", "2026-08-20T19:05:00"],
+      ["姓名", "邮箱", "出勤情况", "在团情况", "签到时间"],
+      ["张小三", "zhangsan@example.com", "缺席", "在团", "—"],
+      ["李小四", "lisi@example.com", "出席", "不在团", "2026-08-20T19:05:00"],
     ]);
   });
 

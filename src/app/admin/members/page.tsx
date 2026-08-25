@@ -19,23 +19,36 @@ import { AdminMemberDetailModal } from "./components/member-detail-modal";
 type ViewMode = "attendance" | "roster";
 
 /**
- * 原 join embed 因基表敏感列 email 被列级拒绝而失效：改为按 id 从 profiles_roster 补查姓名+邮箱（Issue #193）。
+ * 原 join embed 因基表敏感列 email 被列级拒绝而失效：改为按 id 从 profiles_roster 补查姓名+邮箱+在团情况（Issue #193）。
  * admin 经视图内 is_admin() 分支拿原值（隐藏对管理员无效）；补查失败返回空 Map，导出降级为「—」。
  */
 async function fetchRosterProfiles(
   userIds: string[],
-): Promise<Map<string, { full_name: string | null; email: string | null }>> {
+): Promise<
+  Map<string, { full_name: string | null; email: string | null; is_in_orchestra: boolean | null }>
+> {
   if (userIds.length === 0) return new Map();
   const { supabase } = await import("@/lib/supabase");
   const { data, error } = await supabase
     .from("profiles_roster")
-    .select("id, full_name, email")
+    .select("id, full_name, email, is_in_orchestra")
     .in("id", userIds);
   if (error) return new Map();
   return new Map(
-    (data ?? []).map((r) => [String(r.id), { full_name: r.full_name, email: r.email }]),
+    (data ?? []).map((r) => [
+      String(r.id),
+      {
+        full_name: r.full_name,
+        email: r.email,
+        is_in_orchestra: r.is_in_orchestra as boolean | null,
+      },
+    ]),
   );
 }
+
+/** 在团情况的导出文案：true → 在团 / false → 不在团 / NULL（未设置）→ — */
+const inOrchestraLabel = (v: boolean | null | undefined): string =>
+  v === true ? "在团" : v === false ? "不在团" : "—";
 
 export default function MembersPage() {
   const [currentView, setCurrentView] = React.useState<ViewMode>("attendance");
@@ -125,11 +138,12 @@ export default function MembersPage() {
       // 原 join embed 因基表敏感列 email 被列级拒绝而失效：按 user_id 从 profiles_roster 补查姓名+邮箱（Issue #193）
       const roster = await fetchRosterProfiles(rows.map((r) => String(r.user_id)));
       const sheetData = [
-        ["姓名", "邮箱", "出勤情况", "签到时间"],
+        ["姓名", "邮箱", "出勤情况", "在团情况", "签到时间"],
         ...rows.map((r) => [
           roster.get(String(r.user_id))?.full_name ?? "—",
           roster.get(String(r.user_id))?.email ?? "—",
           STATUS_LABEL[String(r.status ?? "")] ?? String(r.status ?? "—"),
+          inOrchestraLabel(roster.get(String(r.user_id))?.is_in_orchestra),
           (r.sign_in_time as string) ?? "—",
         ]),
       ];
@@ -199,9 +213,10 @@ export default function MembersPage() {
           roster.get(String(r.user_id))?.full_name ?? "—",
           roster.get(String(r.user_id))?.email ?? "—",
           STATUS_LABEL[String(r.status ?? "")] ?? String(r.status ?? "—"),
+          inOrchestraLabel(roster.get(String(r.user_id))?.is_in_orchestra),
           (r.sign_in_time as string) ?? "—",
         ]);
-        const sheetData = [["姓名", "邮箱", "出勤情况", "签到时间"], ...sheetRows];
+        const sheetData = [["姓名", "邮箱", "出勤情况", "在团情况", "签到时间"], ...sheetRows];
         const ws = XLSX.utils.aoa_to_sheet(sheetData);
         XLSX.utils.book_append_sheet(wb, ws, sheetNames[index]);
       });

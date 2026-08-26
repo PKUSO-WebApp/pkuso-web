@@ -40,6 +40,8 @@ export default function AdminPostDetailPage() {
     remove,
   } = usePosts({
     includeLocked: true,
+    // 创建者自锁帖对管理端不可见（列表同源过滤）：查不到即渲染「未找到该公告」
+    excludeUserLocked: true,
   });
 
   const [lockingId, setLockingId] = React.useState<string | null>(null);
@@ -63,11 +65,10 @@ export default function AdminPostDetailPage() {
     return { ...r, profiles };
   }, [rawPosts, params.id]);
 
-  // 用户锁定的帖子：管理员不可解锁（仅展示徽标，不提供锁定/解锁按钮；删除不受限）
-  const userLocked = post?.locked_by === "user";
+  // 创建者自锁帖已在查询层过滤（excludeUserLocked），此处 post 只可能是未锁定或 admin 锁定
 
   const handleToggleLock = async () => {
-    if (!post || lockingId || userLocked) return;
+    if (!post || lockingId) return;
     setLockingId(post.id);
     const unlocking = post.is_locked;
     const ok = await update(post.id, { is_locked: !unlocking });
@@ -125,21 +126,14 @@ export default function AdminPostDetailPage() {
 
       {/* 底部操作行：锁定/解锁 + 删除，居中全宽大按钮（参照小程序 sign-in 按钮；admin 仅可锁定/删除，不可编辑） */}
       <div className="mt-3 space-y-2 px-4">
-        {userLocked && (
-          <p className="rounded-xl bg-warning-bg/80 px-3 py-2 text-center text-sm text-warning">
-            帖子被用户锁定，管理员无法解锁
-          </p>
-        )}
-        {!userLocked && (
-          <button
-            type="button"
-            onClick={() => void handleToggleLock()}
-            disabled={lockingId !== null}
-            className="flex h-11 w-full items-center justify-center rounded-xl bg-muted text-base font-medium text-text disabled:opacity-50"
-          >
-            {lockingId ? "处理中…" : post.is_locked ? "解锁" : "锁定"}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => void handleToggleLock()}
+          disabled={lockingId !== null}
+          className="flex h-11 w-full items-center justify-center rounded-xl bg-muted text-base font-medium text-text disabled:opacity-50"
+        >
+          {lockingId ? "处理中…" : post.is_locked ? "解锁" : "锁定"}
+        </button>
         <button
           type="button"
           onClick={() => void handleDelete()}

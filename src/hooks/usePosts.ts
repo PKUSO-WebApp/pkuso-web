@@ -8,8 +8,17 @@ export function usePosts(options?: {
   includeLocked?: boolean;
   /** 仅查询该作者的帖子（「我的-已发布的活动」个人面板，Issue #205）；默认查全部 */
   authorId?: string | null;
+  /** 管理端专用：过滤「创建者自锁」帖（is_locked 且 locked_by='user'）——
+   *  创建者自锁属创建者私有语义，对管理员也不可见（列表与详情同源过滤，直链访问同样查不到）。
+   *  仅与 includeLocked 组合使用；成员「我的发布」（authorId 路径）不受影响，仍能看到自己的自锁帖 */
+  excludeUserLocked?: boolean;
 }) {
-  const { client = defaultClient, includeLocked = false, authorId = null } = options ?? {};
+  const {
+    client = defaultClient,
+    includeLocked = false,
+    authorId = null,
+    excludeUserLocked = false,
+  } = options ?? {};
 
   const [data, setData] = React.useState<unknown[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -21,12 +30,15 @@ export function usePosts(options?: {
     let query = client
       .from("posts")
       .select(
-        "id, title, type, content, image_url, author_id, created_at, contact_info, current_sections, missing_sections, is_locked, profiles(full_name, instrument)",
+        "id, title, type, content, image_url, author_id, created_at, contact_info, current_sections, missing_sections, is_locked, locked_by, profiles(full_name, instrument)",
       );
 
-    // member 端默认过滤已锁定帖子；admin 端传入 includeLocked: true 可见全部
+    // member 端默认过滤已锁定帖子；admin 端传入 includeLocked: true 可见全部，
+    // 但 excludeUserLocked 时再排除「创建者自锁」行（保留未锁定 + admin 锁定）
     if (!includeLocked) {
       query = query.eq("is_locked", false);
+    } else if (excludeUserLocked) {
+      query = query.or("is_locked.is.false,locked_by.neq.user");
     }
 
     // 个人面板按作者过滤（含锁定帖由 includeLocked: true 配合，Issue #205）。
@@ -46,7 +58,7 @@ export function usePosts(options?: {
       return;
     }
     setData((rows as unknown[]) ?? []);
-  }, [client, includeLocked, authorId]);
+  }, [client, includeLocked, authorId, excludeUserLocked]);
 
   React.useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect

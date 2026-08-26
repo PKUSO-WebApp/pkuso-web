@@ -281,12 +281,25 @@ describe("AdminPostDetailPage 公告详情（Issue #179：Modal→页面）", ()
     });
   });
 
-  it("用户锁定的帖子：显示徽标、不提供锁定/解锁按钮，删除仍可用", async () => {
-    renderDetail(makePost({ is_locked: true, locked_by: "user" }));
-    expect(screen.getByText("帖子被用户锁定，管理员无法解锁")).toBeTruthy();
-    expect(screen.queryByText("解锁")).toBeNull();
-    expect(screen.queryByText("锁定")).toBeNull();
-    expect(screen.getByText("删除")).toBeTruthy();
+  it("创建者自锁帖对管理端不可见：usePosts 带 excludeUserLocked 查询，直链访问渲染「未找到」", () => {
+    // 查询层已过滤：locked_by='user' 的行不会出现在 data 中
+    mockUsePosts.mockImplementation(() => ({
+      data: [],
+      loading: false,
+      error: null,
+      saving: false,
+      fetch: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      remove: vi.fn(),
+      uploadImage: vi.fn(),
+    }));
+    render(<AdminPostDetailPage />);
+    expect(screen.getByText("未找到该公告")).toBeTruthy();
+    expect(mockUsePosts).toHaveBeenCalledWith({
+      includeLocked: true,
+      excludeUserLocked: true,
+    });
   });
 
   it("作者=操作者：删除自己的帖子不插通知", async () => {

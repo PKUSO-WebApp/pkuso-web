@@ -9,9 +9,14 @@ function mockClient<T>(responses: T[]) {
   const uploadPaths: string[] = [];
   const removeCalls: string[][] = [];
   const eqCalls: string[][] = [];
+  const orCalls: string[] = [];
   const c = (r: T) => ({
     eq: (col: string, val: unknown) => {
       eqCalls.push([col, String(val)]);
+      return c(r);
+    },
+    or: (cond: string) => {
+      orCalls.push(cond);
       return c(r);
     },
     maybeSingle: () => c(r),
@@ -43,6 +48,7 @@ function mockClient<T>(responses: T[]) {
     uploadPaths, // 记录 storage.upload 收到的路径，供断言
     removeCalls, // 记录 storage.remove 收到的路径数组，供断言（0 行检测守卫）
     eqCalls, // 记录查询链 eq 过滤条件，供断言（is_locked / author_id）
+    orCalls, // 记录查询链 or 条件，供断言（excludeUserLocked）
   };
 }
 
@@ -63,6 +69,20 @@ describe("usePosts", () => {
     // includeLocked: true → 不追加 is_locked 过滤；authorId → 追加 author_id 过滤
     expect(c.eqCalls).not.toContainEqual(["is_locked", "false"]);
     expect(c.eqCalls).toContainEqual(["author_id", "u1"]);
+    // 未开启 excludeUserLocked → 不追加 or 过滤（创建者自锁帖对自己可见）
+    expect(c.orCalls).toHaveLength(0);
+  });
+
+  it("excludeUserLocked：管理端排除「创建者自锁」帖（未锁定与 admin 锁定仍可见）", async () => {
+    const c = mockClient([{ data: [], error: null }]); // fetch
+    const { result } = renderHook(() =>
+      usePosts({ client: c as never, includeLocked: true, excludeUserLocked: true }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // includeLocked + excludeUserLocked → 不用 eq(is_locked)，改用 or 条件：
+    // 保留 is_locked=false 的行，或 locked_by≠'user' 的行（admin 锁定/null 归属）
+    expect(c.eqCalls).not.toContainEqual(["is_locked", "false"]);
+    expect(c.orCalls).toContainEqual("is_locked.is.false,locked_by.neq.user");
   });
 
   it("create 发布帖子", async () => {

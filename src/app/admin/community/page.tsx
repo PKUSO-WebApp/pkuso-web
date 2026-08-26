@@ -15,7 +15,7 @@ const TYPE_LABEL: Record<PostType, string> = {
 
 export default function AdminCommunityPage() {
   const router = useRouter();
-  const { data: rawPosts, loading } = usePosts({ includeLocked: true });
+  const { data: rawPosts, loading } = usePosts({ includeLocked: true, excludeUserLocked: true });
 
   // normalize Supabase join profiles
   const posts = React.useMemo(() => {

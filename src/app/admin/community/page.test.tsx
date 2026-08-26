@@ -76,6 +76,14 @@ describe("AdminCommunityPage 社区管理（Issue #179：卡片→详情页路�
     cleanup();
   });
 
+  it("列表查询排除「创建者自锁」帖（includeLocked + excludeUserLocked）", () => {
+    renderPage();
+    expect(mockUsePosts).toHaveBeenCalledWith({
+      includeLocked: true,
+      excludeUserLocked: true,
+    });
+  });
+
   it("页面根容器为 flex 列布局且占满视口高度（Issue #146）", () => {
     const { container } = renderPage();
     const root = container.firstElementChild as HTMLElement;

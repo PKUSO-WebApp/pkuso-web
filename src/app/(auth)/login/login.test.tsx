@@ -9,7 +9,9 @@ vi.mock("@/lib/supabase", () => ({
   supabase: {
     auth: {
       signInWithPassword: vi.fn().mockResolvedValue({ error: null }),
+      signOut: vi.fn().mockResolvedValue({}),
     },
+    rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
   },
 }));
 
@@ -134,5 +136,45 @@ describe("LoginPage", () => {
       const updatedButtons = screen.getAllByRole("button", { name: /登录/ });
       expect(updatedButtons[0]).not.toBeDisabled();
     });
+  });
+
+  it("成员（非管理员）登录被拦截并提示使用小程序", async () => {
+    (supabase.auth.signInWithPassword as Mock).mockResolvedValue({ error: null });
+    (supabase.rpc as Mock).mockResolvedValue({ data: false, error: null });
+
+    const { container } = render(<LoginPage />);
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "member@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("请输入密码"), {
+      target: { value: "password123" },
+    });
+    const form = container.querySelector("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(screen.getByText(/成员端已迁移至微信小程序/)).toBeInTheDocument();
+    });
+    expect(supabase.auth.signOut).toHaveBeenCalled();
+  });
+
+  it("is_admin 调用出错时同样拦截并登出", async () => {
+    (supabase.auth.signInWithPassword as Mock).mockResolvedValue({ error: null });
+    (supabase.rpc as Mock).mockResolvedValue({ data: null, error: { message: "boom" } });
+
+    const { container } = render(<LoginPage />);
+    fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+      target: { value: "member@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("请输入密码"), {
+      target: { value: "password123" },
+    });
+    const form = container.querySelector("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(screen.getByText(/成员端已迁移至微信小程序/)).toBeInTheDocument();
+    });
+    expect(supabase.auth.signOut).toHaveBeenCalled();
   });
 });

@@ -20,6 +20,13 @@ export function RehearsalDetailView({ item }: { item: RehearsalRow }) {
         : "分排"
       : "合排";
 
+  const checkinText =
+    item.checkin_lat != null && item.checkin_lng != null
+      ? `${item.checkin_lat.toFixed(6)}, ${item.checkin_lng.toFixed(6)}${
+          item.checkin_radius_m != null ? ` · 允许半径 ${item.checkin_radius_m} 米` : " · 不限半径"
+        }`
+      : "不限位置";
+
   return (
     <div className="px-4 pb-2">
       <h2 className="text-2xl font-semibold leading-snug text-text">{timeText}</h2>
@@ -27,6 +34,7 @@ export function RehearsalDetailView({ item }: { item: RehearsalRow }) {
       <div className="my-4 h-px w-full bg-border" />
       <DetailRow label="地点" value={item.location || "—"} />
       <DetailRow label="曲目" value={item.repertoire || "—"} />
+      <DetailRow label="签到点" value={checkinText} />
     </div>
   );
 }

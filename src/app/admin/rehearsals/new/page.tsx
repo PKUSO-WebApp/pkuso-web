@@ -9,6 +9,8 @@ import { useProfiles } from "@/hooks/useProfiles";
 import { Modal } from "@/components/ui/Modal";
 import {
   CreateRehearsalForm,
+  MAX_CHECKIN_RADIUS_M,
+  MIN_CHECKIN_RADIUS_M,
   type CreateFormState,
 } from "../../../(member)/schedule/components/create-rehearsal-form";
 import type { ProfileRow } from "@/types/database";
@@ -21,7 +23,10 @@ const EMPTY_FORM: CreateFormState = {
   endTime: null,
   location: "",
   repertoire: "",
-  signInCode: "",
+  geofenceEnabled: true,
+  checkinLat: null,
+  checkinLng: null,
+  checkinRadiusM: "200",
 };
 
 export default function AdminCreateRehearsalPage() {
@@ -39,7 +44,7 @@ export default function AdminCreateRehearsalPage() {
 
   const handleChange = (
     field: keyof CreateFormState,
-    value: string | "full" | "section" | Date | null,
+    value: string | number | boolean | Date | null,
   ) => {
     if (field === "startTime" && value instanceof Date) {
       const endTime = new Date(value.getTime() + 3 * 60 * 60 * 1000);
@@ -47,6 +52,10 @@ export default function AdminCreateRehearsalPage() {
     } else {
       setForm((p) => ({ ...p, [field]: value }));
     }
+  };
+
+  const handleCheckinPick = (lat: number | null, lng: number | null) => {
+    setForm((p) => ({ ...p, checkinLat: lat, checkinLng: lng }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -64,9 +73,35 @@ export default function AdminCreateRehearsalPage() {
       alert("结束时间必须晚于开始时间");
       return;
     }
-    if (form.type === "full" && (!form.signInCode || !/^\d{4}$/.test(form.signInCode))) {
-      alert("合排需要设置4位数字签到密码");
-      return;
+    let geoFields: Record<string, unknown> = {
+      checkin_lat: null,
+      checkin_lng: null,
+      checkin_radius_m: null,
+    };
+    if (form.geofenceEnabled) {
+      const radius = Number(form.checkinRadiusM);
+      if (
+        !Number.isFinite(radius) ||
+        radius < MIN_CHECKIN_RADIUS_M ||
+        radius > MAX_CHECKIN_RADIUS_M
+      ) {
+        alert(`允许半径需为 ${MIN_CHECKIN_RADIUS_M} ~ ${MAX_CHECKIN_RADIUS_M} 米`);
+        return;
+      }
+      if (
+        form.checkinLat == null ||
+        form.checkinLng == null ||
+        !Number.isFinite(form.checkinLat) ||
+        !Number.isFinite(form.checkinLng)
+      ) {
+        alert("请在地图上选择签到点（或手填有效经纬度）");
+        return;
+      }
+      geoFields = {
+        checkin_lat: form.checkinLat,
+        checkin_lng: form.checkinLng,
+        checkin_radius_m: Math.round(radius),
+      };
     }
 
     submittingRef.current = true;
@@ -88,7 +123,8 @@ export default function AdminCreateRehearsalPage() {
         end_time: formatLocalISO(form.endTime),
         location: form.location,
         repertoire: form.repertoire,
-        sign_in_code: form.type === "full" ? form.signInCode : null,
+        sign_in_code: null,
+        ...geoFields,
       };
 
       const rehearsalId = await create(payload);
@@ -162,6 +198,7 @@ export default function AdminCreateRehearsalPage() {
           notifyByEmail={notifyByEmail}
           onNotifyByEmailChange={setNotifyByEmail}
           onChange={handleChange}
+          onCheckinPick={handleCheckinPick}
           onSubmit={handleSubmit}
           onCancel={() => router.back()}
         />

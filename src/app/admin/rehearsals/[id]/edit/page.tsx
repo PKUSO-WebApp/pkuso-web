@@ -7,12 +7,16 @@ import { useSchedule } from "@/hooks/useSchedule";
 import { Modal } from "@/components/ui/Modal";
 import {
   CreateRehearsalForm,
+  MAX_CHECKIN_RADIUS_M,
+  MIN_CHECKIN_RADIUS_M,
   type CreateFormState,
 } from "../../../../(member)/schedule/components/create-rehearsal-form";
 import { formatLocalISO, parseLocalISO, getLocalDateString } from "@/lib/date-utils";
 import type { RehearsalRow } from "@/types/database";
 
 function buildInitialForm(item: RehearsalRow): CreateFormState {
+  const hasCoords = item.checkin_lat != null && item.checkin_lng != null;
+  const hasRadius = item.checkin_radius_m != null;
   return {
     type: (item.type ?? "full") as "full" | "section",
     targetSection: item.target_section ?? "",
@@ -20,7 +24,11 @@ function buildInitialForm(item: RehearsalRow): CreateFormState {
     endTime: item.end_time ? parseLocalISO(item.end_time) : null,
     location: item.location ?? "",
     repertoire: item.repertoire ?? "",
-    signInCode: item.sign_in_code ?? "",
+    // 三字段齐全视为已启用围栏；全空视为未启用；残缺态也按启用处理以强制补全
+    geofenceEnabled: hasCoords || hasRadius,
+    checkinLat: item.checkin_lat ?? null,
+    checkinLng: item.checkin_lng ?? null,
+    checkinRadiusM: item.checkin_radius_m != null ? String(item.checkin_radius_m) : "",
   };
 }
 
@@ -74,7 +82,7 @@ function EditForm({ item }: { item: RehearsalRow }) {
 
   const handleChange = (
     field: keyof CreateFormState,
-    value: string | "full" | "section" | Date | null,
+    value: string | number | boolean | Date | null,
   ) => {
     if (field === "startTime" && value instanceof Date) {
       const endTime = new Date(value.getTime() + 3 * 60 * 60 * 1000);
@@ -82,6 +90,10 @@ function EditForm({ item }: { item: RehearsalRow }) {
     } else {
       setForm((p) => ({ ...p, [field]: value }));
     }
+  };
+
+  const handleCheckinPick = (lat: number | null, lng: number | null) => {
+    setForm((p) => ({ ...p, checkinLat: lat, checkinLng: lng }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -92,9 +104,35 @@ function EditForm({ item }: { item: RehearsalRow }) {
       alert("结束时间必须晚于开始时间");
       return;
     }
-    if (form.type === "full" && (!form.signInCode || !/^\d{4}$/.test(form.signInCode))) {
-      alert("合排需要设置4位数字签到密码");
-      return;
+    let geoFields: Record<string, unknown> = {
+      checkin_lat: null,
+      checkin_lng: null,
+      checkin_radius_m: null,
+    };
+    if (form.geofenceEnabled) {
+      const radius = Number(form.checkinRadiusM);
+      if (
+        !Number.isFinite(radius) ||
+        radius < MIN_CHECKIN_RADIUS_M ||
+        radius > MAX_CHECKIN_RADIUS_M
+      ) {
+        alert(`允许半径需为 ${MIN_CHECKIN_RADIUS_M} ~ ${MAX_CHECKIN_RADIUS_M} 米`);
+        return;
+      }
+      if (
+        form.checkinLat == null ||
+        form.checkinLng == null ||
+        !Number.isFinite(form.checkinLat) ||
+        !Number.isFinite(form.checkinLng)
+      ) {
+        alert("请在地图上选择签到点（或手填有效经纬度）");
+        return;
+      }
+      geoFields = {
+        checkin_lat: form.checkinLat,
+        checkin_lng: form.checkinLng,
+        checkin_radius_m: Math.round(radius),
+      };
     }
 
     submittingRef.current = true;
@@ -116,7 +154,8 @@ function EditForm({ item }: { item: RehearsalRow }) {
         end_time: formatLocalISO(form.endTime),
         location: form.location,
         repertoire: form.repertoire,
-        sign_in_code: form.type === "full" ? form.signInCode : null,
+        sign_in_code: null,
+        ...geoFields,
       };
 
       const ok = await update(id, payload);
@@ -141,6 +180,7 @@ function EditForm({ item }: { item: RehearsalRow }) {
         notifyByEmail={false}
         onNotifyByEmailChange={() => {}}
         onChange={handleChange}
+        onCheckinPick={handleCheckinPick}
         onSubmit={handleSubmit}
         onCancel={() => router.back()}
       />

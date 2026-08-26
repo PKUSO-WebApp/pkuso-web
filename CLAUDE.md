@@ -34,10 +34,19 @@ pnpm verify       # 一键:format → lint → typecheck → test
 - `NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`(仅服务端)
 - 邮件:`RESEND_API_KEY` 或 SMTP 系(`SMTP_USER`/`SMTP_PASS`/`SMTP_HOST`/`SMTP_PORT`/`SMTP_FROM`,SMTP 优先)
+- `NEXT_PUBLIC_TENCENT_MAP_KEY`:腾讯位置服务 JSAPI Key(lbs.qq.com),用于管理端排练地理围栏的地图选点/搜索;需在腾讯控制台绑定部署域名白名单并启用 WebServiceAPI 产品
 
 ### 认证
 
 全局用户状态在 `src/context/user-context.tsx`;页面访问由 auth-gate 组件把关;登录/注册页在 `src/app/(auth)/`。
+**成员端已 deprecated**:成员无法再从网页端登录(登录路由对非管理员 `is_admin()` 拦截登出并提示使用微信小程序);网页端仅面向管理员。
+
+### 地理签到（2026-08 起）
+
+- 成员签到唯一路径:微信小程序调用 SECURITY DEFINER RPC `sign_in_attendance_location(p_rehearsal_id,p_lat,p_lng,p_accuracy)`;服务端校验地理围栏(haversine ≤ 半径+accuracy,accuracy 服务端钳制 [0,100] 米)、时间窗与防重;旧签到码 RPC `sign_in_attendance` 已 DROP
+- `attendances` 的成员直写 RLS 策略已删除(仅管理员 ALL + authenticated SELECT);任何客户端直写考勤都会被拒
+- `rehearsals.checkin_lat/lng/checkin_radius_m` 三字段全非 NULL 才启用围栏,任一为 NULL = 不限位置;管理端表单以「开启地理围栏」开关显式控制
+- 历史决策:web member 端已废弃,不再为其维护签到功能
 
 ### 路由结构（Route Group 分离 Admin/Member）
 

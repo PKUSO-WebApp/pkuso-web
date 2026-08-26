@@ -12,6 +12,9 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = React.useState(false);
   const [errorMsg, setErrorMsg] = React.useState("");
 
+  /** 成员端已迁移至微信小程序：网页端仅允许管理员登录 */
+  const MEMBER_BLOCKED_MSG = "成员端已迁移至微信小程序，网页端不再提供成员登录，请使用微信小程序。";
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
@@ -27,13 +30,23 @@ export default function LoginPage() {
       email: email.trim(),
       password,
     });
-    setSubmitting(false);
 
     if (error) {
+      setSubmitting(false);
       setErrorMsg(error.message || "登录失败，请稍后重试。");
       return;
     }
 
+    // 管理员校验：非管理员立即登出并提示走小程序
+    const { data: isAdmin, error: rpcError } = await supabase.rpc("is_admin");
+    if (rpcError || !isAdmin) {
+      await supabase.auth.signOut();
+      setSubmitting(false);
+      setErrorMsg(MEMBER_BLOCKED_MSG);
+      return;
+    }
+
+    setSubmitting(false);
     router.replace("/");
   };
 

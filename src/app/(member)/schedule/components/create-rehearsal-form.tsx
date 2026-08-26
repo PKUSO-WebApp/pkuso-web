@@ -4,8 +4,14 @@ import React from "react";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { Toggle } from "@/components/ui/Toggle";
+import { MapPicker } from "@/app/admin/rehearsals/components/map-picker";
 
 export type DbRehearsalType = "full" | "section";
+
+/** 允许半径下限（米） */
+export const MIN_CHECKIN_RADIUS_M = 10;
+/** 允许半径上限（米）＝ 地球半径 */
+export const MAX_CHECKIN_RADIUS_M = 6_371_000;
 
 export type CreateFormState = {
   type: DbRehearsalType;
@@ -14,7 +20,14 @@ export type CreateFormState = {
   endTime: Date | null;
   location: string;
   repertoire: string;
-  signInCode: string;
+  /** 是否启用地理围栏；关闭时三字段一律以 NULL 提交（不限位置） */
+  geofenceEnabled: boolean;
+  /** 签到点纬度（GCJ-02）；null = 未设置 */
+  checkinLat: number | null;
+  /** 签到点经度（GCJ-02）；null = 未设置 */
+  checkinLng: number | null;
+  /** 允许半径（米），字符串承载输入框原始值 */
+  checkinRadiusM: string;
 };
 
 type Props = {
@@ -23,7 +36,11 @@ type Props = {
   editing?: boolean;
   notifyByEmail: boolean;
   onNotifyByEmailChange: (v: boolean) => void;
-  onChange: (field: keyof CreateFormState, value: string | DbRehearsalType | Date | null) => void;
+  onChange: (
+    field: keyof CreateFormState,
+    value: string | number | boolean | DbRehearsalType | Date | null,
+  ) => void;
+  onCheckinPick: (lat: number | null, lng: number | null) => void;
   onSubmit: (e: React.FormEvent) => void;
   onCancel: () => void;
 };
@@ -40,13 +57,14 @@ export function CreateRehearsalForm({
   notifyByEmail,
   onNotifyByEmailChange,
   onChange,
+  onCheckinPick,
   onSubmit,
   onCancel,
 }: Props) {
   const isSection = form.type === "section";
 
   return (
-    <form onSubmit={onSubmit}>
+    <form onSubmit={onSubmit} noValidate>
       <div className="space-y-3 text-xs">
         <div className="space-y-1">
           <label className="block text-label font-medium text-text-muted">排练类型</label>
@@ -123,21 +141,48 @@ export function CreateRehearsalForm({
           />
         </div>
 
-        {form.type === "full" && (
-          <div className="space-y-1">
-            <label className="block text-label font-medium text-text-muted">
-              签到密码（4 位数字）
-            </label>
-            <input
-              type="text"
-              inputMode="numeric"
-              maxLength={4}
-              value={form.signInCode}
-              onChange={(e) => onChange("signInCode", e.target.value)}
-              className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
-              placeholder="如：8848"
-            />
-          </div>
+        <label className="flex cursor-pointer items-center gap-2 text-xs text-text">
+          <input
+            type="checkbox"
+            checked={form.geofenceEnabled}
+            onChange={(e) => onChange("geofenceEnabled", e.target.checked)}
+            disabled={submitting}
+            className="h-4 w-4 rounded border-border text-primary focus:ring-text-muted"
+          />
+          开启地理围栏（成员签到时需位于签到点允许半径内）
+        </label>
+
+        {form.geofenceEnabled && (
+          <>
+            <div className="space-y-1">
+              <label className="block text-label font-medium text-text-muted">
+                签到点（搜索或点击地图选点）
+              </label>
+              <MapPicker
+                lat={form.checkinLat}
+                lng={form.checkinLng}
+                disabled={submitting}
+                onPick={onCheckinPick}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-label font-medium text-text-muted">
+                允许半径（米，最大不超过地球半径）
+              </label>
+              <input
+                type="number"
+                step="any"
+                min={MIN_CHECKIN_RADIUS_M}
+                max={MAX_CHECKIN_RADIUS_M}
+                value={form.checkinRadiusM}
+                disabled={submitting}
+                onChange={(e) => onChange("checkinRadiusM", e.target.value)}
+                placeholder="如：200"
+                className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+              />
+            </div>
+          </>
         )}
 
         <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs text-text">

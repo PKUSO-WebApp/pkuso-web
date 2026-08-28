@@ -16,6 +16,9 @@ import {
 import type { ProfileRow } from "@/types/database";
 import { formatLocalISO, getLocalDateString } from "@/lib/date-utils";
 
+// 启用地理围栏时的默认签到点：北京大学新太阳学生中心（GCJ-02 坐标系）
+const DEFAULT_GEOFENCE_CENTER = { lat: 39.988842, lng: 116.311144 } as const;
+
 const EMPTY_FORM: CreateFormState = {
   type: "full",
   targetSection: "",
@@ -24,8 +27,8 @@ const EMPTY_FORM: CreateFormState = {
   location: "",
   repertoire: "",
   geofenceEnabled: true,
-  checkinLat: null,
-  checkinLng: null,
+  checkinLat: DEFAULT_GEOFENCE_CENTER.lat,
+  checkinLng: DEFAULT_GEOFENCE_CENTER.lng,
   checkinRadiusM: "200",
 };
 

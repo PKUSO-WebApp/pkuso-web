@@ -53,7 +53,7 @@ export async function GET(request: Request) {
     const supabase = createServerSupabase();
     const { data, error } = await supabase
       .from("announcements")
-      .select("id, content, created_at")
+      .select("id, title, content, created_at, end_time")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -89,7 +89,7 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: "请求体格式错误" }, { status: 400 });
     }
 
-    const { id, content } = body;
+    const { id, title, content, end_time } = body;
     if (!id) {
       return NextResponse.json({ error: "缺少公告 ID" }, { status: 400 });
     }
@@ -97,7 +97,11 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: "缺少公告内容" }, { status: 400 });
     }
 
-    const { error } = await supabase.from("announcements").update({ content }).eq("id", id);
+    const updates: Record<string, unknown> = { content };
+    if (title !== undefined) updates.title = title;
+    if (end_time !== undefined) updates.end_time = end_time;
+
+    const { error } = await supabase.from("announcements").update(updates).eq("id", id);
 
     if (error) {
       console.error("[Admin Announcement] 更新公告失败:", error.message);

@@ -705,6 +705,7 @@ describe("AdminMembersPage 花名册 tab（在团情况后缀）", () => {
   function makeProfile(overrides: Partial<ProfileRow> = {}): ProfileRow {
     return {
       id: "m1",
+      avatar_url: null,
       college: "信息科学技术学院",
       created_at: null,
       email: "zhangsan@example.com",

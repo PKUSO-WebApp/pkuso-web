@@ -22,7 +22,7 @@ export function useAnnouncements(client: typeof defaultClient = defaultClient) {
     setError(null);
     const { data: rows, error: dbError } = await client
       .from("announcements")
-      .select("id, content, created_at")
+      .select("id, content, created_at, title, end_time")
       .order("created_at", { ascending: false })
       .limit(1);
     setLoading(false);
@@ -71,10 +71,24 @@ export function useAnnouncements(client: typeof defaultClient = defaultClient) {
     void fetch();
   }, [fetch]);
 
+  // 获取当前仍有效的公告（结束时间晚于现在，用于「同时仅允许一条公告」的覆盖判断）
+  const getActive = React.useCallback(async (): Promise<AnnouncementRow | null> => {
+    const { data: rows, error: dbError } = await client
+      .from("announcements")
+      .select("id, title, content, created_at, end_time")
+      .gt("end_time", new Date().toISOString())
+      .order("end_time", { ascending: false })
+      .limit(1);
+    if (dbError || !Array.isArray(rows) || rows.length === 0) return null;
+    return rows[0] as AnnouncementRow;
+  }, [client]);
+
   const publish = React.useCallback(
-    async (content: string) => {
+    async (title: string, content: string, end_time: string) => {
       setPublishing(true);
-      const { error: dbError } = await client.from("announcements").insert({ content });
+      const { error: dbError } = await client
+        .from("announcements")
+        .insert({ title, content, end_time });
       setPublishing(false);
       if (dbError) {
         setError(dbError.message);
@@ -124,7 +138,7 @@ export function useAnnouncements(client: typeof defaultClient = defaultClient) {
 
   // 更新公告
   const update = React.useCallback(
-    async (id: string, content: string) => {
+    async (id: string, title: string, content: string | null, end_time: string) => {
       if (updatingIdRef.current === id) return false;
       updatingIdRef.current = id;
       setUpdatingId(id);
@@ -138,14 +152,16 @@ export function useAnnouncements(client: typeof defaultClient = defaultClient) {
             "Content-Type": "application/json",
             ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
           },
-          body: JSON.stringify({ id, content }),
+          body: JSON.stringify({ id, title, content, end_time }),
         });
         const result = await response.json();
         if (!response.ok || !result.success) {
           setError(result.error || "更新失败");
           return false;
         }
-        setAllData((prev) => prev.map((item) => (item.id === id ? { ...item, content } : item)));
+        setAllData((prev) =>
+          prev.map((item) => (item.id === id ? { ...item, title, content, end_time } : item)),
+        );
         return true;
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
       } catch (_err: unknown) {
@@ -170,6 +186,7 @@ export function useAnnouncements(client: typeof defaultClient = defaultClient) {
     updatingId,
     fetch,
     fetchAll,
+    getActive,
     publish,
     remove,
     update,

@@ -87,6 +87,23 @@ export function formatDisplayDate(dateStr: string): string {
 }
 
 /**
+ * 格式化日期时间为 "X月X日 周X HH:mm" 格式（用于公告结束时间，含时分）
+ * 使用 parseLocalISO 解析，避免时区问题
+ *
+ * @param dateStr - ISO 格式字符串（如 "YYYY-MM-DDTHH:mm:ss"）
+ * @returns 格式为 "X月X日 周X HH:mm" 的字符串
+ */
+export function formatDisplayDateTime(dateStr: string): string {
+  const date = parseLocalISO(dateStr);
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const weekDays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  const dayOfWeek = weekDays[date.getDay()];
+  const time = formatTime(dateStr);
+  return `${month}月${day}日 ${dayOfWeek} ${time}`;
+}
+
+/**
  * 格式化日期时间为 "MM-DD HH:mm" 格式
  * 使用 parseLocalISO 解析，避免时区问题
  *

@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.15"
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
@@ -18,17 +18,23 @@ export type Database = {
         Row: {
           content: string | null
           created_at: string | null
+          end_time: string
           id: string
+          title: string
         }
         Insert: {
           content?: string | null
           created_at?: string | null
+          end_time: string
           id?: string
+          title: string
         }
         Update: {
           content?: string | null
           created_at?: string | null
+          end_time?: string
           id?: string
+          title?: string
         }
         Relationships: []
       }
@@ -315,6 +321,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          avatar_url: string | null
           college: string | null
           created_at: string | null
           email: string | null
@@ -336,6 +343,7 @@ export type Database = {
           wechat_openid: string | null
         }
         Insert: {
+          avatar_url?: string | null
           college?: string | null
           created_at?: string | null
           email?: string | null
@@ -357,6 +365,7 @@ export type Database = {
           wechat_openid?: string | null
         }
         Update: {
+          avatar_url?: string | null
           college?: string | null
           created_at?: string | null
           email?: string | null
@@ -624,10 +633,44 @@ export type Database = {
           },
         ]
       }
+      verification_codes: {
+        Row: {
+          code: string
+          created_at: string | null
+          expires_at: string
+          id: number
+          purpose: string
+          target_email: string
+          used: boolean | null
+          user_id: string
+        }
+        Insert: {
+          code: string
+          created_at?: string | null
+          expires_at: string
+          id?: never
+          purpose: string
+          target_email: string
+          used?: boolean | null
+          user_id: string
+        }
+        Update: {
+          code?: string
+          created_at?: string | null
+          expires_at?: string
+          id?: never
+          purpose?: string
+          target_email?: string
+          used?: boolean | null
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       profiles_roster: {
         Row: {
+          avatar_url: string | null
           college: string | null
           created_at: string | null
           email: string | null
@@ -646,6 +689,7 @@ export type Database = {
           status: Database["public"]["Enums"]["profileStatus"] | null
         }
         Insert: {
+          avatar_url?: string | null
           college?: string | null
           created_at?: string | null
           email?: never
@@ -664,6 +708,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["profileStatus"] | null
         }
         Update: {
+          avatar_url?: string | null
           college?: string | null
           created_at?: string | null
           email?: never
@@ -694,6 +739,10 @@ export type Database = {
           status: Database["public"]["Enums"]["leaveStatus"]
         }[]
       }
+      check_email_taken: {
+        Args: { p_email: string; p_exclude_user_id: string }
+        Returns: boolean
+      }
       check_invitation_code: {
         Args: { p_code: string }
         Returns: {
@@ -722,7 +771,7 @@ export type Database = {
       is_admin: { Args: never; Returns: boolean }
       sign_in_attendance_location: {
         Args: {
-          p_accuracy?: number | null
+          p_accuracy?: number
           p_lat: number
           p_lng: number
           p_rehearsal_id: number
@@ -730,7 +779,7 @@ export type Database = {
         Returns: {
           id: number
           rehearsal_id: number
-          sign_in_time: string | null
+          sign_in_time: string
           status: Database["public"]["Enums"]["attendanceStatus"]
           user_id: string
         }[]

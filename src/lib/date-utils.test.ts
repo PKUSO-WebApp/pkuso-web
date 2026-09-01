@@ -5,6 +5,7 @@ import {
   getLocalDateString,
   formatTime,
   formatDisplayDate,
+  formatDisplayDateTime,
   formatDateTime,
   formatDateTimeInChina,
 } from "./date-utils";
@@ -235,6 +236,20 @@ describe("date-utils", () => {
     it("应该对无效输入返回默认日期时间", () => {
       // parseLocalISO 对无效输入返回默认 Date（1970-01-01 00:00:00）
       expect(formatDateTime("invalid")).toBe("01/01 00:00");
+    });
+
+    describe("formatDisplayDateTime", () => {
+      it("应该格式化带时分的日期时间为 X月X日 周X HH:mm", () => {
+        expect(formatDisplayDateTime("2024-06-15T14:30:45")).toBe("6月15日 周六 14:30");
+      });
+
+      it("应该正确显示午夜等边界时间", () => {
+        expect(formatDisplayDateTime("2024-01-01T00:00:00")).toBe("1月1日 周一 00:00");
+      });
+
+      it("应该对无效输入按本地解析兜底（与 formatDisplayDate 一致）", () => {
+        expect(formatDisplayDateTime("invalid")).toBe("1月1日 周一 00:00");
+      });
     });
 
     it("应该正确处理个位数月份和日期", () => {

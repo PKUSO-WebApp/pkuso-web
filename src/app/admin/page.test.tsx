@@ -92,6 +92,7 @@ const mockAnnouncements = (overrides: Record<string, unknown> = {}) => {
     updatingId: null,
     fetch: vi.fn(),
     fetchAll: vi.fn(),
+    getActive: vi.fn().mockResolvedValue(null),
     publish: vi.fn().mockResolvedValue(true),
     remove: vi.fn().mockResolvedValue(true),
     update: vi.fn().mockResolvedValue(true),
@@ -278,10 +279,19 @@ describe("AdminPage", () => {
     const publishMock = vi.fn().mockReturnValue(publishPromise);
     mockAnnouncements({ publish: publishMock });
 
-    render(<AdminPage />);
+    const { container } = render(<AdminPage />);
 
-    // 切到公告 tab，填写公告内容
+    // 切到公告 tab，填写标题 / 结束日期 / 内容
     fireEvent.click(screen.getByRole("tab", { name: /^公告$/ }));
+    fireEvent.change(screen.getByPlaceholderText(/新学期排练安排/), {
+      target: { value: "测试标题" },
+    });
+    fireEvent.change(container.querySelector('input[type="date"]')!, {
+      target: { value: "2026-09-01" },
+    });
+    fireEvent.change(container.querySelector('input[type="time"]')!, {
+      target: { value: "14:30" },
+    });
     fireEvent.change(screen.getByPlaceholderText(/输入公告内容/), {
       target: { value: "测试公告" },
     });
@@ -297,6 +307,101 @@ describe("AdminPage", () => {
     await waitFor(() => {
       expect(publishMock).toHaveBeenCalledTimes(1);
     });
+    // 结束时间包含所选时分
+    expect(publishMock.mock.calls[0][2]).toMatch(/2026-09-01T14:30/);
+  });
+
+  it("存在未结束公告时，发布需先确认提前结束（弹出确认且不立即发布）", async () => {
+    const activeAnnouncement = {
+      id: "old-1",
+      title: "旧公告标题",
+      content: "旧公告内容",
+      created_at: "2026-08-01T10:00:00Z",
+      end_time: "2026-09-01T23:59:59",
+    };
+    const getActiveMock = vi.fn().mockResolvedValue(activeAnnouncement);
+    const publishMock = vi.fn().mockResolvedValue(true);
+    const updateMock = vi.fn().mockResolvedValue(true);
+    mockAnnouncements({ getActive: getActiveMock, publish: publishMock, update: updateMock });
+
+    const { container } = render(<AdminPage />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^公告$/ }));
+    fireEvent.change(screen.getByPlaceholderText(/新学期排练安排/), {
+      target: { value: "新公告标题" },
+    });
+    fireEvent.change(container.querySelector('input[type="date"]')!, {
+      target: { value: "2026-09-10" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/输入公告内容/), {
+      target: { value: "新公告内容" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^发布$/ }));
+
+    // 弹出确认：是否提前结束被覆盖公告
+    await waitFor(() => {
+      expect(screen.getByText(/是否要提前结束公告「旧公告标题」/)).toBeInTheDocument();
+    });
+    // 尚未发布
+    expect(publishMock).not.toHaveBeenCalled();
+
+    // 点击确认
+    fireEvent.click(screen.getByRole("button", { name: /^确认$/ }));
+
+    await waitFor(() => {
+      // 先提前结束旧公告（end_time 改为现在）
+      expect(updateMock).toHaveBeenCalledTimes(1);
+      expect(updateMock).toHaveBeenCalledWith(
+        "old-1",
+        "旧公告标题",
+        "旧公告内容",
+        expect.any(String),
+      );
+      // 再发布新公告
+      expect(publishMock).toHaveBeenCalledTimes(1);
+      expect(publishMock).toHaveBeenCalledWith("新公告标题", "新公告内容", expect.any(String));
+    });
+  });
+
+  it("存在未结束公告时，取消确认则不发布", async () => {
+    const activeAnnouncement = {
+      id: "old-1",
+      title: "旧公告标题",
+      content: "旧公告内容",
+      created_at: "2026-08-01T10:00:00Z",
+      end_time: "2026-09-01T23:59:59",
+    };
+    const getActiveMock = vi.fn().mockResolvedValue(activeAnnouncement);
+    const publishMock = vi.fn().mockResolvedValue(true);
+    mockAnnouncements({ getActive: getActiveMock, publish: publishMock });
+
+    const { container } = render(<AdminPage />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^公告$/ }));
+    fireEvent.change(screen.getByPlaceholderText(/新学期排练安排/), {
+      target: { value: "新公告标题" },
+    });
+    fireEvent.change(container.querySelector('input[type="date"]')!, {
+      target: { value: "2026-09-10" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/输入公告内容/), {
+      target: { value: "新公告内容" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^发布$/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/是否要提前结束公告「旧公告标题」/)).toBeInTheDocument();
+    });
+
+    // 点击取消
+    fireEvent.click(screen.getByRole("button", { name: /^取消$/ }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/是否要提前结束公告/)).toBeNull();
+    });
+    expect(publishMock).not.toHaveBeenCalled();
   });
 
   it("tab 切换：aria-selected 随点击变化（Issue #150）", () => {

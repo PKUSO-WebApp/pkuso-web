@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { AnnouncementListModal } from "./announcement-list-modal";
-import { formatDateTimeInChina } from "@/lib/date-utils";
+import { formatDisplayDateTime } from "@/lib/date-utils";
 import type { AnnouncementRow } from "@/types/database";
 
 // ---- Mock Modal 组件 ----
@@ -26,13 +26,17 @@ import { Modal } from "@/components/ui/Modal";
 const sampleAnnouncements: AnnouncementRow[] = [
   {
     id: "ann-1",
+    title: "新学期排练通知",
     content: "欢迎来到新学期！请大家准时参加排练。",
     created_at: "2024-07-31T14:30:00Z",
+    end_time: "2024-08-31T14:30:00Z",
   },
   {
     id: "ann-2",
+    title: "音乐会预告",
     content: "本周六举行音乐会，请大家做好准备。",
     created_at: "2024-08-01T08:00:00Z",
+    end_time: "2024-08-03T08:00:00Z",
   },
 ];
 
@@ -41,7 +45,7 @@ describe("AnnouncementListModal", () => {
     vi.clearAllMocks();
   });
 
-  it("公告列表中时间使用 formatDateTimeInChina 显示（UTC 转换）", () => {
+  it("公告列表中结束时间使用 formatDisplayDateTime 显示（含时分）", () => {
     render(
       <AnnouncementListModal
         open={true}
@@ -55,20 +59,18 @@ describe("AnnouncementListModal", () => {
       />,
     );
 
-    // 验证第一条公告的时间（UTC 14:30 → 北京时间 22:30）
-    const expected1 = formatDateTimeInChina("2024-07-31T14:30:00Z");
+    const expected1 = formatDisplayDateTime("2024-08-31T14:30:00Z");
     expect(
       screen.getByText(new RegExp(expected1.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))),
     ).toBeInTheDocument();
 
-    // 验证第二条公告的时间（UTC 08:00 → 北京时间 16:00）
-    const expected2 = formatDateTimeInChina("2024-08-01T08:00:00Z");
+    const expected2 = formatDisplayDateTime("2024-08-03T08:00:00Z");
     expect(
       screen.getByText(new RegExp(expected2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))),
     ).toBeInTheDocument();
   });
 
-  it("公告详情中时间使用 formatDateTimeInChina 显示", async () => {
+  it("公告详情中结束时间使用 formatDisplayDateTime 显示", async () => {
     render(
       <AnnouncementListModal
         open={true}
@@ -86,11 +88,11 @@ describe("AnnouncementListModal", () => {
     fireEvent.click(screen.getByText(/欢迎来到新学期/));
 
     await waitFor(() => {
-      // 详情页显示"发布时间"
-      expect(screen.getByText(/发布时间/)).toBeInTheDocument();
+      // 详情页显示"结束时间"
+      expect(screen.getByText(/结束时间/)).toBeInTheDocument();
     });
 
-    const expected = formatDateTimeInChina("2024-07-31T14:30:00Z");
+    const expected = formatDisplayDateTime("2024-08-31T14:30:00Z");
     expect(
       screen.getByText(new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))),
     ).toBeInTheDocument();
@@ -112,14 +114,9 @@ describe("AnnouncementListModal", () => {
       />,
     );
 
-    // 在列表中点击删除按钮（stopPropagation 防止选中）
-    const deleteButtons = screen.getAllByRole("button").filter(
-      (btn) => btn.querySelector("svg"), // SVG 图标按钮
-    );
-    expect(deleteButtons.length).toBeGreaterThan(0);
-
-    // 点击第一个删除按钮（确认块已移入查看模式 Issue #182：点击后进入详情并展示确认）
-    fireEvent.click(deleteButtons[0]);
+    // 进入 ann-1 详情后点「删除公告」展开确认块（确认块已移入查看模式 Issue #182）
+    fireEvent.click(screen.getByText(/欢迎来到新学期/));
+    fireEvent.click(screen.getByRole("button", { name: /删除公告/ }));
 
     await waitFor(() => {
       // 内联确认块出现
@@ -181,9 +178,9 @@ describe("AnnouncementListModal", () => {
       />,
     );
 
-    // 列表点 A 行（ann-1）删除按钮 → 进入详情 A + 确认块
-    const deleteButtons = screen.getAllByRole("button").filter((btn) => btn.querySelector("svg"));
-    fireEvent.click(deleteButtons[0]);
+    // 进入 A 行（ann-1）详情 → 点「删除公告」展开确认块
+    fireEvent.click(screen.getByText(/欢迎来到新学期/));
+    fireEvent.click(screen.getByRole("button", { name: /删除公告/ }));
     await waitFor(() => expect(screen.getByText(/确认删除这条公告/)).toBeInTheDocument());
 
     // 返回列表：确认块随之消失（返回列表同时清除确认状态）
@@ -192,7 +189,7 @@ describe("AnnouncementListModal", () => {
 
     // 进入 B 行（ann-2）详情：不显示 A 的确认块
     fireEvent.click(screen.getByText(/本周六举行音乐会/));
-    expect(screen.getByText(/发布时间/)).toBeInTheDocument();
+    expect(screen.getByText(/结束时间/)).toBeInTheDocument();
     expect(screen.queryByText(/确认删除这条公告/)).toBeNull();
   });
 
@@ -298,9 +295,9 @@ describe("AnnouncementListModal", () => {
       />,
     );
 
-    // 在列表中点击删除按钮
-    const deleteButtons = screen.getAllByRole("button").filter((btn) => btn.querySelector("svg"));
-    fireEvent.click(deleteButtons[0]);
+    // 进入 ann-1 详情后点「删除公告」展开确认块
+    fireEvent.click(screen.getByText(/欢迎来到新学期/));
+    fireEvent.click(screen.getByRole("button", { name: /删除公告/ }));
 
     await waitFor(() => {
       expect(screen.getByText(/确认删除这条公告/)).toBeInTheDocument();
@@ -344,9 +341,9 @@ describe("AnnouncementListModal", () => {
       />,
     );
 
-    // 点击删除按钮
-    const deleteButtons = screen.getAllByRole("button").filter((btn) => btn.querySelector("svg"));
-    fireEvent.click(deleteButtons[0]);
+    // 进入 ann-1 详情后点「删除公告」展开确认块
+    fireEvent.click(screen.getByText(/欢迎来到新学期/));
+    fireEvent.click(screen.getByRole("button", { name: /删除公告/ }));
 
     await waitFor(() => {
       expect(screen.getByText(/确认删除这条公告/)).toBeInTheDocument();

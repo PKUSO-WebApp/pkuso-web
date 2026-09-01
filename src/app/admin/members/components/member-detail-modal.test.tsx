@@ -46,6 +46,7 @@ vi.mock("@/components/ui/Modal", () => ({
 
 const baseUser: ProfileRow = {
   id: "user-1",
+  avatar_url: null,
   college: "信息科学技术学院",
   created_at: null,
   email: "zhangsan@example.com",

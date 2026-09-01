@@ -114,6 +114,7 @@ const mockUsePosts = vi.mocked(usePosts);
 function mockProfile(overrides: Partial<ProfileRow> = {}): ProfileRow {
   return {
     id: "u1",
+    avatar_url: null,
     college: null,
     created_at: null,
     email: "a@b.com",

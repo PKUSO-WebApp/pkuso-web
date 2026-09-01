@@ -2,7 +2,12 @@
 
 import React from "react";
 import { Modal } from "@/components/ui/Modal";
-import { formatDateTimeInChina } from "@/lib/date-utils";
+import {
+  formatDisplayDateTime,
+  getLocalDateString,
+  formatLocalISO,
+  formatTime,
+} from "@/lib/date-utils";
 import type { AnnouncementRow } from "@/types/database";
 
 type AnnouncementListModalProps = {
@@ -13,7 +18,7 @@ type AnnouncementListModalProps = {
   deletingId: string | null;
   updatingId: string | null;
   onDelete: (id: string) => Promise<boolean>;
-  onUpdate: (id: string, content: string) => Promise<boolean>;
+  onUpdate: (id: string, title: string, content: string, end_time: string) => Promise<boolean>;
 };
 
 export function AnnouncementListModal({
@@ -29,6 +34,9 @@ export function AnnouncementListModal({
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
   const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [editTitle, setEditTitle] = React.useState("");
+  const [editEndDate, setEditEndDate] = React.useState("");
+  const [editEndTime, setEditEndTime] = React.useState("23:59");
   const [editContent, setEditContent] = React.useState("");
 
   const selectedAnnouncement = announcements.find((a) => a.id === selectedId);
@@ -46,6 +54,9 @@ export function AnnouncementListModal({
 
   const handleStartEdit = () => {
     if (selectedAnnouncement) {
+      setEditTitle(selectedAnnouncement.title || "");
+      setEditEndDate(getLocalDateString(new Date(selectedAnnouncement.end_time)));
+      setEditEndTime(formatTime(selectedAnnouncement.end_time));
       setEditContent(selectedAnnouncement.content || "");
       setEditingId(selectedAnnouncement.id);
       // 编辑模式不保留删除确认（防返回查看模式时确认块突兀重现误删，对抗返工）
@@ -55,9 +66,13 @@ export function AnnouncementListModal({
 
   const handleSaveEdit = async () => {
     if (!editingId) return;
-    const ok = await onUpdate(editingId, editContent);
+    const end_time = formatLocalISO(new Date(`${editEndDate}T${editEndTime || "23:59"}:00`));
+    const ok = await onUpdate(editingId, editTitle.trim(), editContent, end_time);
     if (ok) {
       setEditingId(null);
+      setEditTitle("");
+      setEditEndDate("");
+      setEditEndTime("23:59");
       setEditContent("");
       setConfirmDeleteId(null);
     }
@@ -86,7 +101,7 @@ export function AnnouncementListModal({
         <div className="space-y-3">
           {editingId === selectedAnnouncement.id ? (
             // 编辑模式
-            <>
+            <div className="space-y-3">
               <div className="flex items-center justify-end gap-2">
                 <button
                   type="button"
@@ -104,25 +119,57 @@ export function AnnouncementListModal({
                   {updatingId === selectedAnnouncement.id ? "保存中…" : "保存"}
                 </button>
               </div>
-              <div className="rounded-xl border border-border bg-surface p-4">
-                {/* 去掉 resize-none，恢复可拖拽拉长（审计清理） */}
-                <textarea
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
-                  rows={8}
-                  className="w-full rounded-lg bg-transparent text-sm text-text leading-relaxed outline-none"
-                  placeholder="输入公告内容…"
+              <div className="space-y-1">
+                <label className="block text-label font-medium text-text-muted">标题</label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
                 />
               </div>
-            </>
+              <div className="space-y-1">
+                <label className="block text-label font-medium text-text-muted">结束时间</label>
+                <div className="flex gap-2">
+                  <input
+                    type="date"
+                    value={editEndDate}
+                    onChange={(e) => setEditEndDate(e.target.value)}
+                    className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                  />
+                  <input
+                    type="time"
+                    value={editEndTime}
+                    onChange={(e) => setEditEndTime(e.target.value)}
+                    className="w-28 rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="block text-label font-medium text-text-muted">内容</label>
+                <div className="rounded-xl border border-border bg-surface p-4">
+                  {/* 去掉 resize-none，恢复可拖拽拉长（审计清理） */}
+                  <textarea
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    rows={8}
+                    className="w-full rounded-lg bg-transparent text-sm text-text leading-relaxed outline-none"
+                    placeholder="输入公告内容…"
+                  />
+                </div>
+              </div>
+            </div>
           ) : (
             // 查看模式（Issue #182 重排：发布时间 → 内容框 → 删除确认(若有) → 按钮行）
             <>
-              <p className="text-xs text-text-muted">
-                发布时间：{formatDateTimeInChina(selectedAnnouncement.created_at)}
+              <p className="text-base text-primary break-words">
+                {selectedAnnouncement.title || "无标题"}
               </p>
-              <div className="max-h-[40vh] overflow-y-auto rounded-xl border border-border bg-surface p-4">
-                <p className="text-sm text-text leading-relaxed whitespace-pre-wrap break-words">
+              <p className="mt-1 text-sm text-text-muted">
+                结束时间：{formatDisplayDateTime(selectedAnnouncement.end_time)}
+              </p>
+              <div className="mt-2 max-h-[40vh] overflow-y-auto rounded-xl border border-border bg-surface p-4">
+                <p className="text-sm text-text-muted leading-relaxed whitespace-pre-wrap break-words">
                   {selectedAnnouncement.content || "无内容"}
                 </p>
               </div>
@@ -200,40 +247,16 @@ export function AnnouncementListModal({
                   onClick={() => setSelectedId(item.id)}
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs text-text-muted mb-1">
-                      {formatDateTimeInChina(item.created_at)}
+                    <p className="text-base text-primary mb-1 break-words">
+                      {item.title || "无标题"}
                     </p>
-                    <p className="text-sm text-text break-words line-clamp-3">
+                    <p className="text-sm text-text-muted mb-1">
+                      结束时间：{formatDisplayDateTime(item.end_time)}
+                    </p>
+                    <p className="text-sm text-text-muted break-words line-clamp-3">
                       {item.content || "无内容"}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      // 删除确认块已移入查看模式（Issue #182）：先进入详情再展示确认
-                      setSelectedId(item.id);
-                      setConfirmDeleteId(item.id);
-                    }}
-                    disabled={deletingId === item.id}
-                    className="shrink-0 rounded-full bg-danger/10 p-2 text-danger hover:bg-danger/20 disabled:opacity-60"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M3 6h18" />
-                      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                    </svg>
-                  </button>
                 </div>
               ))}
             </div>

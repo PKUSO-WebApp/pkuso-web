@@ -57,7 +57,7 @@ describe("useAnnouncements", () => {
     const c = mockClient([{ data: [], error: null }, { error: null }]);
     const { result } = renderHook(() => useAnnouncements(c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
-    const ok = await act(() => result.current.publish("新公告"));
+    const ok = await act(() => result.current.publish("标题测试", "新公告", "2026-09-01T23:59:59"));
     expect(ok).toBe(true);
   });
 
@@ -65,7 +65,7 @@ describe("useAnnouncements", () => {
     const c = mockClient([{ data: [], error: null }, { error: { message: "失败" } }]);
     const { result } = renderHook(() => useAnnouncements(c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
-    const ok = await act(() => result.current.publish("x"));
+    const ok = await act(() => result.current.publish("标题x", "x", "2026-09-01T23:59:59"));
     expect(ok).toBe(false);
   });
 
@@ -266,7 +266,9 @@ describe("useAnnouncements", () => {
     expect(result.current.allData[0].content).toBe("原始内容");
 
     // 执行更新
-    const ok = await act(() => result.current.update("1", "更新后的内容"));
+    const ok = await act(() =>
+      result.current.update("1", "标题", "更新后的内容", "2026-09-01T23:59:59"),
+    );
 
     expect(ok).toBe(true);
     expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -278,7 +280,12 @@ describe("useAnnouncements", () => {
           "Content-Type": "application/json",
           Authorization: expect.stringMatching(/^Bearer /),
         }),
-        body: JSON.stringify({ id: "1", content: "更新后的内容" }),
+        body: JSON.stringify({
+          id: "1",
+          title: "标题",
+          content: "更新后的内容",
+          end_time: "2026-09-01T23:59:59",
+        }),
       }),
     );
     expect(result.current.allData).toHaveLength(1);
@@ -312,7 +319,9 @@ describe("useAnnouncements", () => {
     expect(result.current.allData).toHaveLength(1);
 
     // 执行更新
-    const ok = await act(() => result.current.update("1", "更新后的内容"));
+    const ok = await act(() =>
+      result.current.update("1", "标题", "更新后的内容", "2026-09-01T23:59:59"),
+    );
 
     expect(ok).toBe(false);
     expect(result.current.error).toBe("更新失败");
@@ -338,7 +347,10 @@ describe("useAnnouncements", () => {
 
     // 同时调用两次（模拟快速连续点击）
     const [ok1, ok2] = await act(() =>
-      Promise.all([result.current.update("1", "内容1"), result.current.update("1", "内容2")]),
+      Promise.all([
+        result.current.update("1", "标题1", "内容1", "2026-09-01T23:59:59"),
+        result.current.update("1", "标题2", "内容2", "2026-09-01T23:59:59"),
+      ]),
     );
 
     expect(ok1).toBe(true);

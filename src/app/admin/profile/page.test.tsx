@@ -51,6 +51,15 @@ vi.mock("@/context/user-context", () => ({
   }),
 }));
 
+vi.mock("@/app/(member)/profile/components/theme-modal", () => ({
+  ThemeModal: ({ open, onClose }: { open: boolean; onClose: () => void }) =>
+    open ? (
+      <div data-testid="theme-modal">
+        <button onClick={onClose}>关闭外观</button>
+      </div>
+    ) : null,
+}));
+
 /** 构造 supabase.from() 返回正确的 select/order 链式 mock */
 function setupSupabaseMock(options: {
   fetchData?: unknown;

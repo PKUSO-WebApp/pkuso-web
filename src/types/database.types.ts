@@ -120,6 +120,30 @@ export type Database = {
         }
         Relationships: []
       }
+      import_config: {
+        Row: {
+          field_mapping: Json
+          id: number
+          instrument_map: Json
+          updated_at: string | null
+          year: number
+        }
+        Insert: {
+          field_mapping?: Json
+          id?: number
+          instrument_map?: Json
+          updated_at?: string | null
+          year?: number
+        }
+        Update: {
+          field_mapping?: Json
+          id?: number
+          instrument_map?: Json
+          updated_at?: string | null
+          year?: number
+        }
+        Relationships: []
+      }
       invitation_codes: {
         Row: {
           code: string
@@ -213,6 +237,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      member_info: {
+        Row: {
+          college: string | null
+          created_at: string | null
+          email: string | null
+          full_name: string
+          grade: string | null
+          id: string
+          instrument_code: number | null
+          instrument_name: string | null
+        }
+        Insert: {
+          college?: string | null
+          created_at?: string | null
+          email?: string | null
+          full_name: string
+          grade?: string | null
+          id?: string
+          instrument_code?: number | null
+          instrument_name?: string | null
+        }
+        Update: {
+          college?: string | null
+          created_at?: string | null
+          email?: string | null
+          full_name?: string
+          grade?: string | null
+          id?: string
+          instrument_code?: number | null
+          instrument_name?: string | null
+        }
+        Relationships: []
       }
       notifications: {
         Row: {

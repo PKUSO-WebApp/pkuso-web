@@ -38,30 +38,40 @@ async function insertLeaveNotification(
   supabaseServer: ReturnType<typeof createServerSupabase>,
   req: {
     user_id: string;
-    rehearsals?: {
-      repertoire?: string | null;
-      title?: string | null;
-      type?: string | null;
-      start_time?: string | null;
-    } | null;
+    rehearsals?:
+      | {
+          repertoire?: string | null;
+          title?: string | null;
+          type?: string | null;
+          start_time?: string | null;
+        }
+      | {
+          repertoire?: string | null;
+          title?: string | null;
+          type?: string | null;
+          start_time?: string | null;
+        }[]
+      | null;
   },
   kind: "approved" | "rejected",
   reason?: string,
 ) {
+  // Supabase join 返回数组，取首项
+  const rehearsal = Array.isArray(req.rehearsals) ? req.rehearsals[0] : req.rehearsals;
   try {
     // 日期：M月d日（无前导零），start_time 缺失/解析失败时省略日期
     let datePart = "";
-    if (req.rehearsals?.start_time) {
-      const start = parseLocalISO(req.rehearsals.start_time);
+    if (rehearsal?.start_time) {
+      const start = parseLocalISO(rehearsal.start_time);
       if (!Number.isNaN(start.getTime())) {
         datePart = `${start.getMonth() + 1}月${start.getDate()}日`;
       }
     }
     // 类型：full → 合排，section → 分排，其余省略类型词
     const typeWord =
-      req.rehearsals?.type === "full" ? "合排" : req.rehearsals?.type === "section" ? "分排" : "";
+      rehearsal?.type === "full" ? "合排" : rehearsal?.type === "section" ? "分排" : "";
     // 排练名优先曲目（repertoire），缺失时回退标题，再兜底「排练」
-    const rehearsalName = req.rehearsals?.repertoire || req.rehearsals?.title || "排练";
+    const rehearsalName = rehearsal?.repertoire || rehearsal?.title || "排练";
     const { error } = await supabaseServer.from("notifications").insert({
       user_id: req.user_id,
       category: "attendance",

@@ -1,5 +1,6 @@
 import { createServerSupabase } from "@/lib/supabase-server";
 import { NextResponse } from "next/server";
+import { resolveInstrumentName, INSTRUMENT_ALIAS_MAP } from "@/constants/instrument-aliases";
 
 /**
  * 导入团员信息 API
@@ -107,20 +108,34 @@ export async function POST(request: Request) {
       }
       fullNames.add(fullName);
 
-      // 解析声部
+      // 解析声部：支持数字序号或直接名称/别名
       let instrumentCode: number | undefined;
       let instrumentName: string | undefined;
       for (const mapping of fieldMapping) {
         if (mapping.target_field === "instrument_code") {
-          const rawValue = row[mapping.excel_header];
-          instrumentCode = typeof rawValue === "number" ? rawValue : parseInt(String(rawValue));
-          if (!isNaN(instrumentCode)) {
+          const rawValue = String(row[mapping.excel_header] ?? "").trim();
+          if (!rawValue) {
+            // 空值跳过
+            break;
+          }
+
+          // 尝试作为数字序号解析
+          const numValue = Number(rawValue);
+          if (!isNaN(numValue) && Number.isInteger(numValue)) {
+            instrumentCode = numValue;
             instrumentName = instrumentMap[String(instrumentCode)];
             if (!instrumentName) {
               errors.push(`第 ${rowNum} 行：声部序号 ${instrumentCode} 无法映射`);
             }
           } else {
-            errors.push(`第 ${rowNum} 行：声部字段 "${String(rawValue)}" 无法解析为数字`);
+            // 非数字，尝试作为声部名称/别名匹配
+            const resolved = resolveInstrumentName(rawValue);
+            if (resolved !== rawValue || INSTRUMENT_ALIAS_MAP[rawValue]) {
+              // 匹配成功
+              instrumentName = resolved;
+            } else {
+              errors.push(`第 ${rowNum} 行：声部"${rawValue}"无法识别（请输入序号或有效声部名称）`);
+            }
           }
           break;
         }

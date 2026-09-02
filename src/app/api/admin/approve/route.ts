@@ -48,6 +48,58 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    // 4. 尝试从 member_info 预填 profile（仅填充空字段）
+    try {
+      // 获取用户姓名
+      const { data: targetProfile } = (await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("id", id)
+        .single()) as { data: { full_name: string | null } | null };
+
+      if (targetProfile?.full_name) {
+        // 用姓名查询 member_info
+        const { data: memberInfo } = await supabase
+          .from("member_info")
+          .select("*")
+          .eq("full_name", targetProfile.full_name)
+          .single();
+
+        if (memberInfo) {
+          // 构建需要更新的字段（仅填充空字段）
+          const updates: Record<string, unknown> = {};
+
+          // 从 profiles 获取其他字段的当前值
+          const { data: fullProfile } = await supabase
+            .from("profiles")
+            .select("email, instrument, college")
+            .eq("id", id)
+            .single();
+
+          if (fullProfile) {
+            if (!fullProfile.email && memberInfo.email) {
+              updates.email = memberInfo.email;
+            }
+            if (!fullProfile.instrument && memberInfo.instrument_name) {
+              updates.instrument = memberInfo.instrument_name;
+            }
+            if (!fullProfile.college && memberInfo.college) {
+              updates.college = memberInfo.college;
+            }
+          }
+
+          // 如果有需要更新的字段
+          if (Object.keys(updates).length > 0) {
+            await supabase.from("profiles").update(updates).eq("id", id);
+            console.log("[Admin Approve] 已从 member_info 预填 profile:", updates);
+          }
+        }
+      }
+    } catch (prefillErr) {
+      // 预填失败不影响批准流程
+      console.error("[Admin Approve] 预填 profile 失败（不影响批准）:", prefillErr);
+    }
+
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error("[Admin Approve] 服务器错误:", err);

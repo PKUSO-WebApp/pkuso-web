@@ -16,7 +16,10 @@ import { matchInstrumentSection } from "@/lib/instrument-search";
 import { buildUniqueSheetNames } from "@/lib/sheet-utils";
 import type { ProfileRow, RehearsalRow } from "@/types/database";
 import * as XLSX from "xlsx";
+import Link from "next/link";
+import { Settings, Upload, RefreshCw } from "lucide-react";
 import { AdminMemberDetailModal } from "./components/member-detail-modal";
+import { MemberImportModal } from "./components/member-import-modal";
 
 type ViewMode = "attendance" | "roster";
 
@@ -79,8 +82,57 @@ export default function MembersPage() {
 
   const grouped = React.useMemo(() => groupProfilesByInstrument(filteredRows), [filteredRows]);
 
+  // 同步 profiles
+  const handleSyncProfiles = async () => {
+    if (
+      !confirm(
+        "确认要使用 member_info 数据同步所有已通过用户的 profile 吗？\n\n此操作会覆盖现有数据，但邮箱为空时不会覆盖已有邮箱。",
+      )
+    ) {
+      return;
+    }
+
+    setSyncing(true);
+    try {
+      const { supabase } = await import("@/lib/supabase");
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("未登录");
+      }
+
+      const response = await fetch("/api/admin/sync-profiles", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "同步失败");
+      }
+
+      alert(result.message || "同步完成");
+      window.location.reload();
+    } catch (err) {
+      alert(`同步失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   // 成员详情弹窗：点击花名册成员打开（可编辑）
   const [selectedUser, setSelectedUser] = React.useState<ProfileRow | null>(null);
+
+  // 导入弹窗状态
+  const [showImportModal, setShowImportModal] = React.useState(false);
+
+  // 同步状态
+  const [syncing, setSyncing] = React.useState(false);
 
   // 考勤查看
   const { data: allRehearsals } = useRehearsals();
@@ -241,9 +293,37 @@ export default function MembersPage() {
     /* 根容器 flex 化（矮屏布局，审计批次 3）：头部固定；
        Issue #171：外层不再 overflow-y-auto（消除嵌套滚动），滚动下沉到内层列表（max-h） */
     <div className="flex h-full min-h-0 flex-col space-y-4 pb-2">
-      <header className="mt-1">
-        <h1 className="text-lg font-semibold text-text">成员</h1>
-        <p className="mt-1 text-xs text-text-muted">排练考勤与乐团花名册</p>
+      <header className="mt-1 flex items-start justify-between">
+        <div>
+          <h1 className="text-lg font-semibold text-text">成员</h1>
+          <p className="mt-1 text-xs text-text-muted">排练考勤与乐团花名册</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowImportModal(true)}
+            className="flex items-center gap-1 rounded-lg bg-primary/10 px-2 py-1.5 text-xs text-primary hover:bg-primary/20"
+          >
+            <Upload className="h-4 w-4" />
+            导入数据
+          </button>
+          <button
+            type="button"
+            onClick={handleSyncProfiles}
+            disabled={syncing}
+            className="flex items-center gap-1 rounded-lg bg-success/10 px-2 py-1.5 text-xs text-success hover:bg-success/20 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "同步中..." : "同步 Profiles"}
+          </button>
+          <Link
+            href="/admin/config/import"
+            className="flex items-center gap-1 rounded-lg bg-muted px-2 py-1.5 text-xs text-text-muted hover:bg-border"
+          >
+            <Settings className="h-4 w-4" />
+            导入配置
+          </Link>
+        </div>
       </header>
 
       <div className="flex-1 min-h-0 space-y-4">
@@ -427,6 +507,15 @@ export default function MembersPage() {
         user={selectedUser}
         onClose={() => setSelectedUser(null)}
         onSave={updateProfile}
+      />
+
+      <MemberImportModal
+        open={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onSuccess={() => {
+          // 导入成功后刷新页面
+          window.location.reload();
+        }}
       />
 
       <AttendanceModal

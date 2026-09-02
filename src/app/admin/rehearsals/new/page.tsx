@@ -50,7 +50,12 @@ export default function AdminCreateRehearsalPage() {
     value: string | number | boolean | Date | null,
   ) => {
     if (field === "startTime" && value instanceof Date) {
-      const endTime = new Date(value.getTime() + 3 * 60 * 60 * 1000);
+      // +3h 默认时长，但不允许跨天：最晚 capped 到当天 23:59
+      const endMs = value.getTime() + 3 * 60 * 60 * 1000;
+      const end = new Date(endMs);
+      const dayEnd = new Date(value);
+      dayEnd.setHours(23, 59, 0, 0);
+      const endTime = end > dayEnd ? dayEnd : end;
       setForm((p) => ({ ...p, startTime: value, endTime }));
     } else {
       setForm((p) => ({ ...p, [field]: value }));
@@ -74,6 +79,11 @@ export default function AdminCreateRehearsalPage() {
       return;
     if (form.endTime <= form.startTime) {
       alert("结束时间必须晚于开始时间");
+      return;
+    }
+    // 不允许跨天：结束日期必须与开始日期相同
+    if (form.endTime.toDateString() !== form.startTime.toDateString()) {
+      alert("排练不能跨天，结束时间不得晚于当天 23:59");
       return;
     }
     let geoFields: Record<string, unknown> = {

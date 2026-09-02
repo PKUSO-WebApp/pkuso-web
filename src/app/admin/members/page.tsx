@@ -11,6 +11,8 @@ import { Toggle } from "@/components/ui/Toggle";
 import { parseLocalISO, getLocalDateString } from "@/lib/date-utils";
 import { groupProfilesByInstrument } from "@/lib/roster-utils";
 import { filterByName } from "@/lib/name-search";
+import { isSyntheticEmail } from "@/lib/email-utils";
+import { matchInstrumentSection } from "@/lib/instrument-search";
 import { buildUniqueSheetNames } from "@/lib/sheet-utils";
 import type { ProfileRow, RehearsalRow } from "@/types/database";
 import * as XLSX from "xlsx";
@@ -65,12 +67,15 @@ export default function MembersPage() {
     [allProfiles],
   );
 
-  // 拼音/首字母搜索：输入为空时显示全部
+  // 搜索：优先声部匹配（支持中文/英文/别名），无匹配则回退拼音姓名搜索
   const [searchQuery, setSearchQuery] = React.useState("");
-  const filteredRows = React.useMemo(
-    () => filterByName(rosterRows, searchQuery),
-    [rosterRows, searchQuery],
-  );
+  const sectionMatch = React.useMemo(() => matchInstrumentSection(searchQuery), [searchQuery]);
+  const filteredRows = React.useMemo(() => {
+    if (sectionMatch) {
+      return rosterRows.filter((r) => sectionMatch.includes(r.instrument ?? ""));
+    }
+    return filterByName(rosterRows, searchQuery);
+  }, [rosterRows, searchQuery, sectionMatch]);
 
   const grouped = React.useMemo(() => groupProfilesByInstrument(filteredRows), [filteredRows]);
 
@@ -357,7 +362,7 @@ export default function MembersPage() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索姓名（支持中文/拼音/首字母）"
+              placeholder="搜索姓名，声部"
               className="input"
             />
             <div className="max-h-[440px] space-y-5 overflow-y-auto">
@@ -396,7 +401,9 @@ export default function MembersPage() {
                             <p className="mt-0.5 text-text-muted">
                               学院：{u.college?.trim() || "—"}
                             </p>
-                            <p className="mt-0.5 text-text-muted">邮箱：{u.email ?? "—"}</p>
+                            <p className="mt-0.5 text-text-muted">
+                              邮箱：{isSyntheticEmail(u.email) ? "—" : (u.email ?? "—")}
+                            </p>
                             <p className="mt-0.5 text-text-subtle">
                               入团时间：{u.join_date?.trim() || "—"}
                               {/* 在团情况后缀：true → 团员 / false → 团友；NULL（未设置）不显示 */}

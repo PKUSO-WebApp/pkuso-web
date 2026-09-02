@@ -9,6 +9,7 @@ import { getFreshAccessToken } from "@/lib/auth-token";
 import { EMAIL_SIGNATURE_MAX_LENGTH } from "@/lib/email-signature";
 import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
+import { ThemeModal } from "@/app/(member)/profile/components/theme-modal";
 import { useInvitationCodes } from "@/hooks/useInvitationCodes";
 import { formatDateTimeInChina } from "@/lib/date-utils";
 import type { FeedbackRow, InvitationCodeRow, SystemNotificationRow } from "@/types/database";
@@ -158,6 +159,9 @@ export default function ProfilePage() {
   const [notifyLoading, setNotifyLoading] = React.useState(false);
   const [notifyError, setNotifyError] = React.useState(false); // 查询失败态（显示「加载失败」+ 重试）
   const notifySeqRef = React.useRef(0);
+
+  // 外观弹窗：亮色 / 暗色 / 跟随系统主题切换
+  const [isThemeModalOpen, setIsThemeModalOpen] = React.useState(false);
 
   /** 拉取系统通知历史（created_at 倒序；admin 浏览器端，is_admin() RLS 放行） */
   const fetchNotifyHistory = () => {
@@ -593,6 +597,14 @@ export default function ProfilePage() {
             className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
           >
             反馈列表
+          </button>
+          {/* 外观切换：亮色 / 暗色 / 跟随系统 */}
+          <button
+            type="button"
+            onClick={() => setIsThemeModalOpen(true)}
+            className="flex w-full items-center px-4 py-3 text-sm font-medium text-text hover:bg-muted"
+          >
+            外观
           </button>
           {/* 退出登录：最后一行，红色文字（与 member 端一致，保留 LogOut 图标） */}
           <button
@@ -1282,16 +1294,11 @@ export default function ProfilePage() {
               )}
             </div>
           )}
-
-          <button
-            type="button"
-            onClick={() => setIsNotifyOpen(false)}
-            className="w-full rounded-xl border border-border bg-surface py-2.5 text-sm font-medium text-text-muted hover:bg-muted"
-          >
-            关闭
-          </button>
         </div>
       </Modal>
+
+      {/* 外观 Modal（底部弹出）：亮色 / 暗色 / 跟随系统 三态切换 */}
+      <ThemeModal open={isThemeModalOpen} onClose={() => setIsThemeModalOpen(false)} />
     </div>
   );
 }

@@ -8,6 +8,7 @@ import type { AnnouncementRow } from "@/types/database";
 import { AnnouncementListModal } from "./components/announcement-list-modal";
 import { LeaveManagement } from "./components/leave-management";
 import { formatDateTimeInChina, formatLocalISO } from "@/lib/date-utils";
+import { isSyntheticEmail } from "@/lib/email-utils";
 
 export default function AdminPage() {
   const {
@@ -314,7 +315,9 @@ export default function AdminPage() {
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-text">{r.full_name || "未填写"}</p>
                     <p className="mt-0.5 text-xs text-text-muted">{r.instrument || "未选声部"}</p>
-                    <p className="mt-0.5 text-xs text-text-muted">{r.email || "—"}</p>
+                    <p className="mt-0.5 text-xs text-text-muted">
+                      {isSyntheticEmail(r.email) ? "—" : r.email || "—"}
+                    </p>
                     <p className="mt-0.5 text-caption text-text-subtle">
                       注册：{formatDateTimeInChina(r.created_at)}
                     </p>

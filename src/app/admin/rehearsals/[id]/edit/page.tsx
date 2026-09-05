@@ -10,7 +10,7 @@ import {
   MAX_CHECKIN_RADIUS_M,
   MIN_CHECKIN_RADIUS_M,
   type CreateFormState,
-} from "../../../../(member)/schedule/components/create-rehearsal-form";
+} from "@/components/create-rehearsal-form";
 import { formatLocalISO, parseLocalISO, getLocalDateString } from "@/lib/date-utils";
 import type { RehearsalRow } from "@/types/database";
 

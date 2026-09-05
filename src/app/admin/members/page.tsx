@@ -6,7 +6,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import { useRehearsals } from "@/hooks/useRehearsals";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useAttendanceEditor } from "@/hooks/useAttendanceEditor";
-import { AttendanceModal } from "@/app/(member)/schedule/components/attendance-modal";
+import { AttendanceModal } from "@/components/attendance-modal";
 import { Toggle } from "@/components/ui/Toggle";
 import { parseLocalISO, getLocalDateString } from "@/lib/date-utils";
 import { groupProfilesByInstrument } from "@/lib/roster-utils";

@@ -37,12 +37,10 @@ export function AttendanceModal({
   saving = false,
   onClose,
 }: Props) {
-  // 本地编辑缓存：打开时从 list 初始化，关闭时清空
   const [localList, setLocalList] = React.useState<AttendanceRowWithUser[]>([]);
 
   React.useEffect(() => {
     if (open && !loading) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLocalList(list.map((r) => ({ ...r })));
     }
   }, [open, loading, list]);

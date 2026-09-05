@@ -51,7 +51,7 @@ vi.mock("@/context/user-context", () => ({
   }),
 }));
 
-vi.mock("@/app/(member)/profile/components/theme-modal", () => ({
+vi.mock("@/components/theme-modal", () => ({
   ThemeModal: ({ open, onClose }: { open: boolean; onClose: () => void }) =>
     open ? (
       <div data-testid="theme-modal">

@@ -111,10 +111,7 @@ export default function LoginPage() {
           </form>
 
           <div className="mt-4 text-center text-xs text-text-muted">
-            还没有账号？{" "}
-            <Link href="/signup" className="font-medium text-text">
-              去注册
-            </Link>
+            成员端已迁移至微信小程序，请使用管理员账号登录。
           </div>
         </div>
       </div>

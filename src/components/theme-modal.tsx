@@ -5,11 +5,6 @@ import { Toggle } from "@/components/ui/Toggle";
 import { useThemeContext } from "@/context/theme-context";
 import { THEME_OPTIONS, themeLabel } from "@/lib/theme";
 
-// 外观弹窗（Issue #203）：亮色 / 暗色 / 跟随系统 三态主题选择。
-// 复用 Toggle 分段控件（与编辑弹窗隐私开关同款）；选中态即用户偏好，
-// 切换即时生效（html data-theme）并持久化（localStorage，见 src/lib/theme.ts）。
-// 状态来自全局 ThemeProvider（对抗返工 Issue #203）：弹窗只读共享状态，
-// matchMedia/storage 监听由根 layout 的 provider 统一持有，全站实时跟随系统。
 export function ThemeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { preference, mode, setPreference } = useThemeContext();
   return (

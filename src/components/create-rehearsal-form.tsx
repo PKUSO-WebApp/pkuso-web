@@ -8,9 +8,7 @@ import { MapPicker } from "@/app/admin/rehearsals/components/map-picker";
 
 export type DbRehearsalType = "full" | "section";
 
-/** 允许半径下限（米） */
 export const MIN_CHECKIN_RADIUS_M = 10;
-/** 允许半径上限（米）＝ 地球半径 */
 export const MAX_CHECKIN_RADIUS_M = 6_371_000;
 
 export type CreateFormState = {
@@ -20,13 +18,9 @@ export type CreateFormState = {
   endTime: Date | null;
   location: string;
   repertoire: string;
-  /** 是否启用地理围栏；关闭时三字段一律以 NULL 提交（不限位置） */
   geofenceEnabled: boolean;
-  /** 签到点纬度（GCJ-02）；null = 未设置 */
   checkinLat: number | null;
-  /** 签到点经度（GCJ-02）；null = 未设置 */
   checkinLng: number | null;
-  /** 允许半径（米），字符串承载输入框原始值 */
   checkinRadiusM: string;
 };
 
@@ -45,11 +39,6 @@ type Props = {
   onCancel: () => void;
 };
 
-/**
- * 发布/编辑排练日程表单（Modal→页面改造）
- *
- * 仅渲染表单本身（不含 Modal 外壳），供创建弹窗与管理端「发布新日程」页面复用。
- */
 export function CreateRehearsalForm({
   form,
   submitting,

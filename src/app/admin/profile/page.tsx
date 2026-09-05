@@ -9,7 +9,7 @@ import { getFreshAccessToken } from "@/lib/auth-token";
 import { EMAIL_SIGNATURE_MAX_LENGTH } from "@/lib/email-signature";
 import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
-import { ThemeModal } from "@/app/(member)/profile/components/theme-modal";
+import { ThemeModal } from "@/components/theme-modal";
 import { useInvitationCodes } from "@/hooks/useInvitationCodes";
 import { formatDateTimeInChina } from "@/lib/date-utils";
 import type { FeedbackRow, InvitationCodeRow, SystemNotificationRow } from "@/types/database";

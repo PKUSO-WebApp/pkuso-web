@@ -37,22 +37,23 @@ export function AttendanceModal({
   saving = false,
   onClose,
 }: Props) {
-  // 本地编辑缓存：打开时从 list 初始化，关闭时清空
-  const [localList, setLocalList] = React.useState<AttendanceRowWithUser[]>([]);
-
-  React.useEffect(() => {
-    if (open && !loading) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setLocalList(list.map((r) => ({ ...r })));
-    }
-  }, [open, loading, list]);
+  const [localOverrides, setLocalOverrides] = React.useState<Map<string, AttendanceStatus>>(
+    new Map(),
+  );
 
   const handleLocalChange = (userId: string, status: AttendanceStatus) => {
-    setLocalList((prev) => prev.map((r) => (r.user_id === userId ? { ...r, status } : r)));
+    setLocalOverrides((prev) => new Map(prev).set(userId, status));
     onStatusChange?.(userId, status);
   };
 
-  const displayList = localList.length > 0 ? localList : list;
+  const displayList = React.useMemo(
+    () =>
+      list.map((r) => {
+        const override = localOverrides.get(r.user_id);
+        return override !== undefined ? { ...r, status: override } : r;
+      }),
+    [list, localOverrides],
+  );
 
   return (
     <Modal open={open} onClose={onClose} title="出勤名单" closeOnOverlay={!loading && !saving}>

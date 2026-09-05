@@ -11,8 +11,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
 
-  const isAuthPage =
-    pathname === "/login" || pathname === "/signup" || pathname === "/reset-password";
+  const isAuthPage = pathname === "/login" || pathname === "/reset-password";
 
   const onProfileLoaded = React.useCallback(
     (profile: {

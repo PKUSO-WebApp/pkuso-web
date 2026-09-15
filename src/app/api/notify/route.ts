@@ -100,8 +100,24 @@ export async function POST(request: Request) {
     const html = buildRehearsalHtml({ title, dateStr, location, signature });
 
     if (mailer.mode === "smtp") {
-      await mailer.transporter.sendMail({ from, to: emails, subject: `[排练通知] ${title}`, html });
+      // 163 等 SMTP 限制单连接收件人数（450 RP:DRC / 550 RP:RCL），分批发送
+      // 经验值：每批 ≤ 20 人，批次间隔 1-2s 避免触发频率限制
+      const BATCH_SIZE = 20;
+      const BATCH_DELAY_MS = 1500;
+      for (let i = 0; i < emails.length; i += BATCH_SIZE) {
+        const batch = emails.slice(i, i + BATCH_SIZE);
+        await mailer.transporter.sendMail({
+          from,
+          to: batch,
+          subject: `[排练通知] ${title}`,
+          html,
+        });
+        if (i + BATCH_SIZE < emails.length) {
+          await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+        }
+      }
     } else {
+      // Resend API 单次支持更多收件人，但为统一逻辑也可分批（此处保持原行为）
       const { error: sendError } = await mailer.resend.emails.send({
         from,
         to: emails,

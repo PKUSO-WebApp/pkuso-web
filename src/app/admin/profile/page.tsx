@@ -12,11 +12,9 @@ import { Toggle } from "@/components/ui/Toggle";
 import { ThemeModal } from "@/components/theme-modal";
 import { useInvitationCodes } from "@/hooks/useInvitationCodes";
 import { formatDateTimeInChina } from "@/lib/date-utils";
-import type {
-  FeedbackRowWithAuthor,
-  InvitationCodeRow,
-  SystemNotificationRow,
-} from "@/types/database";
+import type { InvitationCodeRow, SystemNotificationRow, FeedbackRow } from "@/types/database";
+
+type FeedbackWithAuthor = FeedbackRow & { profiles?: { full_name?: string | null } | null };
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -79,7 +77,7 @@ export default function ProfilePage() {
   // 状态机：打开弹窗时查询（避免进「我的」页就拉一次）；成员可选匿名/实名提交，
   // 只读展示内容 + 提交时间 + 作者（实名时）倒序，无删除/标记。竞态守卫用递增序号（快速开关丢弃过期响应）。
   const [isFeedbackOpen, setIsFeedbackOpen] = React.useState(false);
-  const [feedbackRows, setFeedbackRows] = React.useState<FeedbackRowWithAuthor[]>([]);
+  const [feedbackRows, setFeedbackRows] = React.useState<FeedbackWithAuthor[]>([]);
   const [feedbackLoading, setFeedbackLoading] = React.useState(false);
   const [feedbackError, setFeedbackError] = React.useState(false); // 查询失败态（显示「加载失败」+ 重试）
   const feedbackSeqRef = React.useRef(0);
@@ -105,7 +103,7 @@ export default function ProfilePage() {
           setFeedbackRows([]);
           return;
         }
-        setFeedbackRows((data as FeedbackRowWithAuthor[] | null) ?? []);
+        setFeedbackRows((data as FeedbackWithAuthor[] | null) ?? []);
       });
   };
 
@@ -1178,8 +1176,8 @@ export default function ProfilePage() {
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-caption text-text-muted">
                       {formatDateTimeInChina(row.created_at)}
-                      {!row.is_anonymous && row.profiles?.[0]?.full_name
-                        ? ` · ${row.profiles[0].full_name}`
+                      {!row.is_anonymous && row.profiles?.full_name
+                        ? ` · ${row.profiles.full_name}`
                         : ""}
                     </p>
                     <button

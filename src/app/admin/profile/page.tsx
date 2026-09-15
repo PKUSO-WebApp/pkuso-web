@@ -93,9 +93,7 @@ export default function ProfilePage() {
     setFeedbackError(false);
     void supabase
       .from("feedback")
-      .select(
-        "id, content, created_at, created_by, is_anonymous, profiles!feedback_created_by_fkey(full_name)",
-      )
+      .select("id, content, created_at, is_anonymous, profiles!feedback_created_by_fkey(full_name)")
       .order("created_at", { ascending: false })
       .then(({ data, error }) => {
         // 仅最新一次打开弹窗的响应生效（快速开关时丢弃过期响应）

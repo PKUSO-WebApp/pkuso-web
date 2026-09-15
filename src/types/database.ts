@@ -47,3 +47,6 @@ export type LeaveRequestWithDetails = LeaveRequestRow & {
     location?: string | null;
   } | null;
 };
+export type FeedbackRowWithAuthor = FeedbackRow & {
+  profiles?: { full_name?: string | null }[] | null;
+};

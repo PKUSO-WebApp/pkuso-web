@@ -12,7 +12,11 @@ import { Toggle } from "@/components/ui/Toggle";
 import { ThemeModal } from "@/components/theme-modal";
 import { useInvitationCodes } from "@/hooks/useInvitationCodes";
 import { formatDateTimeInChina } from "@/lib/date-utils";
-import type { FeedbackRow, InvitationCodeRow, SystemNotificationRow } from "@/types/database";
+import type {
+  FeedbackRowWithAuthor,
+  InvitationCodeRow,
+  SystemNotificationRow,
+} from "@/types/database";
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -72,10 +76,10 @@ export default function ProfilePage() {
   const [isSigFullscreen, setIsSigFullscreen] = React.useState(false);
 
   // ---- 反馈列表（Issue #209）----
-  // 状态机：打开弹窗时查询（避免进「我的」页就拉一次）；成员端匿名提交（表无作者列），
-  // 只读展示内容 + 提交时间倒序，无删除/标记。竞态守卫用递增序号（快速开关丢弃过期响应）。
+  // 状态机：打开弹窗时查询（避免进「我的」页就拉一次）；成员可选匿名/实名提交，
+  // 只读展示内容 + 提交时间 + 作者（实名时）倒序，无删除/标记。竞态守卫用递增序号（快速开关丢弃过期响应）。
   const [isFeedbackOpen, setIsFeedbackOpen] = React.useState(false);
-  const [feedbackRows, setFeedbackRows] = React.useState<FeedbackRow[]>([]);
+  const [feedbackRows, setFeedbackRows] = React.useState<FeedbackRowWithAuthor[]>([]);
   const [feedbackLoading, setFeedbackLoading] = React.useState(false);
   const [feedbackError, setFeedbackError] = React.useState(false); // 查询失败态（显示「加载失败」+ 重试）
   const feedbackSeqRef = React.useRef(0);
@@ -89,7 +93,7 @@ export default function ProfilePage() {
     setFeedbackError(false);
     void supabase
       .from("feedback")
-      .select("id, content, created_at")
+      .select("id, content, created_at, is_anonymous, profiles!feedback_created_by_fkey(full_name)")
       .order("created_at", { ascending: false })
       .then(({ data, error }) => {
         // 仅最新一次打开弹窗的响应生效（快速开关时丢弃过期响应）
@@ -101,7 +105,7 @@ export default function ProfilePage() {
           setFeedbackRows([]);
           return;
         }
-        setFeedbackRows((data as FeedbackRow[] | null) ?? []);
+        setFeedbackRows((data as FeedbackRowWithAuthor[] | null) ?? []);
       });
   };
 
@@ -1141,8 +1145,8 @@ export default function ProfilePage() {
         </div>
       </Modal>
 
-      {/* 反馈列表 Modal（底部弹出，Issue #209/#210）：展示成员匿名反馈（内容 + 提交时间倒序）。
-          表结构无作者列（匿名是结构保证），不显示任何作者信息；支持删除治理（走 service role API） */}
+      {/* 反馈列表 Modal（底部弹出，Issue #209/#210）：展示成员反馈（内容 + 提交时间 + 作者倒序）。
+          匿名反馈不显示作者；实名反馈显示姓名。支持删除治理（走 service role API） */}
       <Modal
         open={isFeedbackOpen}
         onClose={() => setIsFeedbackOpen(false)}
@@ -1170,10 +1174,13 @@ export default function ProfilePage() {
             <div className="max-h-[60vh] space-y-3 overflow-y-auto pb-1">
               {feedbackRows.map((row) => (
                 <div key={row.id} className="rounded-xl border border-border bg-card p-3">
-                  {/* 行头：提交时间 + 删除入口（Issue #210 治理：匿名反馈唯一清理途径） */}
+                  {/* 行头：提交时间 + 作者（实名时） + 删除入口 */}
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-caption text-text-muted">
                       {formatDateTimeInChina(row.created_at)}
+                      {!row.is_anonymous && row.profiles?.[0]?.full_name
+                        ? ` · ${row.profiles[0].full_name}`
+                        : ""}
                     </p>
                     <button
                       type="button"

@@ -91,7 +91,7 @@ export default function ProfilePage() {
     setFeedbackError(false);
     void supabase
       .from("feedback")
-      .select("id, content, created_at, is_anonymous, profiles!feedback_created_by_fkey(full_name)")
+      .select("id, content, created_at, is_anonymous, profiles!inner(full_name)")
       .order("created_at", { ascending: false })
       .then(({ data, error }) => {
         // 仅最新一次打开弹窗的响应生效（快速开关时丢弃过期响应）
@@ -103,7 +103,14 @@ export default function ProfilePage() {
           setFeedbackRows([]);
           return;
         }
-        setFeedbackRows((data as FeedbackWithAuthor[] | null) ?? []);
+        // Supabase 返回 profiles 为数组（isOneToOne: false），取第一个元素
+        const rows = (
+          (data ?? []) as Array<FeedbackRow & { profiles?: { full_name: string | null }[] }>
+        ).map((r) => ({
+          ...r,
+          profiles: r.profiles?.[0] ?? null,
+        }));
+        setFeedbackRows(rows);
       });
   };
 

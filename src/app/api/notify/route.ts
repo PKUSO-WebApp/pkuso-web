@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import { createServerSupabase } from "@/lib/supabase-server";
 import { EMAIL_SIGNATURE_KEY, DEFAULT_EMAIL_SIGNATURE } from "@/lib/email-signature";
+import { isSyntheticEmail } from "@/lib/email-utils";
 
 export const runtime = "nodejs";
 
@@ -10,8 +11,19 @@ export async function resolveTransporter() {
   const smtpPass = process.env.SMTP_PASS;
   if (smtpUser && smtpPass) {
     const port = Number(process.env.SMTP_PORT) || 465;
+    // SMTP_FROM 未设或不是合法邮箱时，回退到 SMTP_USER（163 等要求 MAIL FROM = 授权用户）
+    const from =
+      process.env.SMTP_FROM && process.env.SMTP_FROM.includes("@")
+        ? process.env.SMTP_FROM
+        : smtpUser;
+    if (from === "onboarding@resend.dev") {
+      throw new Error(
+        "SMTP_FROM 不应为 Resend 默认地址 onboarding@resend.dev，请配置真实发件人地址",
+      );
+    }
     return {
       mode: "smtp" as const,
+      from,
       transporter: nodemailer.createTransport({
         host: process.env.SMTP_HOST || "smtp.163.com",
         port,
@@ -69,14 +81,22 @@ export async function POST(request: Request) {
     if (dbError || !recipients?.length)
       return NextResponse.json({ error: "无收件人" }, { status: 500 });
 
-    const emails = (recipients as Array<{ email: string }>).map((r) => r.email);
+    // 过滤合成邮箱（微信注册用户使用 placeholder.local 域名，发信必定失败）
+    const emails = (recipients as Array<{ email: string }>)
+      .map((r) => r.email)
+      .filter((email) => !isSyntheticEmail(email));
+
+    if (emails.length === 0) {
+      return NextResponse.json({ error: "无有效收件人" }, { status: 500 });
+    }
 
     // 4. 读取邮件签名（读取失败时静默降级为默认文案，不阻断发信）
     const signature = await fetchEmailSignature(supabaseServer);
 
     // 5. 发送
     const mailer = await resolveTransporter();
-    const from = process.env.SMTP_FROM || "onboarding@resend.dev";
+    const from =
+      mailer.mode === "smtp" ? mailer.from : process.env.SMTP_FROM || "onboarding@resend.dev";
     const html = buildRehearsalHtml({ title, dateStr, location, signature });
 
     if (mailer.mode === "smtp") {

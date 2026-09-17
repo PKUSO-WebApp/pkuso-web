@@ -15,6 +15,7 @@ interface AdminPageHeaderContextValue {
   setTitle: (title: string) => void;
   setHeaderRight: (node: React.ReactNode) => void;
   setOnBack: (handler: () => void) => void;
+  resetHeader: () => void;
 }
 
 const AdminPageHeaderContext = React.createContext<AdminPageHeaderContextValue | null>(null);
@@ -44,6 +45,10 @@ export function AdminPageHeaderProvider({ children }: { children: React.ReactNod
     setState((prev) => ({ ...prev, onBack: handler }));
   }, []);
 
+  const resetHeader = React.useCallback(() => {
+    setState({ title: "", headerRight: null, onBack: undefined });
+  }, []);
+
   return (
     <AdminPageHeaderContext.Provider
       value={{
@@ -53,6 +58,7 @@ export function AdminPageHeaderProvider({ children }: { children: React.ReactNod
         setTitle,
         setHeaderRight,
         setOnBack,
+        resetHeader,
       }}
     >
       {children}

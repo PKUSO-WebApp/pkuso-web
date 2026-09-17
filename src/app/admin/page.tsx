@@ -4,6 +4,7 @@ import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { FeatureCard } from "./components/FeatureCard";
+import { useAdminPageHeader } from "@/context/admin-page-header-context";
 import {
   UserCheck,
   CalendarCheck,
@@ -30,6 +31,12 @@ interface FeatureItem {
 export default function AdminHomePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { resetHeader } = useAdminPageHeader();
+
+  // 首页重置页顶状态（清除子页面残留的标题/按钮）
+  React.useEffect(() => {
+    resetHeader();
+  }, [resetHeader]);
 
   // 兼容旧深链：/admin?tab=leave -> 重定向到 /admin/leave
   React.useEffect(() => {

@@ -7,6 +7,7 @@ import { useUser } from "@/context/user-context";
 import { supabase } from "@/lib/supabase";
 import { PostDetailContent } from "../components/post-detail-content";
 import type { PostType, PostRow, PostRowWithAuthor } from "@/types/database";
+import { useAdminPageHeader } from "@/context/admin-page-header-context";
 
 const TYPE_LABEL: Record<PostType, string> = {
   ensemble: "重奏",
@@ -32,6 +33,7 @@ export default function AdminPostDetailPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const { user } = useUser();
+  const { setTitle, setOnBack } = useAdminPageHeader();
   const adminId = user?.id;
   const {
     data: rawPosts,
@@ -46,6 +48,11 @@ export default function AdminPostDetailPage() {
 
   const [lockingId, setLockingId] = React.useState<string | null>(null);
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setTitle("公告详情");
+    setOnBack(() => router.back);
+  }, [setTitle, setOnBack, router]);
 
   // normalize Supabase join profiles（与列表页一致）
   const post = React.useMemo<PostRowWithAuthor | null>(() => {
@@ -102,7 +109,6 @@ export default function AdminPostDetailPage() {
   if (loading) {
     return (
       <div className="flex h-full min-h-0 flex-col pb-safe">
-        <PageHeader onBack={() => router.back()} />
         <p className="py-12 text-center text-xs text-text-muted">加载中…</p>
       </div>
     );
@@ -111,7 +117,6 @@ export default function AdminPostDetailPage() {
   if (!post) {
     return (
       <div className="flex h-full min-h-0 flex-col pb-safe">
-        <PageHeader onBack={() => router.back()} />
         <p className="py-12 text-center text-xs text-text-muted">未找到该公告</p>
       </div>
     );
@@ -119,7 +124,6 @@ export default function AdminPostDetailPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col pb-safe">
-      <PageHeader onBack={() => router.back()} />
       <section className="flex-1 min-h-0 space-y-3 overflow-y-auto">
         <PostDetailContent post={post} />
       </section>
@@ -144,21 +148,5 @@ export default function AdminPostDetailPage() {
         </button>
       </div>
     </div>
-  );
-}
-
-function PageHeader({ onBack }: { onBack: () => void }) {
-  return (
-    <header className="mb-2 flex items-center gap-2">
-      <button
-        type="button"
-        onClick={onBack}
-        className="rounded-full px-2 py-1 text-lg text-text-muted hover:bg-muted"
-        aria-label="返回"
-      >
-        ‹
-      </button>
-      <h1 className="text-lg font-semibold text-text">公告详情</h1>
-    </header>
   );
 }

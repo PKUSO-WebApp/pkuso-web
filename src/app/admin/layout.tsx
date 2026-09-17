@@ -1,33 +1,21 @@
 "use client";
 
 import React from "react";
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useUser } from "@/context/user-context";
-import { ClipboardList, Calendar, Music, User, UsersRound, MessagesSquare } from "lucide-react";
-
-const tabs = [
-  { href: "/admin", label: "控制台", icon: ClipboardList },
-  { href: "/admin/rehearsals", label: "排练", icon: Music },
-  { href: "/admin/community", label: "社区", icon: MessagesSquare },
-  { href: "/admin/schedule", label: "日程", icon: Calendar },
-  { href: "/admin/members", label: "成员&考勤", icon: UsersRound },
-  { href: "/admin/profile", label: "我的", icon: User },
-];
+import { AdminPageHeaderProvider, useAdminPageHeader } from "@/context/admin-page-header-context";
+import { ArrowLeft, Settings as Gear } from "lucide-react";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { user } = useUser();
   const router = useRouter();
-  const pathname = usePathname();
 
   // 非管理员自动跳转到成员端
   React.useEffect(() => {
     if (user && user.role !== "admin") router.replace("/");
   }, [user, router]);
 
-  // 拆分"加载中"与"未授权"两种状态：
-  // - isLoading: user 尚未加载完成（user === null），此时才允许自动刷新
-  // - isUnauthorized: user 已加载完成但非 admin（正在跳转回成员端），不应触发刷新
+  // 拆分"加载中"与"未授权"两种状态
   const isLoading = !user;
   const isUnauthorized = !!user && user.role !== "admin";
   const isGuarding = isLoading || isUnauthorized;
@@ -35,8 +23,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [showReloadHint, setShowReloadHint] = React.useState(false);
   const [reloadFailed, setReloadFailed] = React.useState(false);
 
-  // 重新进入守护页（或守护状态切换）时重置提示状态
-  // 采用 render 阶段调整 state 模式（React 官方推荐），避免 effect 体内同步 setState 触发级联渲染
   const guardKey = `${isGuarding}|${isLoading}`;
   const [prevGuardKey, setPrevGuardKey] = React.useState(guardKey);
   if (prevGuardKey !== guardKey) {
@@ -45,11 +31,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     setReloadFailed(false);
   }
 
-  // 守护页超时自动刷新：仅在真正加载中（user === null）时启动
-  // sessionStorage 限 2 次，防死循环；达到上限后切换到"加载失败"UI，提供手动重试入口
   React.useEffect(() => {
     if (!isGuarding) return;
-    // 未授权用户：等待跳转即可，不启动自动刷新（避免浪费刷新计数）
     if (!isLoading) return;
 
     const hintTimer = setTimeout(() => setShowReloadHint(true), 3000);
@@ -61,7 +44,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         sessionStorage.setItem("admin_layout_refreshes", String(refreshes + 1));
         window.location.reload();
       } else {
-        // 达到刷新上限，切换到"加载失败"UI
         setReloadFailed(true);
       }
     }, 5000);
@@ -72,11 +54,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     };
   }, [isGuarding, isLoading]);
 
-  // 清除刷新计数：
-  // - 进入 admin 成功态（!isGuarding）时立即清除（成功摆脱守护页即复位）
-  // - 组件卸载时（无论成功进入 admin 还是被跳转回成员端）也清除，
-  //   避免 member 用户访问 /admin 触发自动刷新后 sessionStorage 残留计数，
-  //   导致后续晋升为 admin 再访问时被误判为"多次刷新仍失败"
   React.useEffect(() => {
     if (!isGuarding && typeof window !== "undefined") {
       sessionStorage.removeItem("admin_layout_refreshes");
@@ -88,7 +65,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     };
   }, [isGuarding]);
 
-  // 手动重试：清除计数后重新加载
   const handleRetry = React.useCallback(() => {
     if (typeof window === "undefined") return;
     sessionStorage.removeItem("admin_layout_refreshes");
@@ -123,48 +99,58 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <>
-      <div className="flex-1 h-full px-4 pt-4 pb-20 overflow-hidden">{children}</div>
-      <nav className="fixed inset-x-0 bottom-0 z-20 flex justify-center bg-transparent pb-safe">
-        <div className="w-full max-w-md border-t border-border bg-surface/95 backdrop-blur">
-          <div className="flex items-center justify-around px-4 py-2">
-            {tabs.map((tab) => {
-              const Icon = tab.icon;
-              const active =
-                tab.href === "/admin"
-                  ? pathname === "/admin"
-                  : pathname === tab.href || pathname.startsWith(tab.href + "/");
+    <AdminPageHeaderProvider>
+      <div className="flex h-full flex-col">
+        {/* 顶部栏 */}
+        <AdminHeader />
 
-              return (
-                <Link
-                  key={tab.href}
-                  href={tab.href}
-                  // 关闭预取：避免预取兄弟路由 CSS 触发浏览器"preload 未被使用"警告
-                  prefetch={false}
-                  className="flex flex-1 flex-col items-center justify-center gap-1 text-xs"
-                >
-                  <div
-                    className={`flex items-center justify-center rounded-full p-1.5 ${
-                      active
-                        ? "bg-primary text-primary-foreground"
-                        : "text-text-muted hover:text-text"
-                    }`}
-                  >
-                    <Icon className="h-5 w-5" />
-                  </div>
-                  <span
-                    className={
-                      active ? "text-label font-medium text-text" : "text-label text-text-muted"
-                    }
-                  >
-                    {tab.label}
-                  </span>
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-      </nav>
-    </>
+        {/* 内容区 */}
+        <main className="flex-1 min-h-0 px-4 py-4 overflow-y-auto">{children}</main>
+      </div>
+    </AdminPageHeaderProvider>
+  );
+}
+
+function AdminHeader() {
+  const router = useRouter();
+  const { title, headerRight, onBack } = useAdminPageHeader();
+  const hasTitle = title.length > 0;
+
+  const handleBack = React.useCallback(() => {
+    if (onBack) {
+      onBack();
+    } else {
+      router.push("/admin");
+    }
+  }, [onBack, router]);
+
+  return (
+    <header className="flex items-center px-4 py-3 border-b border-border bg-surface/95 backdrop-blur sticky top-0 z-10">
+      {hasTitle && (
+        <button
+          type="button"
+          onClick={handleBack}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted hover:bg-border transition-colors"
+          aria-label="返回"
+        >
+          <ArrowLeft className="h-4 w-4 text-text" />
+        </button>
+      )}
+      {hasTitle && <h1 className="ml-2 text-lg font-semibold text-text">{title}</h1>}
+      <div className="ml-auto">
+        {hasTitle ? (
+          headerRight
+        ) : (
+          <button
+            type="button"
+            onClick={() => router.push("/admin/profile")}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted hover:bg-border transition-colors"
+            aria-label="设置"
+          >
+            <Gear className="h-4 w-4 text-text" />
+          </button>
+        )}
+      </div>
+    </header>
   );
 }

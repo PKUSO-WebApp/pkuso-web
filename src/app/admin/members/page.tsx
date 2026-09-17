@@ -20,6 +20,7 @@ import Link from "next/link";
 import { Settings, Upload, RefreshCw } from "lucide-react";
 import { AdminMemberDetailModal } from "./components/member-detail-modal";
 import { MemberImportModal } from "./components/member-import-modal";
+import { useAdminPageHeader } from "@/context/admin-page-header-context";
 
 type ViewMode = "attendance" | "roster";
 
@@ -56,34 +57,13 @@ const inOrchestraLabel = (v: boolean | null | undefined): string =>
   v === true ? "在团" : v === false ? "不在团" : "—";
 
 export default function MembersPage() {
+  const { setTitle, setHeaderRight } = useAdminPageHeader();
   const [currentView, setCurrentView] = React.useState<ViewMode>("attendance");
-
-  // 花名册
-  const {
-    data: allProfiles,
-    loading: rosterLoading,
-    error: rosterError,
-    update: updateProfile,
-  } = useProfiles({ status: "approved" });
-  const rosterRows = React.useMemo(
-    () => allProfiles.filter((r) => (r.role ?? "") !== "admin") as ProfileRow[],
-    [allProfiles],
-  );
-
-  // 搜索：优先声部匹配（支持中文/英文/别名），无匹配则回退拼音姓名搜索
-  const [searchQuery, setSearchQuery] = React.useState("");
-  const sectionMatch = React.useMemo(() => matchInstrumentSection(searchQuery), [searchQuery]);
-  const filteredRows = React.useMemo(() => {
-    if (sectionMatch) {
-      return rosterRows.filter((r) => sectionMatch.includes(r.instrument ?? ""));
-    }
-    return filterByName(rosterRows, searchQuery);
-  }, [rosterRows, searchQuery, sectionMatch]);
-
-  const grouped = React.useMemo(() => groupProfilesByInstrument(filteredRows), [filteredRows]);
+  const [showImportModal, setShowImportModal] = React.useState(false);
+  const [syncing, setSyncing] = React.useState(false);
 
   // 同步 profiles
-  const handleSyncProfiles = async () => {
+  const handleSyncProfiles = React.useCallback(async () => {
     if (
       !confirm(
         "确认要使用 member_info 数据同步所有已通过用户的 profile 吗？\n\n此操作会覆盖现有数据，但邮箱为空时不会覆盖已有邮箱。",
@@ -123,16 +103,66 @@ export default function MembersPage() {
     } finally {
       setSyncing(false);
     }
-  };
+  }, []);
+
+  React.useEffect(() => {
+    setTitle("成员");
+    setHeaderRight(
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setShowImportModal(true)}
+          className="flex items-center gap-1 rounded-lg bg-primary/10 px-2 py-1.5 text-xs text-primary hover:bg-primary/20"
+        >
+          <Upload className="h-4 w-4" />
+          导入数据
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleSyncProfiles()}
+          disabled={syncing}
+          className="flex items-center gap-1 rounded-lg bg-success/10 px-2 py-1.5 text-xs text-success hover:bg-success/20 disabled:opacity-50"
+        >
+          <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+          {syncing ? "同步中..." : "同步 Profiles"}
+        </button>
+        <Link
+          href="/admin/config/import"
+          className="flex items-center gap-1 rounded-lg bg-muted px-2 py-1.5 text-xs text-text-muted hover:bg-border"
+        >
+          <Settings className="h-4 w-4" />
+          导入配置
+        </Link>
+      </div>,
+    );
+  }, [setTitle, setHeaderRight, handleSyncProfiles, syncing]);
+
+  // 花名册
+  const {
+    data: allProfiles,
+    loading: rosterLoading,
+    error: rosterError,
+    update: updateProfile,
+  } = useProfiles({ status: "approved" });
+  const rosterRows = React.useMemo(
+    () => allProfiles.filter((r) => (r.role ?? "") !== "admin") as ProfileRow[],
+    [allProfiles],
+  );
+
+  // 搜索：优先声部匹配（支持中文/英文/别名），无匹配则回退拼音姓名搜索
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const sectionMatch = React.useMemo(() => matchInstrumentSection(searchQuery), [searchQuery]);
+  const filteredRows = React.useMemo(() => {
+    if (sectionMatch) {
+      return rosterRows.filter((r) => sectionMatch.includes(r.instrument ?? ""));
+    }
+    return filterByName(rosterRows, searchQuery);
+  }, [rosterRows, searchQuery, sectionMatch]);
+
+  const grouped = React.useMemo(() => groupProfilesByInstrument(filteredRows), [filteredRows]);
 
   // 成员详情弹窗：点击花名册成员打开（可编辑）
   const [selectedUser, setSelectedUser] = React.useState<ProfileRow | null>(null);
-
-  // 导入弹窗状态
-  const [showImportModal, setShowImportModal] = React.useState(false);
-
-  // 同步状态
-  const [syncing, setSyncing] = React.useState(false);
 
   // 考勤查看
   const { data: allRehearsals } = useRehearsals();
@@ -293,38 +323,6 @@ export default function MembersPage() {
     /* 根容器 flex 化（矮屏布局，审计批次 3）：头部固定；
        Issue #171：外层不再 overflow-y-auto（消除嵌套滚动），滚动下沉到内层列表（max-h） */
     <div className="flex h-full min-h-0 flex-col space-y-4 pb-2">
-      <header className="mt-1 flex items-start justify-between">
-        <div>
-          <h1 className="text-lg font-semibold text-text">成员</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowImportModal(true)}
-            className="flex items-center gap-1 rounded-lg bg-primary/10 px-2 py-1.5 text-xs text-primary hover:bg-primary/20"
-          >
-            <Upload className="h-4 w-4" />
-            导入数据
-          </button>
-          <button
-            type="button"
-            onClick={handleSyncProfiles}
-            disabled={syncing}
-            className="flex items-center gap-1 rounded-lg bg-success/10 px-2 py-1.5 text-xs text-success hover:bg-success/20 disabled:opacity-50"
-          >
-            <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "同步中..." : "同步 Profiles"}
-          </button>
-          <Link
-            href="/admin/config/import"
-            className="flex items-center gap-1 rounded-lg bg-muted px-2 py-1.5 text-xs text-text-muted hover:bg-border"
-          >
-            <Settings className="h-4 w-4" />
-            导入配置
-          </Link>
-        </div>
-      </header>
-
       <div className="flex-1 min-h-0 space-y-4">
         <Toggle
           options={["排练考勤", "全团成员"] as const}

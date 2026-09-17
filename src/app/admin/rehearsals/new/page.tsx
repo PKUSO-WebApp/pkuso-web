@@ -15,6 +15,7 @@ import {
 } from "@/components/create-rehearsal-form";
 import type { ProfileRow } from "@/types/database";
 import { formatLocalISO, getLocalDateString } from "@/lib/date-utils";
+import { useAdminPageHeader } from "@/context/admin-page-header-context";
 
 // 启用地理围栏时的默认签到点：北京大学新太阳学生中心（GCJ-02 坐标系）
 const DEFAULT_GEOFENCE_CENTER = { lat: 39.988842, lng: 116.311144 } as const;
@@ -34,10 +35,16 @@ const EMPTY_FORM: CreateFormState = {
 
 export default function AdminCreateRehearsalPage() {
   const router = useRouter();
+  const { setTitle, setOnBack } = useAdminPageHeader();
   const { create } = useRehearsals();
   const { batchInsert } = useAttendance();
   const { checkConflict } = useSchedule();
   const { data: allProfiles } = useProfiles({ status: "approved" });
+
+  React.useEffect(() => {
+    setTitle("发布排练日程");
+    setOnBack(() => router.back);
+  }, [setTitle, setOnBack, router]);
 
   const [form, setForm] = React.useState<CreateFormState>(EMPTY_FORM);
   const [submitting, setSubmitting] = React.useState(false);
@@ -189,20 +196,6 @@ export default function AdminCreateRehearsalPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col pb-safe">
-      <header className="mb-2 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => router.back()}
-          className="rounded-full px-2 py-1 text-lg text-text-muted hover:bg-muted"
-          aria-label="返回"
-        >
-          ‹
-        </button>
-        <div>
-          <h1 className="text-lg font-semibold text-text">发布排练日程</h1>
-        </div>
-      </header>
-
       <section className="flex-1 min-h-0 overflow-y-auto">
         <CreateRehearsalForm
           form={form}

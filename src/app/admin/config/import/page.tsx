@@ -1,9 +1,9 @@
 "use client";
 
 import React from "react";
-import { useRouter } from "next/navigation";
-import { ArrowLeft, Upload, Plus, Trash2, ListPlus } from "lucide-react";
+import { Upload, Plus, Trash2, ListPlus } from "lucide-react";
 import { resolveInstrumentName } from "@/constants/instrument-aliases";
+import { useAdminPageHeader } from "@/context/admin-page-header-context";
 
 /** 后端定义的可选字段 */
 const AVAILABLE_FIELDS = [
@@ -36,7 +36,7 @@ type InstrumentMapping = {
 };
 
 export default function ImportConfigPage() {
-  const router = useRouter();
+  const { setTitle } = useAdminPageHeader();
 
   // 字段映射状态
   const [fieldMappings, setFieldMappings] = React.useState<FieldMapping[]>([]);
@@ -267,22 +267,12 @@ export default function ImportConfigPage() {
     }
   };
 
+  React.useEffect(() => {
+    setTitle("导入配置");
+  }, [setTitle]);
+
   return (
     <div className="flex h-full min-h-0 flex-col space-y-4">
-      {/* 头部 */}
-      <header className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() => router.back()}
-          className="rounded-full bg-muted p-2 hover:bg-border"
-        >
-          <ArrowLeft className="h-5 w-5 text-text-muted" />
-        </button>
-        <div>
-          <h1 className="text-lg font-semibold text-text">导入配置</h1>
-        </div>
-      </header>
-
       {/* 内容区域 */}
       <div className="flex-1 min-h-0 overflow-y-auto space-y-6">
         {/* 步骤1：字段映射 */}

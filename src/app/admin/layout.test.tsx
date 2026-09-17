@@ -103,7 +103,7 @@ describe("AdminLayout", () => {
       expect(screen.queryByText("正在加载用户…")).not.toBeInTheDocument();
     });
 
-    it("admin 用户渲染 children 与底部 tab bar", () => {
+    it("admin 用户渲染 children 与顶部设置按钮", () => {
       setUser(adminUser);
       render(
         <AdminLayout>
@@ -111,9 +111,7 @@ describe("AdminLayout", () => {
         </AdminLayout>,
       );
       expect(screen.getByTestId("children-content")).toBeInTheDocument();
-      for (const label of ["控制台", "排练", "社区", "日程", "成员&考勤", "我的"]) {
-        expect(screen.getByText(label)).toBeInTheDocument();
-      }
+      expect(screen.getByRole("button", { name: "设置" })).toBeInTheDocument();
     });
   });
 

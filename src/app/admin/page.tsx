@@ -1,545 +1,133 @@
 "use client";
 
 import React from "react";
-import { Modal } from "@/components/ui/Modal";
-import { useProfiles } from "@/hooks/useProfiles";
-import { useAnnouncements } from "@/hooks/useAnnouncements";
-import type { AnnouncementRow } from "@/types/database";
-import { AnnouncementListModal } from "./components/announcement-list-modal";
-import { LeaveManagement } from "./components/leave-management";
-import { formatDateTimeInChina, formatLocalISO } from "@/lib/date-utils";
-import { isSyntheticEmail } from "@/lib/email-utils";
+import { useRouter, useSearchParams } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+import { FeatureCard } from "./components/FeatureCard";
+import {
+  UserCheck,
+  CalendarCheck,
+  Megaphone,
+  Music,
+  Calendar,
+  ClipboardList,
+  UsersRound,
+  MessagesSquare,
+  Key,
+  Bell,
+  MessageSquare,
+  Mail,
+  Upload,
+} from "lucide-react";
 
-export default function AdminPage() {
-  const {
-    data: pendingRows,
-    loading: pendingLoading,
-    saving: pendingSaving,
-    error: pendingError,
-    approve,
-    reject,
-    approveAll,
-    rejectAll,
-    fetch: refetchPending,
-  } = useProfiles({ status: "pending" });
-  const [approvingId, setApprovingId] = React.useState<string | null>(null);
-  const [rejectingId, setRejectingId] = React.useState<string | null>(null);
+interface FeatureItem {
+  title: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  badgeCount?: number;
+}
 
-  // 单个拒绝确认弹窗
-  const [rejectingSingleId, setRejectingSingleId] = React.useState<string | null>(null);
+export default function AdminHomePage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
-  // 批量操作确认弹窗
-  const [batchAction, setBatchAction] = React.useState<"approve" | "reject" | null>(null);
-  const [isBatchSubmitting, setIsBatchSubmitting] = React.useState(false);
-
-  const handleApprove = async (id: string) => {
-    if (approvingId === id) return;
-    setApprovingId(id);
-    const ok = await approve(id);
-    setApprovingId(null);
-    if (!ok) alert("审批失败");
-    else alert("已批准");
-  };
-
-  const handleReject = (id: string) => {
-    if (rejectingId === id || approvingId === id) return;
-    setRejectingSingleId(id);
-  };
-
-  const handleConfirmReject = async () => {
-    if (!rejectingSingleId) return;
-    const id = rejectingSingleId;
-    setRejectingId(id);
-    const ok = await reject(id);
-    setRejectingId(null);
-    setRejectingSingleId(null);
-    if (!ok) alert("拒绝失败");
-    else alert("已拒绝");
-  };
-
-  const handleBatchApprove = () => {
-    if (pendingRows.length === 0) return;
-    setBatchAction("approve");
-  };
-
-  const handleBatchReject = () => {
-    if (pendingRows.length === 0) return;
-    setBatchAction("reject");
-  };
-
-  const handleConfirmBatchAction = async () => {
-    if (isBatchSubmitting || !batchAction) return;
-    setIsBatchSubmitting(true);
-
-    try {
-      let ok = false;
-      if (batchAction === "approve") {
-        ok = await approveAll();
-      } else {
-        ok = await rejectAll();
+  // 兼容旧深链：/admin?tab=leave -> 重定向到 /admin/leave
+  React.useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab) {
+      const tabMap: Record<string, string> = {
+        approval: "/admin/approval",
+        leave: "/admin/leave",
+        announcement: "/admin/announcements",
+        rehearsals: "/admin/rehearsals",
+        schedule: "/admin/schedule",
+        members: "/admin/attendance",
+        community: "/admin/community",
+        profile: "/admin/profile",
+      };
+      const target = tabMap[tab];
+      if (target) {
+        router.replace(target);
       }
-      if (ok) {
-        setBatchAction(null);
-      }
-    } finally {
-      setIsBatchSubmitting(false);
     }
-  };
+  }, [searchParams, router]);
 
-  // 公告
-  const [title, setTitle] = React.useState("");
-  const [endDate, setEndDate] = React.useState("");
-  const [endTime, setEndTime] = React.useState("23:59");
-  const [body, setBody] = React.useState("");
-  const {
-    publish,
-    publishing,
-    allData,
-    loadingAll,
-    fetchAll,
-    deletingId,
-    updatingId,
-    remove,
-    update,
-    getActive,
-  } = useAnnouncements();
-  const publishingRef = React.useRef(false); // 同步 guard，阻断竞态窗口
-
-  // 提前结束被覆盖公告的确认弹窗
-  const [confirmEndOpen, setConfirmEndOpen] = React.useState(false);
-  const [overwriteTarget, setOverwriteTarget] = React.useState<AnnouncementRow | null>(null);
-  const [pendingPublish, setPendingPublish] = React.useState<{
-    title: string;
-    content: string;
-    end_time: string;
-  } | null>(null);
-  const confirmingRef = React.useRef(false);
-
-  const resetConfirm = () => {
-    setConfirmEndOpen(false);
-    setOverwriteTarget(null);
-    setPendingPublish(null);
-    confirmingRef.current = false;
-  };
-
-  const doPublish = async (titleText: string, contentText: string, end_time: string) => {
-    const ok = await publish(titleText, contentText, end_time);
-    if (!ok) {
-      alert("发布失败");
-      return false;
-    }
-    setTitle("");
-    setEndDate("");
-    setEndTime("23:59");
-    setBody("");
-    alert("公告已发布");
-    void fetchAll();
-    return true;
-  };
-
-  // 确认提前结束被覆盖公告：先把它结束时间改为现在，再发布新公告
-  const handleConfirmEnd = async () => {
-    if (confirmingRef.current || !overwriteTarget || !pendingPublish) return;
-    confirmingRef.current = true;
-    try {
-      const nowISO = formatLocalISO(new Date());
-      const okEnd = await update(
-        overwriteTarget.id,
-        overwriteTarget.title,
-        overwriteTarget.content,
-        nowISO,
-      );
-      if (!okEnd) {
-        alert("提前结束原公告失败");
-        resetConfirm();
-        return;
-      }
-      await doPublish(pendingPublish.title, pendingPublish.content, pendingPublish.end_time);
-      resetConfirm();
-    } finally {
-      confirmingRef.current = false;
-    }
-  };
-
-  const handlePublish = async (e: React.FormEvent) => {
-    e.preventDefault();
-    // 双重检查：ref 同步阻断，state 异步兜底
-    if (publishingRef.current || publishing) return;
-    const titleText = title.trim();
-    const contentText = body.trim();
-    if (!titleText) return alert("请输入公告标题");
-    if (!contentText) return alert("请输入公告内容");
-    if (!endDate) return alert("请选择结束日期");
-
-    publishingRef.current = true;
-    try {
-      const end_time = formatLocalISO(new Date(`${endDate}T${endTime || "23:59"}:00`));
-
-      // 同时仅允许一条有效公告：若已有未结束的公告，需先确认提前结束它
-      const active = await getActive();
-      if (active) {
-        setOverwriteTarget(active);
-        setPendingPublish({ title: titleText, content: contentText, end_time });
-        setConfirmEndOpen(true);
-        return;
-      }
-
-      await doPublish(titleText, contentText, end_time);
-    } finally {
-      publishingRef.current = false;
-    }
-  };
-
-  // 公告管理 Modal
-  const [showAnnouncementModal, setShowAnnouncementModal] = React.useState(false);
-
-  const handleOpenAnnouncementModal = () => {
-    setShowAnnouncementModal(true);
-    void fetchAll();
-  };
-
-  // 控制台功能 tab（Issue #150）：入团审批 / 请假审批 / 公告
-  const [activeTab, setActiveTab] = React.useState<"approval" | "leave" | "announcement">(
-    "approval",
-  );
-  // 请假待审批数由 LeaveManagement 内部实时上报（与列表同源，审批后自动递减）
+  const [pendingApprovalCount, setPendingApprovalCount] = React.useState(0);
   const [pendingLeaveCount, setPendingLeaveCount] = React.useState(0);
+  const [loadingBadges, setLoadingBadges] = React.useState(true);
 
-  // tab 定义：badgeCount > 0 时在标签右上角显示红点徽章（公告无待处理概念，恒为 0）
-  const tabs = [
-    { key: "approval", label: "入团审批", badgeCount: pendingRows.length },
-    { key: "leave", label: "请假审批", badgeCount: pendingLeaveCount },
-    { key: "announcement", label: "公告", badgeCount: 0 },
-  ] as const;
+  // 并行获取徽章计数
+  React.useEffect(() => {
+    let mounted = true;
+    async function fetchBadges() {
+      try {
+        const [{ count: approvalCount }, { count: leaveCount }] = await Promise.all([
+          supabase
+            .from("profiles")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "pending"),
+          supabase
+            .from("leave_requests")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "pending"),
+        ]);
+        if (mounted) {
+          setPendingApprovalCount(approvalCount ?? 0);
+          setPendingLeaveCount(leaveCount ?? 0);
+          setLoadingBadges(false);
+        }
+      } catch {
+        if (mounted) setLoadingBadges(false);
+      }
+    }
+    fetchBadges();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
-  const anySinglePending = approvingId !== null || rejectingId !== null;
-  const batchDisabled =
-    pendingLoading || pendingSaving || anySinglePending || pendingRows.length === 0;
+  const features: FeatureItem[] = [
+    {
+      title: "入团审批",
+      href: "/admin/approval",
+      icon: UserCheck,
+      badgeCount: pendingApprovalCount,
+    },
+    { title: "请假审批", href: "/admin/leave", icon: CalendarCheck, badgeCount: pendingLeaveCount },
+    { title: "公告管理", href: "/admin/announcements", icon: Megaphone },
+    { title: "排练管理", href: "/admin/rehearsals", icon: Music },
+    { title: "排练房预约", href: "/admin/schedule", icon: Calendar },
+    { title: "考勤管理", href: "/admin/attendance", icon: ClipboardList },
+    { title: "成员花名册", href: "/admin/roster", icon: UsersRound },
+    { title: "社区管理", href: "/admin/community", icon: MessagesSquare },
+    { title: "邀请码管理", href: "/admin/invitation-codes", icon: Key },
+    { title: "系统通知", href: "/admin/system-notify", icon: Bell },
+    { title: "反馈查看", href: "/admin/feedback", icon: MessageSquare },
+    { title: "邮件签名", href: "/admin/email-signature", icon: Mail },
+    { title: "数据导入", href: "/admin/config/import", icon: Upload },
+  ];
 
   return (
-    /* 根容器 flex 化（矮屏布局，审计批次 3）：头部固定，下方内容区整体独立滚动 */
     <div className="flex h-full min-h-0 flex-col space-y-4">
-      <h1 className="text-lg font-semibold text-text">管理员控制台</h1>
-
-      {/* 内容区（tab 栏 + 三个面板）：flex-1 占满剩余高度，矮屏下整体滚动 */}
-      <div className="flex-1 min-h-0 space-y-4 overflow-y-auto">
-        {/* 功能 tab 栏（视觉与 Toggle 一致；自绘以便嵌入右上角红点徽章） */}
-        <div
-          className="flex rounded-full bg-muted p-1 text-xs"
-          role="tablist"
-          aria-label="控制台功能切换"
-        >
-          {tabs.map((t) => {
-            const active = activeTab === t.key;
-            // 待处理数红点：>0 才显示；超过 99 截断为 "99+"，避免徽章过宽
-            const badge =
-              t.badgeCount > 0 ? (t.badgeCount > 99 ? "99+" : String(t.badgeCount)) : null;
-            return (
-              <button
-                key={t.key}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setActiveTab(t.key)}
-                className={`relative flex-1 rounded-full px-3 py-1 text-center transition-colors ${
-                  active
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-text-muted hover:text-text"
-                }`}
-              >
-                {t.label}
-                {badge && (
-                  <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-caption font-medium text-danger-foreground">
-                    {badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+      {loadingBadges && (
+        <div className="mb-2 flex h-8 items-center justify-center text-xs text-text-subtle">
+          加载徽章计数…
         </div>
+      )}
 
-        {/* 入团审批 */}
-        <section
-          className={`rounded-2xl border border-border bg-card p-4 ${
-            activeTab === "approval" ? "" : "hidden"
-          }`}
-        >
-          {pendingError && (
-            <div className="mb-3 rounded-xl bg-danger-bg px-3 py-2 text-sm text-danger">
-              {pendingError}
-            </div>
-          )}
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-text">
-              入团审批 · 待处理（{pendingRows.length}）
-            </h2>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={handleBatchApprove}
-                disabled={batchDisabled || isBatchSubmitting}
-                className="rounded-full bg-success-bg px-2 py-1 text-label font-medium text-success hover:opacity-90 disabled:opacity-60"
-              >
-                全部批准
-              </button>
-              <button
-                type="button"
-                onClick={handleBatchReject}
-                disabled={batchDisabled || isBatchSubmitting}
-                className="rounded-full bg-danger-bg px-2 py-1 text-label font-medium text-danger hover:opacity-90 disabled:opacity-60"
-              >
-                全部拒绝
-              </button>
-              <button
-                type="button"
-                onClick={() => refetchPending()}
-                disabled={pendingLoading}
-                className="rounded-full px-2 py-1 text-label text-text-muted hover:bg-border disabled:opacity-60"
-              >
-                刷新
-              </button>
-            </div>
-          </div>
-
-          {pendingLoading ? (
-            <p className="py-4 text-center text-xs text-text-subtle">加载中…</p>
-          ) : pendingRows.length === 0 ? (
-            <p className="py-4 text-center text-xs text-text-muted">暂无待审批用户</p>
-          ) : (
-            <div className="max-h-[400px] space-y-2 overflow-y-auto">
-              {pendingRows.map((r) => (
-                <div
-                  key={r.id}
-                  className="flex items-start justify-between gap-3 rounded-xl border border-border bg-surface px-3 py-2"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-text">{r.full_name || "未填写"}</p>
-                    <p className="mt-0.5 text-xs text-text-muted">{r.instrument || "未选声部"}</p>
-                    <p className="mt-0.5 text-xs text-text-muted">
-                      {isSyntheticEmail(r.email) ? "—" : r.email || "—"}
-                    </p>
-                    <p className="mt-0.5 text-caption text-text-subtle">
-                      注册：{formatDateTimeInChina(r.created_at)}
-                    </p>
-                  </div>
-                  <div className="flex gap-1">
-                    <button
-                      type="button"
-                      onClick={() => handleApprove(r.id)}
-                      disabled={
-                        approvingId === r.id ||
-                        rejectingId === r.id ||
-                        isBatchSubmitting ||
-                        batchAction !== null
-                      }
-                      className="shrink-0 rounded-full bg-success px-3 py-1.5 text-label font-medium text-success-foreground hover:opacity-90 disabled:opacity-60"
-                    >
-                      {approvingId === r.id ? "处理中…" : "✅ 批准"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleReject(r.id)}
-                      disabled={
-                        rejectingId === r.id ||
-                        approvingId === r.id ||
-                        isBatchSubmitting ||
-                        batchAction !== null
-                      }
-                      className="shrink-0 rounded-full bg-danger px-3 py-1.5 text-label font-medium text-danger-foreground hover:opacity-90 disabled:opacity-60"
-                    >
-                      {rejectingId === r.id ? "处理中…" : "❌ 拒绝"}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* 请假审批（Issue #142）；全部渲染 + hidden 切换以保留内部状态（hook 数据不随卸载重取） */}
-        <div className={activeTab === "leave" ? "" : "hidden"}>
-          <LeaveManagement onPendingCountChange={setPendingLeaveCount} />
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="grid grid-cols-2 gap-3">
+          {features.map((f) => (
+            <FeatureCard
+              key={f.href}
+              title={f.title}
+              href={f.href}
+              icon={f.icon}
+              badgeCount={f.badgeCount}
+            />
+          ))}
         </div>
-
-        {/* 发布公告 */}
-        <section
-          className={`rounded-2xl border border-border bg-card p-4 ${
-            activeTab === "announcement" ? "" : "hidden"
-          }`}
-        >
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-text">发布全团公告</h2>
-            <button
-              type="button"
-              onClick={handleOpenAnnouncementModal}
-              className="rounded-full px-3 py-1 text-label text-text-muted hover:bg-border"
-            >
-              管理公告
-            </button>
-          </div>
-          <form onSubmit={handlePublish} className="space-y-3">
-            <div className="space-y-1">
-              <label className="block text-label font-medium text-text-muted">标题</label>
-              <input
-                type="text"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
-                placeholder="如：新学期排练安排"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-label font-medium text-text-muted">结束时间</label>
-              <div className="flex gap-2">
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
-                />
-                <input
-                  type="time"
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  className="w-28 rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-label font-medium text-text-muted">内容</label>
-              <textarea
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                rows={6}
-                className="input max-h-[400px] overflow-y-auto leading-[1.5] p-3"
-                placeholder="输入公告内容…"
-                style={{ minHeight: "120px" }}
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={publishing}
-              className="w-full rounded-xl bg-primary py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
-            >
-              {publishing ? "发布中…" : "发布"}
-            </button>
-          </form>
-        </section>
       </div>
-
-      {/* 公告管理 Modal */}
-      <AnnouncementListModal
-        open={showAnnouncementModal}
-        onClose={() => setShowAnnouncementModal(false)}
-        announcements={allData}
-        loading={loadingAll}
-        deletingId={deletingId}
-        updatingId={updatingId}
-        onDelete={remove}
-        onUpdate={update}
-      />
-
-      {/* 单个拒绝确认弹窗 */}
-      <Modal
-        open={!!rejectingSingleId}
-        onClose={() => {
-          if (rejectingId === null) setRejectingSingleId(null);
-        }}
-        position="bottom"
-        closeOnOverlay={rejectingId === null}
-      >
-        <h3 className="text-base font-semibold text-text">确认拒绝</h3>
-        <p className="mt-2 text-sm text-text-muted">
-          确定要拒绝该用户的入团申请吗？此操作不可撤销。
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            disabled={rejectingId !== null}
-            onClick={() => setRejectingSingleId(null)}
-            className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted disabled:opacity-60"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            disabled={rejectingId !== null}
-            onClick={handleConfirmReject}
-            className="rounded-full bg-danger px-4 py-2 text-xs font-medium text-danger-foreground hover:opacity-90 disabled:opacity-60"
-          >
-            {rejectingId !== null ? "处理中…" : "确认拒绝"}
-          </button>
-        </div>
-      </Modal>
-
-      {/* 批量操作确认弹窗 */}
-      <Modal
-        open={!!batchAction}
-        onClose={() => {
-          if (!isBatchSubmitting) setBatchAction(null);
-        }}
-        position="bottom"
-        closeOnOverlay={!isBatchSubmitting}
-      >
-        <h3 className="text-base font-semibold text-text">
-          {batchAction === "approve" ? "确认全部批准" : "确认全部拒绝"}
-        </h3>
-        <p className="mt-2 text-sm text-text-muted">
-          {batchAction === "approve"
-            ? `确定要批准全部 ${pendingRows.length} 位待审批用户吗？`
-            : `确定要拒绝全部 ${pendingRows.length} 位待审批用户吗？此操作不可撤销。`}
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            disabled={isBatchSubmitting}
-            onClick={() => setBatchAction(null)}
-            className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted disabled:opacity-60"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            disabled={isBatchSubmitting}
-            onClick={handleConfirmBatchAction}
-            className={`rounded-full px-4 py-2 text-xs font-medium hover:opacity-90 disabled:opacity-60 ${
-              batchAction === "approve"
-                ? "bg-success text-success-foreground"
-                : "bg-danger text-danger-foreground"
-            }`}
-          >
-            {isBatchSubmitting ? "处理中…" : "确认"}
-          </button>
-        </div>
-      </Modal>
-
-      {/* 提前结束被覆盖公告确认弹窗 */}
-      <Modal open={confirmEndOpen} onClose={resetConfirm} position="bottom" closeOnOverlay>
-        <h3 className="text-base font-semibold text-text">提前结束公告</h3>
-        <p className="mt-2 text-sm text-text-muted">
-          是否要提前结束公告「{overwriteTarget?.title}」？
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={resetConfirm}
-            className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-text-muted hover:bg-muted"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            disabled={publishing}
-            onClick={handleConfirmEnd}
-            className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
-          >
-            确认
-          </button>
-        </div>
-      </Modal>
     </div>
   );
 }

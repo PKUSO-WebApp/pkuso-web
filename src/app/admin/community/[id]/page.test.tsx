@@ -5,6 +5,7 @@ import React from "react";
 import AdminPostDetailPage from "./page";
 import { usePosts } from "@/hooks/usePosts";
 import { formatDateTimeInChina } from "@/lib/date-utils";
+import { AdminPageHeaderProvider } from "@/context/admin-page-header-context";
 
 const mocks = vi.hoisted(() => {
   const insert = vi.fn().mockResolvedValue({ error: null });
@@ -92,7 +93,11 @@ function renderDetail(
     remove,
     uploadImage: vi.fn(),
   }));
-  render(<AdminPostDetailPage />);
+  render(
+    <AdminPageHeaderProvider>
+      <AdminPostDetailPage />
+    </AdminPageHeaderProvider>,
+  );
   return { update, remove };
 }
 
@@ -294,7 +299,11 @@ describe("AdminPostDetailPage 公告详情（Issue #179：Modal→页面）", ()
       remove: vi.fn(),
       uploadImage: vi.fn(),
     }));
-    render(<AdminPostDetailPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <AdminPostDetailPage />
+      </AdminPageHeaderProvider>,
+    );
     expect(screen.getByText("未找到该公告")).toBeTruthy();
     expect(mockUsePosts).toHaveBeenCalledWith({
       includeLocked: true,

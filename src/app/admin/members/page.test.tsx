@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import MembersPage from "./page";
 import type { ProfileRow } from "@/types/database";
+import { AdminPageHeaderProvider } from "@/context/admin-page-header-context";
 
 // 固定测试时区为 UTC+8：旧实现 parseLocalISO(...).toISOString().slice(0,10) 在
 // UTC+8 下会把凌晨的日期退回前一天（导出文件名/sheet 名日期偏移一天的回归）。
@@ -235,7 +236,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   // 验收标准 1: 排练列表展示（曲目/时间/地点）
   // ==========================================
   it("考勤 tab 默认展示排练列表（曲目/时间/地点）", () => {
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     expect(screen.getByText("贝多芬第五交响曲")).toBeInTheDocument();
     expect(screen.getByText("莫扎特协奏曲")).toBeInTheDocument();
     expect(screen.getByText("2026-08-20 · 19:00 - 21:00")).toBeInTheDocument();
@@ -244,7 +249,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   });
 
   it("根容器 flex 化（矮屏布局）：头部固定、外层无嵌套滚动（审计批次 3 + Issue #171）", () => {
-    const { container } = render(<MembersPage />);
+    const { container } = render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain("h-full");
     expect(root.className).toContain("flex-col");
@@ -262,7 +271,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   // 验收标准 2: 点击排练行打开考勤弹窗
   // ==========================================
   it("点击排练行打开该排练的考勤弹窗（可编辑）", async () => {
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("贝多芬第五交响曲"));
 
     await waitFor(() => {
@@ -287,7 +300,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   // 验收标准 3: 考勤编辑保存
   // ==========================================
   it("修改成员状态后点击保存，调用 updateStatus 并刷新名单", async () => {
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("贝多芬第五交响曲"));
     await waitFor(() => {
       expect(screen.getByText("出勤名单")).toBeInTheDocument();
@@ -306,7 +323,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   });
 
   it("保存考勤修改成功 → 向该成员插 attendance 通知（文案含排练曲目与状态中文名）", async () => {
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("贝多芬第五交响曲"));
     await waitFor(() => {
       expect(screen.getByText("出勤名单")).toBeInTheDocument();
@@ -328,7 +349,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
 
   it("考勤更新失败时不插通知（best-effort 只在成功后发）", async () => {
     mocks.mockUpdateStatus.mockResolvedValueOnce("update failed");
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("贝多芬第五交响曲"));
     await waitFor(() => {
       expect(screen.getByText("出勤名单")).toBeInTheDocument();
@@ -350,7 +375,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   it("updateStatus 0 行（考勤行被级联删除/RLS 静默失败）→ 视为失败不插通知", async () => {
     // 0 行无 error 的假成功：updateStatus 返回错误语义（useAttendance.updateStatus .select("id") 检测）
     mocks.mockUpdateStatus.mockResolvedValueOnce("考勤行不存在或已被删除，更新未生效");
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("贝多芬第五交响曲"));
     await waitFor(() => {
       expect(screen.getByText("出勤名单")).toBeInTheDocument();
@@ -369,7 +398,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   });
 
   it("改回原值（present→absent 原值）保存：不调用 updateStatus、不插通知", async () => {
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("贝多芬第五交响曲"));
     await waitFor(() => {
       expect(screen.getByText("出勤名单")).toBeInTheDocument();
@@ -389,7 +422,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   });
 
   it("无改动时点击保存不调用 updateStatus", async () => {
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("贝多芬第五交响曲"));
     await waitFor(() => {
       expect(screen.getByText("出勤名单")).toBeInTheDocument();
@@ -405,7 +442,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   // 验收标准 4: 导出按钮不触发行处理器
   // ==========================================
   it("点击导出按钮不打开考勤弹窗", async () => {
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getAllByText("📥 导出")[0]);
 
     await waitFor(() => {
@@ -419,7 +460,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   // 验收标准 4b: 键盘操作导出按钮不被行处理器劫持（返工回归）
   // ==========================================
   it("键盘 Enter 操作导出按钮不打开考勤弹窗，且正常触发导出", async () => {
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     const exportBtn = screen.getAllByText("📥 导出")[0];
     exportBtn.focus();
     // 真实浏览器中聚焦 button 后按 Enter 会合成原生 click；jsdom 不自动合成，需手动补发
@@ -439,7 +484,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   // 验收标准 5: 关闭后再次点击其他排练行
   // ==========================================
   it("关闭弹窗后点击另一排练行，按新排练 id 拉取名单", async () => {
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("贝多芬第五交响曲"));
     await waitFor(() => {
       expect(screen.getByText("出勤名单")).toBeInTheDocument();
@@ -461,7 +510,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   // 验收标准 6: 语义 Token
   // ==========================================
   it("布局使用语义 Token，不硬编码 zinc 颜色", () => {
-    const { container } = render(<MembersPage />);
+    const { container } = render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     const html = container.innerHTML;
     expect(html).toContain("bg-card");
     expect(html).toContain("border-border");
@@ -474,7 +527,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   // Issue #169: 导出全部考勤在微信浏览器无效
   // ==========================================
   it("导出全部：一次 .in 查询拉取全部考勤，不逐场 .eq 查询", async () => {
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
 
     await waitFor(() => {
@@ -498,7 +555,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     mocks.mockRehearsals.splice(0, mocks.mockRehearsals.length);
 
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("📥 导出区间全部考勤（0 场排练）"));
 
     await waitFor(() => {
@@ -515,7 +576,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
       resolve({ data: [], error: null }),
     );
 
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
 
     await waitFor(() => {
@@ -531,7 +596,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
       reject(new Error("网络中断")),
     );
 
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
 
     await waitFor(() => {
@@ -545,7 +614,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   // Issue #193：导出姓名/邮箱改由 profiles_roster 补查（原 join embed 因视图无 FK 失效）
   // ==========================================
   it("导出单场：姓名/邮箱来自 profiles_roster 补查（admin 经视图拿原值）", async () => {
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getAllByText("📥 导出")[0]);
 
     await waitFor(() => {
@@ -559,7 +632,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   });
 
   it("导出全部：每行姓名/邮箱均来自 profiles_roster 补查，无补查记录显示 —", async () => {
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
 
     await waitFor(() => {
@@ -584,7 +661,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
       reject(new Error("网络中断")),
     );
 
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getAllByText("📥 导出")[0]);
 
     await waitFor(() => {
@@ -615,7 +696,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
       },
     );
 
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
 
     await waitFor(() => {
@@ -638,7 +723,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
       location: "新太阳活动中心",
     });
 
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getAllByText("📥 导出")[0]);
 
     await waitFor(() => {
@@ -669,7 +758,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
       },
     );
 
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
 
     await waitFor(() => {
@@ -680,7 +773,11 @@ describe("AdminMembersPage 组件（排练考勤 tab）", () => {
   });
 
   it("导出全部：文件名区间日期使用本地日期（选中日期筛选后不偏移）", async () => {
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     const dateInputs = screen.getAllByPlaceholderText("选择日期");
     fireEvent.change(dateInputs[0], { target: { value: "2026-08-20" } });
     fireEvent.change(dateInputs[1], { target: { value: "2026-08-21" } });
@@ -735,7 +832,11 @@ describe("AdminMembersPage 花名册 tab（在团情况后缀）", () => {
 
   it("在团成员：入团时间后缀「团员」", () => {
     mocks.profiles.push(makeProfile({ is_in_orchestra: true }));
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByRole("button", { name: "全团成员" }));
     expect(screen.getByText(/入团时间：2024-09-01 团员/)).toBeInTheDocument();
   });
@@ -744,14 +845,22 @@ describe("AdminMembersPage 花名册 tab（在团情况后缀）", () => {
     mocks.profiles.push(
       makeProfile({ id: "m2", full_name: "李四", is_in_orchestra: false, join_date: "2022秋" }),
     );
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByRole("button", { name: "全团成员" }));
     expect(screen.getByText(/入团时间：2022秋 团友/)).toBeInTheDocument();
   });
 
   it("未设置（NULL）：无后缀", () => {
     mocks.profiles.push(makeProfile({ id: "m3", full_name: "王五", is_in_orchestra: null }));
-    render(<MembersPage />);
+    render(
+      <AdminPageHeaderProvider>
+        <MembersPage />
+      </AdminPageHeaderProvider>,
+    );
     fireEvent.click(screen.getByRole("button", { name: "全团成员" }));
     const line = screen.getByText(/入团时间：2024-09-01/);
     expect(line.textContent).not.toContain("团员");

@@ -42,7 +42,7 @@ export default function AdminEditRehearsalPage() {
 
   React.useEffect(() => {
     setTitle("编辑排练日程");
-    setOnBack(() => router.back);
+    setOnBack(router.back);
   }, [setTitle, setOnBack, router]);
 
   const item = React.useMemo(() => schedules?.find((r) => r.id === id) ?? null, [schedules, id]);

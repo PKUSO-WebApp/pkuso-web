@@ -17,7 +17,7 @@ export default function AdminRehearsalDetailPage() {
 
   React.useEffect(() => {
     setTitle("排练详情");
-    setOnBack(() => router.back);
+    setOnBack(router.back);
   }, [setTitle, setOnBack, router]);
 
   const item = React.useMemo<RehearsalRow | null>(

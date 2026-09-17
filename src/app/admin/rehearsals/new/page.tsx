@@ -43,7 +43,7 @@ export default function AdminCreateRehearsalPage() {
 
   React.useEffect(() => {
     setTitle("发布排练日程");
-    setOnBack(() => router.back);
+    setOnBack(router.back);
   }, [setTitle, setOnBack, router]);
 
   const [form, setForm] = React.useState<CreateFormState>(EMPTY_FORM);

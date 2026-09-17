@@ -51,7 +51,7 @@ export default function AdminPostDetailPage() {
 
   React.useEffect(() => {
     setTitle("公告详情");
-    setOnBack(() => router.back);
+    setOnBack(router.back);
   }, [setTitle, setOnBack, router]);
 
   // normalize Supabase join profiles（与列表页一致）

@@ -16,7 +16,7 @@ export default function ProfilePage() {
 
   React.useEffect(() => {
     setTitle("设置");
-    setOnBack(() => router.back);
+    setOnBack(router.back);
   }, [setTitle, setOnBack, router]);
 
   const [isPwdModalOpen, setIsPwdModalOpen] = React.useState(false);

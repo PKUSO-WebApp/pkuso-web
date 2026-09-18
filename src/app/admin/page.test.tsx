@@ -5,6 +5,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import AdminHomePage from "./page";
 import { supabase } from "@/lib/supabase";
 import { useSearchParams } from "next/navigation";
+import { AdminPageHeaderProvider } from "@/context/admin-page-header-context";
 
 // ---- Mock supabase ----
 vi.mock("@/lib/supabase", () => ({
@@ -51,7 +52,11 @@ describe("AdminHomePage", () => {
   });
 
   it("渲染 13 个功能卡片网格", () => {
-    render(<AdminHomePage />);
+    render(
+      <AdminPageHeaderProvider>
+        <AdminHomePage />
+      </AdminPageHeaderProvider>,
+    );
 
     // Check all 13 cards are present
     const cards = [
@@ -82,7 +87,11 @@ describe("AdminHomePage", () => {
       })),
     });
 
-    render(<AdminHomePage />);
+    render(
+      <AdminPageHeaderProvider>
+        <AdminHomePage />
+      </AdminPageHeaderProvider>,
+    );
 
     await waitFor(() => {
       const approvalCard = screen.getByRole("link", { name: /入团审批/ });
@@ -97,7 +106,11 @@ describe("AdminHomePage", () => {
       })),
     });
 
-    render(<AdminHomePage />);
+    render(
+      <AdminPageHeaderProvider>
+        <AdminHomePage />
+      </AdminPageHeaderProvider>,
+    );
 
     await waitFor(() => {
       const leaveCard = screen.getByRole("link", { name: /请假审批/ });
@@ -112,7 +125,11 @@ describe("AdminHomePage", () => {
       })),
     });
 
-    render(<AdminHomePage />);
+    render(
+      <AdminPageHeaderProvider>
+        <AdminHomePage />
+      </AdminPageHeaderProvider>,
+    );
 
     await waitFor(() => {
       const approvalCard = screen.getByRole("link", { name: /入团审批/ });
@@ -124,7 +141,11 @@ describe("AdminHomePage", () => {
     const mockSearchParamsWithTab = { get: vi.fn().mockReturnValue("leave") };
     (useSearchParams as unknown as Mock).mockReturnValue(mockSearchParamsWithTab);
 
-    render(<AdminHomePage />);
+    render(
+      <AdminPageHeaderProvider>
+        <AdminHomePage />
+      </AdminPageHeaderProvider>,
+    );
 
     expect(mockReplace).toHaveBeenCalledWith("/admin/leave");
   });
@@ -133,7 +154,11 @@ describe("AdminHomePage", () => {
     const mockSearchParamsWithTab = { get: vi.fn().mockReturnValue("approval") };
     (useSearchParams as unknown as Mock).mockReturnValue(mockSearchParamsWithTab);
 
-    render(<AdminHomePage />);
+    render(
+      <AdminPageHeaderProvider>
+        <AdminHomePage />
+      </AdminPageHeaderProvider>,
+    );
 
     expect(mockReplace).toHaveBeenCalledWith("/admin/approval");
   });
@@ -142,7 +167,11 @@ describe("AdminHomePage", () => {
     const mockSearchParamsWithTab = { get: vi.fn().mockReturnValue("rehearsals") };
     (useSearchParams as unknown as Mock).mockReturnValue(mockSearchParamsWithTab);
 
-    render(<AdminHomePage />);
+    render(
+      <AdminPageHeaderProvider>
+        <AdminHomePage />
+      </AdminPageHeaderProvider>,
+    );
 
     expect(mockReplace).toHaveBeenCalledWith("/admin/rehearsals");
   });
@@ -151,7 +180,11 @@ describe("AdminHomePage", () => {
     const mockSearchParamsNoTab = { get: vi.fn().mockReturnValue(null) };
     (useSearchParams as unknown as Mock).mockReturnValue(mockSearchParamsNoTab);
 
-    render(<AdminHomePage />);
+    render(
+      <AdminPageHeaderProvider>
+        <AdminHomePage />
+      </AdminPageHeaderProvider>,
+    );
 
     expect(mockReplace).not.toHaveBeenCalled();
   });
@@ -163,7 +196,11 @@ describe("AdminHomePage", () => {
       })),
     });
 
-    const { container } = render(<AdminHomePage />);
+    const { container } = render(
+      <AdminPageHeaderProvider>
+        <AdminHomePage />
+      </AdminPageHeaderProvider>,
+    );
     const grid = container.querySelector(".grid-cols-2");
     expect(grid).not.toBeNull();
   });

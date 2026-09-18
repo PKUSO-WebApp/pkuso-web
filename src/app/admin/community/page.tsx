@@ -7,6 +7,7 @@ import { Toggle } from "@/components/ui/Toggle";
 import { Card } from "@/components/ui/Card";
 import { formatDateTimeInChina } from "@/lib/date-utils";
 import type { PostType, PostRow } from "@/types/database";
+import { useAdminPageHeader } from "@/context/admin-page-header-context";
 
 const TYPE_LABEL: Record<PostType, string> = {
   ensemble: "重奏",
@@ -15,7 +16,12 @@ const TYPE_LABEL: Record<PostType, string> = {
 
 export default function AdminCommunityPage() {
   const router = useRouter();
+  const { setTitle } = useAdminPageHeader();
   const { data: rawPosts, loading } = usePosts({ includeLocked: true, excludeUserLocked: true });
+
+  React.useEffect(() => {
+    setTitle("社区管理");
+  }, [setTitle]);
 
   // normalize Supabase join profiles
   const posts = React.useMemo(() => {
@@ -40,10 +46,6 @@ export default function AdminCommunityPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col space-y-4">
-      <header className="mb-2">
-        <h1 className="text-lg font-semibold text-text">社区管理</h1>
-      </header>
-
       <Toggle
         options={["ensemble", "gathering"] as const}
         value={view}

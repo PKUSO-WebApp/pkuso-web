@@ -13,6 +13,7 @@ import {
 } from "./components/create-schedule-modal";
 import { Modal } from "@/components/ui/Modal";
 import { getLocalDateString, parseLocalISO, formatDisplayDate } from "@/lib/date-utils";
+import { useAdminPageHeader } from "@/context/admin-page-header-context";
 
 function generateWeeklyDates(
   startDate: string,
@@ -101,6 +102,7 @@ type PendingSubmitData = {
 export default function AdminSchedulePage() {
   const { data: schedules, loading, fetch, checkConflict, remove } = useSchedule();
   const { user } = useUser();
+  const { setTitle, setHeaderRight } = useAdminPageHeader();
   const [selectedDate, setSelectedDate] = React.useState<string>(getLocalDateString());
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
@@ -112,6 +114,22 @@ export default function AdminSchedulePage() {
   const [pendingData, setPendingData] = React.useState<PendingSubmitData | null>(null);
   // 甘特图放大状态
   const [isGanttExpanded, setIsGanttExpanded] = React.useState(false);
+
+  // 页顶标题与操作按钮
+  React.useEffect(() => {
+    setTitle("日程管理");
+    setHeaderRight(
+      !isGanttExpanded ? (
+        <button
+          type="button"
+          onClick={() => setIsModalOpen(true)}
+          className="rounded-full bg-primary px-3 py-1 text-label font-medium text-primary-foreground shadow-sm hover:opacity-90"
+        >
+          添加预约
+        </button>
+      ) : null,
+    );
+  }, [setTitle, setHeaderRight, isGanttExpanded]);
 
   const currentYear = new Date().getFullYear();
   const [form, setForm] = React.useState<CreateScheduleFormState>({
@@ -370,17 +388,11 @@ export default function AdminSchedulePage() {
 
   return (
     <div className="flex flex-col h-full max-w-md mx-auto w-full pb-safe overflow-hidden">
-      {/* 正常模式：显示标题、日期选择器、添加预约按钮 */}
+      {/* 正常模式：显示日期选择器 */}
       {!isGanttExpanded && (
-        <>
-          <div className="mt-4 mb-4">
-            <h1 className="text-lg font-semibold text-text">日程管理</h1>
-          </div>
-
-          <div className="mb-4">
-            <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
-          </div>
-        </>
+        <div className="mb-4">
+          <DateSelector selectedDate={selectedDate} onDateChange={setSelectedDate} />
+        </div>
       )}
 
       {/* 甘特图标题栏：放大/缩小按钮 */}
@@ -390,23 +402,13 @@ export default function AdminSchedulePage() {
             ? formatDisplayDate(selectedDate) + " 预约"
             : formatDisplayDate(selectedDate)}
         </h2>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setIsGanttExpanded(!isGanttExpanded)}
-            className="rounded-full bg-muted px-3 py-2 text-sm font-medium text-text-muted hover:bg-border transition-colors"
-            title={isGanttExpanded ? "缩小" : "放大"}
-          >
-            {isGanttExpanded ? <Minimize2 className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
-          </button>
-          {!isGanttExpanded && (
-            <button
-              onClick={() => setIsModalOpen(true)}
-              className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
-            >
-              添加预约
-            </button>
-          )}
-        </div>
+        <button
+          onClick={() => setIsGanttExpanded(!isGanttExpanded)}
+          className="rounded-full bg-muted px-3 py-2 text-sm font-medium text-text-muted hover:bg-border transition-colors"
+          title={isGanttExpanded ? "缩小" : "放大"}
+        >
+          {isGanttExpanded ? <Minimize2 className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
+        </button>
       </div>
 
       <div className="flex-1 min-h-0 mb-4 overflow-y-auto rounded-xl border border-border bg-card">

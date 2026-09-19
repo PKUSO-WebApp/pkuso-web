@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { screen, cleanup, fireEvent } from "@testing-library/react";
 import AdminRehearsalsPage from "./page";
 import type { RehearsalRow } from "@/types/database";
 import { parseLocalISO, formatLocalISO } from "@/lib/date-utils";
-import { AdminPageHeaderProvider } from "@/context/admin-page-header-context";
+import { renderWithProviders } from "@/__tests__/render-with-providers";
 
 /** 构造排练行（本地时间 ISO；fake timers 固定 now，硬编码日期安全）；startISO 为 null 时无时间 */
 function makeRehearsal(
@@ -150,11 +150,7 @@ describe("AdminRehearsalsPage 排序与历史合排 tab（Issue #171）", () => 
       makeRehearsal(2, "2026-08-16T20:00:00", "明天排练"), // 最近一次，保持第一位
       makeRehearsal(4, "2026-08-15T14:00:00", "下午排练"), // 已结束 5 小时前
     ]);
-    render(
-      <AdminPageHeaderProvider>
-        <AdminRehearsalsPage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<AdminRehearsalsPage />);
 
     const rendered = screen
       .getAllByText(/(明天|更新过的|下午|上午)排练/)
@@ -171,7 +167,7 @@ describe("AdminRehearsalsPage 排序与历史合排 tab（Issue #171）", () => 
       makeRehearsal(3, "2026-08-16T20:00:00", "未结束合排"),
       makeRehearsal(4, "2026-08-14T08:00:00", "已结束分排", { type: "section" }),
     ]);
-    const { container } = render(<AdminRehearsalsPage />);
+    const { container } = renderWithProviders(<AdminRehearsalsPage />);
     fireEvent.click(screen.getByRole("button", { name: "历史合排" }));
 
     const rendered = screen.getAllByText(/(较早|较近)合排/).map((el) => el.textContent);
@@ -184,11 +180,7 @@ describe("AdminRehearsalsPage 排序与历史合排 tab（Issue #171）", () => 
 
   it("历史合排 tab 隐藏「发布新日程」按钮（创建类型跟随 toggle 在历史视图无意义）", () => {
     setData([makeRehearsal(1, "2026-08-16T20:00:00", "明天排练")]);
-    render(
-      <AdminPageHeaderProvider>
-        <AdminRehearsalsPage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<AdminRehearsalsPage />);
     expect(screen.getByRole("button", { name: /发布新日程/ })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "历史合排" }));
@@ -215,11 +207,7 @@ describe("AdminRehearsalsPage 窗口过滤（Issue #173）", () => {
       makeRehearsal(3, "2026-08-15T08:00:00", "今天已结束的合排"),
       makeRehearsal(4, "2026-08-16T20:00:00", "未来的排练"),
     ]);
-    render(
-      <AdminPageHeaderProvider>
-        <AdminRehearsalsPage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<AdminRehearsalsPage />);
 
     // 合排 tab：过去的合排隐藏，今天与未来保留
     expect(screen.getByText("今天已结束的合排")).toBeTruthy();
@@ -239,21 +227,13 @@ describe("AdminRehearsalsPage 窗口过滤（Issue #173）", () => {
 
   it("无 start_time 的排练保守保留在合排 tab", () => {
     setData([makeRehearsal(1, null, "无时间排练")]);
-    render(
-      <AdminPageHeaderProvider>
-        <AdminRehearsalsPage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<AdminRehearsalsPage />);
     expect(screen.getByText("无时间排练")).toBeTruthy();
   });
 
   it("日期区间筛选组件通过 false && 隐藏：不渲染日期选择控件与标签", () => {
     setData([makeRehearsal(1, "2026-08-16T20:00:00", "明天排练")]);
-    render(
-      <AdminPageHeaderProvider>
-        <AdminRehearsalsPage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<AdminRehearsalsPage />);
     expect(screen.queryByPlaceholderText("选择日期")).toBeNull();
     expect(screen.queryByText("开始时间")).toBeNull();
     expect(screen.queryByText("结束时间")).toBeNull();
@@ -275,11 +255,7 @@ describe("AdminRehearsalsPage 卡片导航（Issue #173：Modal→页面）", ()
 
   it("点击卡片跳转到详情页路由（/admin/rehearsals/[id]）", () => {
     setData([makeRehearsal(1, "2026-08-16T20:00:00", "明天排练")]);
-    render(
-      <AdminPageHeaderProvider>
-        <AdminRehearsalsPage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<AdminRehearsalsPage />);
     // 卡片本身是按钮（可访问名含曲目），点击跳转
     fireEvent.click(screen.getByRole("button", { name: /明天排练/ }));
     expect(mocks.routerPush).toHaveBeenCalledTimes(1);

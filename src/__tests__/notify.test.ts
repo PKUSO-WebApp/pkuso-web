@@ -383,6 +383,8 @@ describe("POST /api/notify 端到端", () => {
       delete process.env.SMTP_HOST;
       delete process.env.SMTP_PORT;
 
+      // 销毁 GoTrueClient 自动刷新定时器，防止 worker 进程内存累积（vitest forks pool 复用 worker）
+      await sb.auth.signOut().catch(() => {});
       await deleteTestUser(sb, userId);
       console.log(`🧹 已清理测试用户 ${testEmail}`);
     }

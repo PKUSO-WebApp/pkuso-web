@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
 import ProfilePage from "./page";
 import { useRouter } from "next/navigation";
-import { AdminPageHeaderProvider } from "@/context/admin-page-header-context";
+import { renderWithProviders } from "@/__tests__/render-with-providers";
 
 // ---- Mock supabase ----
 const { mockUpdateUser } = vi.hoisted(() => ({
@@ -84,22 +84,14 @@ describe("ProfilePage", () => {
   });
 
   it("渲染设置页面", () => {
-    render(
-      <AdminPageHeaderProvider>
-        <ProfilePage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<ProfilePage />);
 
     // 标题和返回按钮现在由 layout 的 AdminHeader 渲染
     expect(screen.getByRole("button", { name: /修改密码/ })).toBeInTheDocument();
   });
 
   it("显示三个功能按钮：修改密码、外观、退出登录", () => {
-    render(
-      <AdminPageHeaderProvider>
-        <ProfilePage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<ProfilePage />);
 
     expect(screen.getByRole("button", { name: /修改密码/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /外观/ })).toBeInTheDocument();
@@ -107,11 +99,7 @@ describe("ProfilePage", () => {
   });
 
   it("点击修改密码打开 Modal", async () => {
-    render(
-      <AdminPageHeaderProvider>
-        <ProfilePage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<ProfilePage />);
 
     fireEvent.click(screen.getByRole("button", { name: /修改密码/ }));
 
@@ -122,11 +110,7 @@ describe("ProfilePage", () => {
 
   it("修改密码：两次输入不一致时提示", async () => {
     vi.spyOn(window, "alert").mockImplementation(() => {});
-    render(
-      <AdminPageHeaderProvider>
-        <ProfilePage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<ProfilePage />);
 
     fireEvent.click(screen.getByRole("button", { name: /修改密码/ }));
 
@@ -145,11 +129,7 @@ describe("ProfilePage", () => {
 
   it("修改密码：长度不足 6 位时提示", async () => {
     vi.spyOn(window, "alert").mockImplementation(() => {});
-    render(
-      <AdminPageHeaderProvider>
-        <ProfilePage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<ProfilePage />);
 
     fireEvent.click(screen.getByRole("button", { name: /修改密码/ }));
 
@@ -169,11 +149,7 @@ describe("ProfilePage", () => {
   it("修改密码成功：调用 supabase.auth.updateUser 并提示成功", async () => {
     vi.spyOn(window, "alert").mockImplementation(() => {});
     mockUpdateUser.mockResolvedValue({ error: null });
-    render(
-      <AdminPageHeaderProvider>
-        <ProfilePage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<ProfilePage />);
 
     fireEvent.click(screen.getByRole("button", { name: /修改密码/ }));
 
@@ -196,11 +172,7 @@ describe("ProfilePage", () => {
   it("修改密码失败：显示错误信息", async () => {
     vi.spyOn(window, "alert").mockImplementation(() => {});
     mockUpdateUser.mockResolvedValue({ error: { message: "密码太弱" } });
-    render(
-      <AdminPageHeaderProvider>
-        <ProfilePage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<ProfilePage />);
 
     fireEvent.click(screen.getByRole("button", { name: /修改密码/ }));
 
@@ -220,11 +192,7 @@ describe("ProfilePage", () => {
   });
 
   it("点击外观打开 ThemeModal", () => {
-    render(
-      <AdminPageHeaderProvider>
-        <ProfilePage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<ProfilePage />);
 
     fireEvent.click(screen.getByRole("button", { name: /外观/ }));
 
@@ -234,11 +202,7 @@ describe("ProfilePage", () => {
   });
 
   it("点击退出登录：调用 logout 并跳转到 /login", async () => {
-    render(
-      <AdminPageHeaderProvider>
-        <ProfilePage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<ProfilePage />);
 
     fireEvent.click(screen.getByRole("button", { name: /退出登录/ }));
 
@@ -251,11 +215,7 @@ describe("ProfilePage", () => {
   it("修改密码成功后 Modal 关闭时重置表单", async () => {
     vi.spyOn(window, "alert").mockImplementation(() => {});
     mockUpdateUser.mockResolvedValue({ error: null });
-    render(
-      <AdminPageHeaderProvider>
-        <ProfilePage />
-      </AdminPageHeaderProvider>,
-    );
+    renderWithProviders(<ProfilePage />);
 
     fireEvent.click(screen.getByRole("button", { name: /修改密码/ }));
 

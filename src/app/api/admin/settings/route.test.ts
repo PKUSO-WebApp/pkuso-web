@@ -176,6 +176,12 @@ describe("GET/PUT /api/admin/settings", () => {
         cleanupErrors.push(`member: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+    // 销毁 authSb GoTrueClient 自动刷新定时器，防止 worker 进程内存累积（vitest forks pool 复用 worker）
+    try {
+      await authSb.auth.signOut();
+    } catch {
+      // signOut 失败不影响测试结果
+    }
     if (cleanupErrors.length > 0) {
       throw new Error(`测试用户清理失败: ${cleanupErrors.join("; ")}`);
     }

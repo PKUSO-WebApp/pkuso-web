@@ -164,6 +164,8 @@ describe("POST /api/admin/notify-system", () => {
     await step("admin user", () => deleteTestUser(dbSb, adminUserId));
     await step("member user", () => deleteTestUser(dbSb, memberUserId));
     await step("pending user", () => deleteTestUser(dbSb, pendingUserId));
+    // 销毁 authSb GoTrueClient 自动刷新定时器，防止 worker 进程内存累积（vitest forks pool 复用 worker）
+    await step("authSb signOut", () => authSb.auth.signOut());
     if (cleanupErrors.length > 0) {
       throw new Error(`清理失败: ${cleanupErrors.join("; ")}`);
     }

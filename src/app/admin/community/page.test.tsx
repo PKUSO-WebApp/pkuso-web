@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { screen, fireEvent, cleanup } from "@testing-library/react";
 import AdminCommunityPage from "./page";
 import { usePosts } from "@/hooks/usePosts";
-import { AdminPageHeaderProvider } from "@/context/admin-page-header-context";
+import { renderWithProviders } from "@/__tests__/render-with-providers";
 
 const mocks = vi.hoisted(() => ({
   posts: [] as Record<string, unknown>[],
@@ -63,11 +63,7 @@ function renderPage(initialData: unknown[] = []) {
     remove: vi.fn(),
     uploadImage: vi.fn(),
   }));
-  return render(
-    <AdminPageHeaderProvider>
-      <AdminCommunityPage />
-    </AdminPageHeaderProvider>,
-  );
+  return renderWithProviders(<AdminCommunityPage />);
 }
 
 describe("AdminCommunityPage 社区管理（Issue #179：卡片→详情页路由）", () => {

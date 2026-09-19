@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
 import AdminSchedulePage from "./page";
-import { AdminPageHeaderProvider } from "@/context/admin-page-header-context";
+import { renderWithProviders } from "@/__tests__/render-with-providers";
 
 // Mock next/navigation
 const mockPush = vi.fn();
@@ -128,21 +128,13 @@ describe("AdminSchedulePage 组件", () => {
   // ==========================================
   describe("放大/缩小切换（对应验收标准 1/2）", () => {
     it("默认状态下应显示日期和放大按钮", () => {
-      render(
-        <AdminPageHeaderProvider>
-          <AdminSchedulePage />
-        </AdminPageHeaderProvider>,
-      );
+      renderWithProviders(<AdminSchedulePage />);
       expect(screen.getByText(/\d+月\d+日/)).toBeInTheDocument();
       expect(screen.getByTitle("放大")).toBeInTheDocument();
     });
 
     it("点击放大按钮后应切换到全屏模式", () => {
-      render(
-        <AdminPageHeaderProvider>
-          <AdminSchedulePage />
-        </AdminPageHeaderProvider>,
-      );
+      renderWithProviders(<AdminSchedulePage />);
       const expandBtn = screen.getByTitle("放大");
       expect(expandBtn).toBeInTheDocument();
 
@@ -152,11 +144,7 @@ describe("AdminSchedulePage 组件", () => {
     });
 
     it("点击缩小按钮后应恢复正常高度", () => {
-      render(
-        <AdminPageHeaderProvider>
-          <AdminSchedulePage />
-        </AdminPageHeaderProvider>,
-      );
+      renderWithProviders(<AdminSchedulePage />);
       fireEvent.click(screen.getByTitle("放大"));
       expect(screen.getByTitle("缩小")).toBeInTheDocument();
 
@@ -165,11 +153,7 @@ describe("AdminSchedulePage 组件", () => {
     });
 
     it("放大/缩小切换应更新标题文案（显示日期或完整标题）", () => {
-      render(
-        <AdminPageHeaderProvider>
-          <AdminSchedulePage />
-        </AdminPageHeaderProvider>,
-      );
+      renderWithProviders(<AdminSchedulePage />);
       const normalTitle = screen.getByText(/\d+月\d+日/);
       expect(normalTitle).toBeInTheDocument();
 
@@ -185,11 +169,7 @@ describe("AdminSchedulePage 组件", () => {
   describe("Loading 状态（对应验收标准 4）", () => {
     it("loading 状态下 loading 容器应使用 h-full", () => {
       mocks.setLoading(true);
-      const { container, unmount } = render(
-        <AdminPageHeaderProvider>
-          <AdminSchedulePage />
-        </AdminPageHeaderProvider>,
-      );
+      const { container, unmount } = renderWithProviders(<AdminSchedulePage />);
 
       // loading spinner 容器应使用 h-full（对应修改后的 loading 占位）
       const spinnerContainer = container.querySelector(".flex.h-full.items-center.justify-center");
@@ -208,11 +188,7 @@ describe("AdminSchedulePage 组件", () => {
 
     it("非 loading 状态下甘特图容器存在且 loading 占位不存在", () => {
       mocks.setLoading(false);
-      const { container } = render(
-        <AdminPageHeaderProvider>
-          <AdminSchedulePage />
-        </AdminPageHeaderProvider>,
-      );
+      const { container } = renderWithProviders(<AdminSchedulePage />);
 
       // loading spinner 不应出现
       const spinnerContainer = container.querySelector(".flex.h-full.items-center.justify-center");
@@ -233,11 +209,7 @@ describe("AdminSchedulePage 组件", () => {
     it("添加预约按钮在 AdminHeader 中（由 Context 注入）", () => {
       // 添加预约按钮已移至 AdminHeader，页面组件通过 Context 设置 headerRight
       // 此测试验证页面组件能正常渲染（Context 已在上层提供）
-      render(
-        <AdminPageHeaderProvider>
-          <AdminSchedulePage />
-        </AdminPageHeaderProvider>,
-      );
+      renderWithProviders(<AdminSchedulePage />);
       // 页面主体正常渲染即可
       expect(screen.getByText(/\d+月\d+日/)).toBeInTheDocument();
     });
@@ -248,11 +220,7 @@ describe("AdminSchedulePage 组件", () => {
   // ==========================================
   describe("布局结构（对应验收标准 3/5）", () => {
     it("根容器应使用 h-full 保证子元素高度继承", () => {
-      const { container } = render(
-        <AdminPageHeaderProvider>
-          <AdminSchedulePage />
-        </AdminPageHeaderProvider>,
-      );
+      const { container } = renderWithProviders(<AdminSchedulePage />);
       const rootDiv = container.firstElementChild as HTMLElement;
       expect(rootDiv.className).toContain("h-full");
       // 最大宽度 max-w-md 保证移动端可用
@@ -261,11 +229,7 @@ describe("AdminSchedulePage 组件", () => {
     });
 
     it("甘特图容器应使用 flex-1 min-h-0 以填充剩余空间", () => {
-      const { container } = render(
-        <AdminPageHeaderProvider>
-          <AdminSchedulePage />
-        </AdminPageHeaderProvider>,
-      );
+      const { container } = renderWithProviders(<AdminSchedulePage />);
       const ganttContainer = container.querySelector(
         ".flex-1.min-h-0.overflow-y-auto.rounded-xl.border.border-border.bg-card",
       );
@@ -273,11 +237,7 @@ describe("AdminSchedulePage 组件", () => {
     });
 
     it("布局使用语义 Token（bg-card border-border text-text）", () => {
-      const { container } = render(
-        <AdminPageHeaderProvider>
-          <AdminSchedulePage />
-        </AdminPageHeaderProvider>,
-      );
+      const { container } = renderWithProviders(<AdminSchedulePage />);
       const html = container.innerHTML;
       expect(html).toContain("bg-card");
       expect(html).toContain("border-border");
@@ -293,11 +253,7 @@ describe("AdminSchedulePage 组件", () => {
   // ==========================================
   describe("日期选择器", () => {
     it("应显示当月日期", () => {
-      render(
-        <AdminPageHeaderProvider>
-          <AdminSchedulePage />
-        </AdminPageHeaderProvider>,
-      );
+      renderWithProviders(<AdminSchedulePage />);
       // 日期选择器渲染月份
       const now = new Date();
       const monthText = `${now.getFullYear()}年${now.getMonth() + 1}月`;
@@ -305,11 +261,7 @@ describe("AdminSchedulePage 组件", () => {
     });
 
     it("点击日期应切换 selectedDate", async () => {
-      render(
-        <AdminPageHeaderProvider>
-          <AdminSchedulePage />
-        </AdminPageHeaderProvider>,
-      );
+      renderWithProviders(<AdminSchedulePage />);
       // 找到一个非今日、非过去的日期并点击
       const dateButtons = screen.getAllByRole("button").filter((btn) => {
         const text = btn.textContent?.trim();

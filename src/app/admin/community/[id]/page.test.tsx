@@ -14,7 +14,19 @@ const mocks = vi.hoisted(() => {
   const setAdminId = (id: string) => {
     adminId = id;
   };
-  return { routerPush: vi.fn(), insert, mockUseUser, setAdminId };
+  return {
+    insert,
+    mockUseUser,
+    setAdminId,
+    router: {
+      push: vi.fn(),
+      replace: vi.fn(),
+      refresh: vi.fn(),
+      back: vi.fn(),
+      forward: vi.fn(),
+      prefetch: vi.fn(),
+    },
+  };
 });
 
 vi.mock("@/lib/supabase", () => ({
@@ -30,12 +42,7 @@ vi.mock("@/hooks/usePosts", () => ({
 }));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({
-    push: mocks.routerPush,
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-  }),
+  useRouter: () => mocks.router,
   useParams: () => ({ id: "post-1" }),
 }));
 
@@ -106,7 +113,7 @@ describe("AdminPostDetailPage 公告详情（Issue #179：Modal→页面）", ()
   let alertSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    mocks.routerPush.mockClear();
+    vi.clearAllMocks();
     mocks.insert.mockClear();
     mocks.setAdminId("admin-1");
     vi.clearAllMocks();
@@ -159,7 +166,7 @@ describe("AdminPostDetailPage 公告详情（Issue #179：Modal→页面）", ()
       expect(remove).toHaveBeenCalledWith("post-1");
     });
     await waitFor(() => {
-      expect(mocks.routerPush).toHaveBeenCalledWith("/admin/community");
+      expect(mocks.router.push).toHaveBeenCalledWith("/admin/community");
     });
   });
 

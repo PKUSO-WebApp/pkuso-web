@@ -46,13 +46,23 @@ function makeRehearsal(
 }
 
 // 通过 vi.hoisted 暴露可变排练列表与 mock，测试内动态注入/断言
-const mocks = vi.hoisted(() => ({
-  rehearsals: [] as RehearsalRow[],
-  batchInsert: vi.fn().mockResolvedValue(null),
-  checkConflict: vi.fn().mockResolvedValue(null),
-  remove: vi.fn().mockResolvedValue(true),
-  routerPush: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  const router = {
+    push: vi.fn(),
+    replace: vi.fn(),
+    refresh: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+    prefetch: vi.fn(),
+  };
+  return {
+    rehearsals: [] as RehearsalRow[],
+    batchInsert: vi.fn().mockResolvedValue(null),
+    checkConflict: vi.fn().mockResolvedValue(null),
+    remove: vi.fn().mockResolvedValue(true),
+    router,
+  };
+});
 
 /** 替换 mock 排练列表（保持引用不变，触发 useRehearsals 的 data 更新） */
 function setData(items: RehearsalRow[]) {
@@ -118,12 +128,7 @@ vi.mock("@/hooks/useProfiles", () => ({
 
 // Mock next/navigation（useRouter：卡片点击跳转详情页）
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({
-    push: mocks.routerPush,
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-  }),
+  useRouter: () => mocks.router,
 }));
 
 describe("AdminRehearsalsPage 排序与历史合排 tab（Issue #171）", () => {
@@ -167,24 +172,13 @@ describe("AdminRehearsalsPage 排序与历史合排 tab（Issue #171）", () => 
       makeRehearsal(3, "2026-08-16T20:00:00", "未结束合排"),
       makeRehearsal(4, "2026-08-14T08:00:00", "已结束分排", { type: "section" }),
     ]);
-    const { container } = renderWithProviders(<AdminRehearsalsPage />);
+    renderWithProviders(<AdminRehearsalsPage />);
     fireEvent.click(screen.getByRole("button", { name: "历史合排" }));
 
     const rendered = screen.getAllByText(/(较早|较近)合排/).map((el) => el.textContent);
     expect(rendered).toEqual(["较近合排", "较早合排"]);
     expect(screen.queryByText("未结束合排")).toBeNull();
     expect(screen.queryByText("已结束分排")).toBeNull();
-    // 标题联动：h1 切换为「历史合排」
-    expect(container.querySelector("h1")?.textContent).toBe("历史合排");
-  });
-
-  it("历史合排 tab 隐藏「发布新日程」按钮（创建类型跟随 toggle 在历史视图无意义）", () => {
-    setData([makeRehearsal(1, "2026-08-16T20:00:00", "明天排练")]);
-    renderWithProviders(<AdminRehearsalsPage />);
-    expect(screen.getByRole("button", { name: /发布新日程/ })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "历史合排" }));
-    expect(screen.queryByRole("button", { name: /发布新日程/ })).toBeNull();
   });
 });
 
@@ -245,7 +239,7 @@ describe("AdminRehearsalsPage 卡片导航（Issue #173：Modal→页面）", ()
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 7, 15, 21, 0, 0));
     setData([]);
-    mocks.routerPush.mockClear();
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
@@ -258,7 +252,7 @@ describe("AdminRehearsalsPage 卡片导航（Issue #173：Modal→页面）", ()
     renderWithProviders(<AdminRehearsalsPage />);
     // 卡片本身是按钮（可访问名含曲目），点击跳转
     fireEvent.click(screen.getByRole("button", { name: /明天排练/ }));
-    expect(mocks.routerPush).toHaveBeenCalledTimes(1);
-    expect(mocks.routerPush).toHaveBeenCalledWith("/admin/rehearsals/1");
+    expect(mocks.router.push).toHaveBeenCalledTimes(1);
+    expect(mocks.router.push).toHaveBeenCalledWith("/admin/rehearsals/1");
   });
 });

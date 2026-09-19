@@ -36,7 +36,14 @@ function makeRehearsal(id: number, startISO: string | null, repertoire: string):
 const mocks = vi.hoisted(() => ({
   rehearsals: [] as RehearsalRow[],
   remove: vi.fn().mockResolvedValue(true),
-  routerPush: vi.fn(),
+  router: {
+    push: vi.fn(),
+    replace: vi.fn(),
+    refresh: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+    prefetch: vi.fn(),
+  },
 }));
 
 function setData(items: RehearsalRow[]) {
@@ -57,19 +64,14 @@ vi.mock("@/hooks/useRehearsals", () => ({
 }));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({
-    push: mocks.routerPush,
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-  }),
+  useRouter: () => mocks.router,
   useParams: () => ({ id: "1" }),
 }));
 
 describe("AdminRehearsalDetailPage（Issue #173：详情页路由）", () => {
   beforeEach(() => {
     mocks.remove.mockClear();
-    mocks.routerPush.mockClear();
+    vi.clearAllMocks();
     setData([]);
   });
 
@@ -100,7 +102,7 @@ describe("AdminRehearsalDetailPage（Issue #173：详情页路由）", () => {
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
     expect(confirmSpy).toHaveBeenCalledWith("确定删除该排练？");
     expect(mocks.remove).toHaveBeenCalledWith(1);
-    await waitFor(() => expect(mocks.routerPush).toHaveBeenCalledWith("/admin/rehearsals"));
+    await waitFor(() => expect(mocks.router.push).toHaveBeenCalledWith("/admin/rehearsals"));
   });
 
   it("删除流：取消确认 → 不调用 remove", () => {

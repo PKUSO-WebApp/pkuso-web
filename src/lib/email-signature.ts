@@ -16,4 +16,4 @@ export const EMAIL_SIGNATURE_MAX_LENGTH = 500;
  * 邮件签名默认兜底文案：app_settings 未设置 email_signature（或读取失败）时，
  * 排练通知邮件落款使用此文案。
  */
-export const DEFAULT_EMAIL_SIGNATURE = "北京大学交响乐团管理团队";
+export const DEFAULT_EMAIL_SIGNATURE = "北京大学学生交响乐团";

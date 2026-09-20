@@ -2,6 +2,17 @@ import { NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import { createServerSupabase } from "@/lib/supabase-server";
 import { EMAIL_SIGNATURE_KEY, DEFAULT_EMAIL_SIGNATURE } from "@/lib/email-signature";
+import {
+  EMAIL_TEMPLATE_FULL_SUBJECT_KEY,
+  EMAIL_TEMPLATE_FULL_BODY_KEY,
+  EMAIL_TEMPLATE_SECTION_SUBJECT_KEY,
+  EMAIL_TEMPLATE_SECTION_BODY_KEY,
+  DEFAULT_FULL_SUBJECT,
+  DEFAULT_FULL_BODY,
+  DEFAULT_SECTION_SUBJECT,
+  DEFAULT_SECTION_BODY,
+  type TemplateType,
+} from "@/lib/email-template";
 import { isSyntheticEmail } from "@/lib/email-utils";
 
 export const runtime = "nodejs";
@@ -11,7 +22,6 @@ export async function resolveTransporter() {
   const smtpPass = process.env.SMTP_PASS;
   if (smtpUser && smtpPass) {
     const port = Number(process.env.SMTP_PORT) || 465;
-    // SMTP_FROM 未设或不是合法邮箱时，回退到 SMTP_USER（163 等要求 MAIL FROM = 授权用户）
     const from =
       process.env.SMTP_FROM && process.env.SMTP_FROM.includes("@")
         ? process.env.SMTP_FROM
@@ -42,7 +52,6 @@ export async function resolveTransporter() {
 
 export async function POST(request: Request) {
   try {
-    // 1. 认证 + 授权: 验证调用者为 admin
     const supabaseServer = createServerSupabase();
     const authHeader = request.headers.get("authorization");
     const token = authHeader?.replace("Bearer ", "") ?? "";
@@ -61,17 +70,19 @@ export async function POST(request: Request) {
       .single();
     if (profile?.role !== "admin") return NextResponse.json({ error: "权限不足" }, { status: 403 });
 
-    // 2. 解析请求
     const body = await request.json();
-    const { title, dateStr, location } = body as {
+    const { title, dateStr, location, type, targetSection } = body as {
       title?: string;
       dateStr?: string;
       location?: string;
+      type?: TemplateType;
+      targetSection?: string;
     };
     if (!title || !dateStr || !location)
       return NextResponse.json({ error: "缺少参数" }, { status: 400 });
 
-    // 3. 获取所有已批准用户的邮箱
+    const rehearsalType: TemplateType = type === "section" ? "section" : "full";
+
     const { data: recipients, error: dbError } = await supabaseServer
       .from("profiles")
       .select("email")
@@ -81,7 +92,6 @@ export async function POST(request: Request) {
     if (dbError || !recipients?.length)
       return NextResponse.json({ error: "无收件人" }, { status: 500 });
 
-    // 过滤合成邮箱（微信注册用户使用 placeholder.local 域名，发信必定失败）
     const emails = (recipients as Array<{ email: string }>)
       .map((r) => r.email)
       .filter((email) => !isSyntheticEmail(email));
@@ -90,18 +100,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "无有效收件人" }, { status: 500 });
     }
 
-    // 4. 读取邮件签名（读取失败时静默降级为默认文案，不阻断发信）
-    const signature = await fetchEmailSignature(supabaseServer);
+    const [subjectTemplate, bodyTemplate, signature] = await Promise.all([
+      fetchEmailTemplate(supabaseServer, rehearsalType, "subject"),
+      fetchEmailTemplate(supabaseServer, rehearsalType, "body"),
+      fetchEmailSignature(supabaseServer),
+    ]);
 
-    // 5. 发送
+    const vars: Record<string, string> = {
+      title,
+      dateStr,
+      location,
+      signature,
+      targetSection: targetSection ?? "",
+    };
+    const subject = renderTemplate(subjectTemplate, vars);
+    const html = renderTemplate(bodyTemplate, vars);
+
     const mailer = await resolveTransporter();
     const from =
       mailer.mode === "smtp" ? mailer.from : process.env.SMTP_FROM || "onboarding@resend.dev";
-    const html = buildRehearsalHtml({ title, dateStr, location, signature });
 
     if (mailer.mode === "smtp") {
-      // 163 等 SMTP 限制单连接收件人数（450 RP:DRC / 550 RP:RCL），分批发送
-      // 经验值：每批 ≤ 20 人，批次间隔 1-2s 避免触发频率限制
       const BATCH_SIZE = 20;
       const BATCH_DELAY_MS = 1500;
       for (let i = 0; i < emails.length; i += BATCH_SIZE) {
@@ -109,7 +128,7 @@ export async function POST(request: Request) {
         await mailer.transporter.sendMail({
           from,
           to: batch,
-          subject: `[排练通知] ${title}`,
+          subject,
           html,
         });
         if (i + BATCH_SIZE < emails.length) {
@@ -117,11 +136,10 @@ export async function POST(request: Request) {
         }
       }
     } else {
-      // Resend API 单次支持更多收件人，但为统一逻辑也可分批（此处保持原行为）
       const { error: sendError } = await mailer.resend.emails.send({
         from,
         to: emails,
-        subject: `[排练通知] ${title}`,
+        subject,
         html,
       });
       if (sendError) throw new Error(sendError.message);
@@ -137,18 +155,13 @@ export async function POST(request: Request) {
 
 export function e(s: string) {
   return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replace(/&/g, "\u0026amp;")
+    .replace(/</g, "\u0026lt;")
+    .replace(/>/g, "\u0026gt;")
+    .replace(/"/g, "\u0026quot;")
+    .replace(/'/g, "\u0026#39;");
 }
 
-/**
- * 读取邮件签名。
- * - 未设置（无行或值为空）时返回默认兜底文案；
- * - 读取失败（如表异常）时静默降级为默认文案，不阻断发信。
- */
 export async function fetchEmailSignature(
   supabaseServer: ReturnType<typeof createServerSupabase>,
 ): Promise<string> {
@@ -166,7 +179,48 @@ export async function fetchEmailSignature(
   }
 }
 
-/** 组装排练通知邮件 HTML（签名拼在「请各位团员准时出席！」之后，先 e() 转义防注入，再将 \n/\r\n 转为 <br/> 保留换行） */
+export async function fetchEmailTemplate(
+  supabaseServer: ReturnType<typeof createServerSupabase>,
+  type: TemplateType,
+  part: "subject" | "body",
+): Promise<string> {
+  const subjectKey =
+    type === "full" ? EMAIL_TEMPLATE_FULL_SUBJECT_KEY : EMAIL_TEMPLATE_SECTION_SUBJECT_KEY;
+  const bodyKey = type === "full" ? EMAIL_TEMPLATE_FULL_BODY_KEY : EMAIL_TEMPLATE_SECTION_BODY_KEY;
+  const key = part === "subject" ? subjectKey : bodyKey;
+  const defaultValue =
+    part === "subject"
+      ? type === "full"
+        ? DEFAULT_FULL_SUBJECT
+        : DEFAULT_SECTION_SUBJECT
+      : type === "full"
+        ? DEFAULT_FULL_BODY
+        : DEFAULT_SECTION_BODY;
+
+  try {
+    const { data, error } = await supabaseServer
+      .from("app_settings")
+      .select("value")
+      .eq("key", key)
+      .maybeSingle();
+    if (error) return defaultValue;
+    const value = data?.value?.trim();
+    return value ? value : defaultValue;
+  } catch {
+    return defaultValue;
+  }
+}
+
+export function renderTemplate(template: string, vars: Record<string, string>): string {
+  let result = template;
+  Object.entries(vars).forEach(([key, value]) => {
+    const escapedValue = e(value);
+    result = result.replace(new RegExp(`\\{${key}\\}`, "g"), escapedValue);
+  });
+  return result;
+}
+
+/** @deprecated 保留兼容旧测试，新代码应使用 renderTemplate + fetchEmailTemplate */
 export function buildRehearsalHtml(params: {
   title: string;
   dateStr: string;
@@ -174,7 +228,6 @@ export function buildRehearsalHtml(params: {
   signature: string;
 }) {
   const { title, dateStr, location, signature } = params;
-  // 先转义再 nl2br：e() 保证用户内容不可注入；<br/> 是我们自己生成的标签，不来自用户输入
   const signatureHtml = e(signature).replace(/\r\n|\n/g, "<br/>");
   return `
     <h2>排练通知</h2>

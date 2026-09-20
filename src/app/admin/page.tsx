@@ -138,7 +138,7 @@ export default function AdminHomePage() {
     { title: "社区管理", href: "/admin/community", icon: MessagesSquare },
     { title: "系统通知", href: "/admin/system-notify", icon: Bell },
     { title: "反馈查看", href: "/admin/feedback", icon: MessageSquare },
-    { title: "邮件签名", href: "/admin/email-signature", icon: Mail },
+    { title: "邮件设置", href: "/admin/email-settings", icon: Mail },
     { title: "数据导入", href: "/admin/config/import", icon: Upload },
   ];
 

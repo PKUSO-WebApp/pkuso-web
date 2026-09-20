@@ -178,7 +178,13 @@ export default function AdminCreateRehearsalPage() {
               "Content-Type": "application/json",
               ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
             },
-            body: JSON.stringify({ title: form.repertoire, dateStr, location: form.location }),
+            body: JSON.stringify({
+              title: form.repertoire,
+              dateStr,
+              location: form.location,
+              type: form.type,
+              targetSection: form.type === "section" ? form.targetSection : undefined,
+            }),
           });
           alert(res.ok ? "✅ 排练已发布,邮件已发送" : "❌ 邮件发送失败");
         } catch {

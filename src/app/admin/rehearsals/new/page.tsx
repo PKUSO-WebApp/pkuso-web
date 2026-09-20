@@ -183,7 +183,7 @@ export default function AdminCreateRehearsalPage() {
               dateStr,
               location: form.location,
               type: form.type,
-              targetSection: form.type === "section" ? form.targetSection : undefined,
+              targetSection: form.type === "section" ? form.targetSections.join(",") : undefined,
             }),
           });
           alert(res.ok ? "✅ 排练已发布,邮件已发送" : "❌ 邮件发送失败");

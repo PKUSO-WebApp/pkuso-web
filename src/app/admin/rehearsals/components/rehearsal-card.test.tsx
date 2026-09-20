@@ -103,7 +103,7 @@ describe("AdminRehearsalCard 展示与更新提示 chip（Issue #171/#173）", (
   it("分排排练展示声部信息（曲目 · 声部 与 针对：声部）", () => {
     render(
       <AdminRehearsalCard
-        item={makeRehearsal({ type: "section", target_section: "第一小提琴" })}
+        item={makeRehearsal({ type: "section", target_section: ["第一小提琴"] })}
         onClick={vi.fn()}
       />,
     );

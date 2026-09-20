@@ -1,6 +1,7 @@
 import { Card } from "@/components/ui/Card";
 import { formatRehearsalRange } from "@/lib/date-utils";
 import { getUpdateBadgeLabel } from "@/lib/rehearsal-sort";
+import { sectionsToDisplayString } from "@/constants/instruments";
 import type { RehearsalRow } from "@/types/database";
 
 type Props = {
@@ -19,7 +20,9 @@ export function AdminRehearsalCard({ item, onClick }: Props) {
       <div className="space-y-0.5 leading-tight">
         <p className="break-words text-sm text-text-muted">
           {item.repertoire}
-          {item.type === "section" && item.target_section ? ` · ${item.target_section}` : null}
+          {item.type === "section" && item.target_section
+            ? ` · ${sectionsToDisplayString(item.target_section)}`
+            : null}
         </p>
         <h2 className="text-base font-semibold text-text">
           {item.start_time
@@ -35,7 +38,7 @@ export function AdminRehearsalCard({ item, onClick }: Props) {
         <p className="text-xs text-text-muted">
           地点：{item.location}
           {item.type === "section" && item.target_section
-            ? ` · 针对：${item.target_section}`
+            ? ` · 针对：${sectionsToDisplayString(item.target_section)}`
             : null}
         </p>
       </div>

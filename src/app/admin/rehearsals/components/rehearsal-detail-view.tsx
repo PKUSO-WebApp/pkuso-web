@@ -1,6 +1,7 @@
 "use client";
 
 import { formatRehearsalRange } from "@/lib/date-utils";
+import { sectionsToDisplayString } from "@/constants/instruments";
 import type { RehearsalRow } from "@/types/database";
 
 /**
@@ -16,7 +17,7 @@ export function RehearsalDetailView({ item }: { item: RehearsalRow }) {
   const typeText =
     item.type === "section"
       ? item.target_section
-        ? `分排 · ${item.target_section}`
+        ? `分排 · ${sectionsToDisplayString(item.target_section)}`
         : "分排"
       : "合排";
 

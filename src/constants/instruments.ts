@@ -34,3 +34,44 @@ export type SectionGroup = keyof typeof SECTION_GROUPS;
 
 /** 扁平化的所有声部列表（用于联想搜索） */
 export const ALL_SECTIONS = [...new Set(Object.values(SECTION_GROUPS).flat())] as readonly string[];
+
+/**
+ * 将选中的声部列表转换为邮件显示字符串。
+ * 如果选中的声部恰好构成某个声部组的全部成员，则使用组名替代。
+ */
+export function sectionsToDisplayString(sections: string[]): string {
+  if (sections.length === 0) return "";
+  const selectedSet = new Set(sections);
+  const usedGroups: string[] = [];
+  const usedInstruments = new Set<string>();
+
+  for (const [groupName, groupSections] of Object.entries(SECTION_GROUPS)) {
+    if (groupName === "管乐") continue;
+    if (groupSections.every((s) => selectedSet.has(s))) {
+      usedGroups.push(groupName);
+      groupSections.forEach((s) => usedInstruments.add(s));
+    }
+  }
+
+  const remaining = sections.filter((s) => !usedInstruments.has(s));
+  return [...usedGroups, ...remaining].join(",");
+}
+
+/**
+ * 将包含声部组名的字符串展开为个人声部列表（用于 API 过滤收件人）。
+ */
+export function expandSectionGroups(sectionStr: string): string[] {
+  const parts = sectionStr
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const result: string[] = [];
+  for (const part of parts) {
+    if (part in SECTION_GROUPS) {
+      result.push(...SECTION_GROUPS[part as SectionGroup]);
+    } else {
+      result.push(part);
+    }
+  }
+  return [...new Set(result)];
+}

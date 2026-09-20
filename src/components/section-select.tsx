@@ -183,40 +183,23 @@ export function SectionSelect({
           className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto rounded-xl border border-border bg-card shadow-lg"
           role="listbox"
         >
-          {Object.entries(
-            suggestions.reduce(
-              (acc, s) => {
-                const key = s.isGroup ? `组: ${s.label}` : "声部";
-                if (!acc[key]) acc[key] = [];
-                acc[key].push(s);
-                return acc;
-              },
-              {} as Record<string, typeof suggestions>,
-            ),
-          ).map(([groupName, items]) => (
-            <div key={groupName} className="border-t border-border first:border-t-0">
-              <div className="px-3 py-1.5 text-[10px] font-medium text-text-muted uppercase tracking-wider bg-muted/50">
-                {groupName}
-              </div>
-              {items.map((suggestion) => (
-                <button
-                  key={suggestion.label}
-                  type="button"
-                  onClick={() => selectSuggestion(suggestion)}
-                  onMouseEnter={() => setFocusedIndex(suggestions.indexOf(suggestion))}
-                  className={`w-full px-3 py-2 text-left text-xs text-text hover:bg-muted transition-colors ${
-                    focusedIndex === suggestions.indexOf(suggestion) ? "bg-muted" : ""
-                  }`}
-                  role="option"
-                  aria-selected={focusedIndex === suggestions.indexOf(suggestion)}
-                >
-                  <span className="flex items-center gap-2">
-                    {suggestion.isGroup && <span className="text-[10px] text-text-muted">组</span>}
-                    {suggestion.label}
-                  </span>
-                </button>
-              ))}
-            </div>
+          {suggestions.map((suggestion) => (
+            <button
+              key={suggestion.label}
+              type="button"
+              onClick={() => selectSuggestion(suggestion)}
+              onMouseEnter={() => setFocusedIndex(suggestions.indexOf(suggestion))}
+              className={`w-full px-3 py-2 text-left text-xs text-text hover:bg-muted transition-colors ${
+                focusedIndex === suggestions.indexOf(suggestion) ? "bg-muted" : ""
+              }`}
+              role="option"
+              aria-selected={focusedIndex === suggestions.indexOf(suggestion)}
+            >
+              <span className="flex items-center gap-2">
+                {suggestion.isGroup && <span className="text-[10px] text-text-muted">组</span>}
+                {suggestion.label}
+              </span>
+            </button>
           ))}
         </div>
       )}

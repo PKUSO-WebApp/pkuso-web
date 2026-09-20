@@ -16,6 +16,7 @@ import {
 import type { ProfileRow } from "@/types/database";
 import { formatLocalISO, getLocalDateString } from "@/lib/date-utils";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
+import { sectionsToDisplayString } from "@/constants/instruments";
 
 // 启用地理围栏时的默认签到点：北京大学新太阳学生中心（GCJ-02 坐标系）
 const DEFAULT_GEOFENCE_CENTER = { lat: 39.988842, lng: 116.311144 } as const;
@@ -187,7 +188,8 @@ export default function AdminCreateRehearsalPage() {
               dateStr,
               location: form.location,
               type: form.type,
-              targetSection: form.type === "section" ? form.targetSections.join(",") : undefined,
+              targetSection:
+                form.type === "section" ? sectionsToDisplayString(form.targetSections) : undefined,
             }),
           });
           alert(res.ok ? "✅ 排练已发布,邮件已发送" : "❌ 邮件发送失败");

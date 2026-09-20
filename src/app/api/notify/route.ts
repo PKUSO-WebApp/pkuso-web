@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import { createServerSupabase } from "@/lib/supabase-server";
 import { EMAIL_SIGNATURE_KEY, DEFAULT_EMAIL_SIGNATURE } from "@/lib/email-signature";
+import { expandSectionGroups } from "@/constants/instruments";
 import {
   EMAIL_TEMPLATE_FULL_SUBJECT_KEY,
   EMAIL_TEMPLATE_FULL_BODY_KEY,
@@ -38,12 +39,9 @@ export function filterRecipients(
   filtered = filtered.filter((r) => r.is_in_orchestra === true);
 
   if (type === "section" && targetSection) {
-    const targetSections = targetSection
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (targetSections.length > 0) {
-      const targetSet = new Set(targetSections);
+    const expandedSections = expandSectionGroups(targetSection);
+    if (expandedSections.length > 0) {
+      const targetSet = new Set(expandedSections);
       filtered = filtered.filter((r) => r.instrument && targetSet.has(r.instrument));
     }
   }

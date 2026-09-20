@@ -182,7 +182,7 @@ export function CreateRehearsalForm({
             disabled={submitting}
             className="h-4 w-4 rounded border-border text-primary focus:ring-text-muted"
           />
-          向在团成员发送邮件通知
+          {editing ? "重新发送邮件通知" : "向在团成员发送邮件通知"}
         </label>
       </div>
 

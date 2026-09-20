@@ -12,6 +12,7 @@ import {
   type CreateFormState,
 } from "@/components/create-rehearsal-form";
 import { formatLocalISO, parseLocalISO, getLocalDateString } from "@/lib/date-utils";
+import { sectionsToDisplayString } from "@/constants/instruments";
 import type { RehearsalRow } from "@/types/database";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
 
@@ -83,6 +84,7 @@ function EditForm({ item }: { item: RehearsalRow }) {
   const [submitting, setSubmitting] = React.useState(false);
   const submittingRef = React.useRef(false);
   const [conflictModalOpen, setConflictModalOpen] = React.useState(false);
+  const [notifyByEmail, setNotifyByEmail] = React.useState(false);
 
   const handleChange = (
     field: keyof CreateFormState,
@@ -177,7 +179,40 @@ function EditForm({ item }: { item: RehearsalRow }) {
         alert("更新失败");
         return;
       }
-      alert("已保存");
+
+      if (notifyByEmail) {
+        const startH = String(form.startTime.getHours()).padStart(2, "0");
+        const startM = String(form.startTime.getMinutes()).padStart(2, "0");
+        const endH = String(form.endTime.getHours()).padStart(2, "0");
+        const endM = String(form.endTime.getMinutes()).padStart(2, "0");
+        const dateStr = `${form.startTime.getFullYear()}-${String(form.startTime.getMonth() + 1).padStart(2, "0")}-${String(form.startTime.getDate()).padStart(2, "0")} ${startH}:${startM} - ${endH}:${endM}`;
+        try {
+          const { supabase } = await import("@/lib/supabase");
+          const {
+            data: { session },
+          } = await supabase.auth.getSession();
+          const res = await fetch("/api/notify", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+            },
+            body: JSON.stringify({
+              title: form.repertoire,
+              dateStr,
+              location: form.location,
+              type: form.type,
+              targetSection:
+                form.type === "section" ? sectionsToDisplayString(form.targetSections) : undefined,
+            }),
+          });
+          alert(res.ok ? "✅ 已保存并发送邮件通知" : "✅ 已保存，但邮件发送失败");
+        } catch {
+          alert("✅ 已保存，但邮件发送失败");
+        }
+      } else {
+        alert("已保存");
+      }
       router.push(`/admin/rehearsals/${id}`);
     } finally {
       submittingRef.current = false;
@@ -191,8 +226,8 @@ function EditForm({ item }: { item: RehearsalRow }) {
         form={form}
         submitting={submitting}
         editing
-        notifyByEmail={false}
-        onNotifyByEmailChange={() => {}}
+        notifyByEmail={notifyByEmail}
+        onNotifyByEmailChange={setNotifyByEmail}
         onChange={handleChange}
         onCheckinPick={handleCheckinPick}
         onSubmit={handleSubmit}

@@ -22,7 +22,7 @@ const DEFAULT_GEOFENCE_CENTER = { lat: 39.988842, lng: 116.311144 } as const;
 
 const EMPTY_FORM: CreateFormState = {
   type: "full",
-  targetSection: "",
+  targetSections: [],
   startTime: null,
   endTime: null,
   location: "",
@@ -54,7 +54,7 @@ export default function AdminCreateRehearsalPage() {
 
   const handleChange = (
     field: keyof CreateFormState,
-    value: string | number | boolean | Date | null,
+    value: string | number | boolean | Date | null | string[],
   ) => {
     if (field === "startTime" && value instanceof Date) {
       // +3h 默认时长，但不允许跨天：最晚 capped 到当天 23:59
@@ -138,7 +138,7 @@ export default function AdminCreateRehearsalPage() {
 
       const payload: Record<string, unknown> = {
         type: form.type,
-        target_section: form.type === "section" ? form.targetSection || null : null,
+        target_section: form.type === "section" ? form.targetSections : [],
         start_time: formatLocalISO(form.startTime),
         end_time: formatLocalISO(form.endTime),
         location: form.location,

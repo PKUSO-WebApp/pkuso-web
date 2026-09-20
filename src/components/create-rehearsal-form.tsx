@@ -5,6 +5,7 @@ import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { Toggle } from "@/components/ui/Toggle";
 import { MapPicker } from "@/app/admin/rehearsals/components/map-picker";
+import { SectionSelect } from "./section-select";
 
 export type DbRehearsalType = "full" | "section";
 
@@ -13,7 +14,7 @@ export const MAX_CHECKIN_RADIUS_M = 6_371_000;
 
 export type CreateFormState = {
   type: DbRehearsalType;
-  targetSection: string;
+  targetSections: string[];
   startTime: Date | null;
   endTime: Date | null;
   location: string;
@@ -32,7 +33,7 @@ type Props = {
   onNotifyByEmailChange: (v: boolean) => void;
   onChange: (
     field: keyof CreateFormState,
-    value: string | number | boolean | DbRehearsalType | Date | null,
+    value: string | number | boolean | DbRehearsalType | Date | null | string[],
   ) => void;
   onCheckinPick: (lat: number | null, lng: number | null) => void;
   onSubmit: (e: React.FormEvent) => void;
@@ -68,12 +69,11 @@ export function CreateRehearsalForm({
         {isSection && (
           <div className="space-y-1">
             <label className="block text-label font-medium text-text-muted">针对声部</label>
-            <input
-              type="text"
-              value={form.targetSection}
-              onChange={(e) => onChange("targetSection", e.target.value)}
-              className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
-              placeholder="如：第一小提琴 / 木管分排"
+            <SectionSelect
+              value={form.targetSections}
+              onChange={(v) => onChange("targetSections", v)}
+              placeholder="输入声部名或声部组名"
+              disabled={submitting}
             />
           </div>
         )}

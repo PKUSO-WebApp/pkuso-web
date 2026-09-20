@@ -21,3 +21,16 @@ export const INSTRUMENT_ORDER = [
 export type Instrument = (typeof INSTRUMENT_ORDER)[number];
 
 export const OTHER_INSTRUMENT_GROUP = "其他";
+
+/** 声部组：用于分排创建时的联想列表分组、小程序端显示声部组名 */
+export const SECTION_GROUPS = {
+  弦乐: ["第一小提琴", "第二小提琴", "中提琴", "大提琴", "低音提琴"],
+  木管: ["大管", "双簧管", "长笛", "单簧管"],
+  铜管: ["小号", "长号", "圆号", "大号"],
+  管乐: ["大管", "双簧管", "长笛", "单簧管", "小号", "长号", "圆号", "大号"],
+} as const;
+
+export type SectionGroup = keyof typeof SECTION_GROUPS;
+
+/** 扁平化的所有声部列表（用于联想搜索） */
+export const ALL_SECTIONS = Object.values(SECTION_GROUPS).flat() as readonly string[];

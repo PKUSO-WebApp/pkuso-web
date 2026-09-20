@@ -6,6 +6,7 @@ import {
   buildRehearsalHtml,
   fetchEmailTemplate,
   renderTemplate,
+  filterRecipients,
 } from "@/app/api/notify/route";
 import { EMAIL_SIGNATURE_KEY, DEFAULT_EMAIL_SIGNATURE } from "@/lib/email-signature";
 import {
@@ -324,5 +325,90 @@ describe("renderTemplate() — 占位符替换与 HTML 转义", () => {
     const input = "A&B<C>D\"E'F";
     const result = renderTemplate(tpl, { v: input });
     expect(result).toBe(e(input));
+  });
+});
+
+// ============================================================
+// 4. filterRecipients — 收件人过滤
+// ============================================================
+describe("filterRecipients() — 按在团状态与声部过滤", () => {
+  const r = (email: string, is_in_orchestra: boolean | null, instrument: string | null) => ({
+    email,
+    is_in_orchestra,
+    instrument,
+  });
+
+  it("合排：仅返回 is_in_orchestra === true 的成员", () => {
+    const recipients = [
+      r("a@test.com", true, "小提琴"),
+      r("b@test.com", false, "大提琴"),
+      r("c@test.com", null, "长笛"),
+    ];
+    expect(filterRecipients(recipients, "full")).toEqual(["a@test.com"]);
+  });
+
+  it("合排：排除合成邮箱", () => {
+    const recipients = [
+      r("real@test.com", true, "小提琴"),
+      r("wx@placeholder.local", true, "大提琴"),
+    ];
+    expect(filterRecipients(recipients, "full")).toEqual(["real@test.com"]);
+  });
+
+  it("分排：仅返回在团且 instrument 在目标声部列表内的成员", () => {
+    const recipients = [
+      r("a@test.com", true, "小提琴"),
+      r("b@test.com", true, "大提琴"),
+      r("c@test.com", true, "长笛"),
+    ];
+    expect(filterRecipients(recipients, "section", "小提琴,大提琴")).toEqual([
+      "a@test.com",
+      "b@test.com",
+    ]);
+  });
+
+  it("分排：instrument 为 null 的在团成员被排除", () => {
+    const recipients = [r("a@test.com", true, "小提琴"), r("b@test.com", true, null)];
+    expect(filterRecipients(recipients, "section", "小提琴")).toEqual(["a@test.com"]);
+  });
+
+  it("分排：targetSection 为空字符串 → 仅过滤不在团成员", () => {
+    const recipients = [r("a@test.com", true, "小提琴"), r("b@test.com", false, "大提琴")];
+    expect(filterRecipients(recipients, "section", "")).toEqual(["a@test.com"]);
+  });
+
+  it("分排：targetSection 含空格/空项 → 自动 trim 并忽略空项", () => {
+    const recipients = [
+      r("a@test.com", true, "小提琴"),
+      r("b@test.com", true, "大提琴"),
+      r("c@test.com", true, "长笛"),
+    ];
+    expect(filterRecipients(recipients, "section", " 小提琴 , , 大提琴 ")).toEqual([
+      "a@test.com",
+      "b@test.com",
+    ]);
+  });
+
+  it("所有成员都不在团 → 返回空数组", () => {
+    const recipients = [r("a@test.com", false, "小提琴"), r("b@test.com", null, "大提琴")];
+    expect(filterRecipients(recipients, "full")).toEqual([]);
+  });
+
+  it("不传 type 时默认行为等同 full（向后兼容）", () => {
+    const recipients = [r("a@test.com", true, "小提琴"), r("b@test.com", false, "大提琴")];
+    expect(filterRecipients(recipients)).toEqual(["a@test.com"]);
+  });
+
+  it("空收件人列表 → 返回空数组", () => {
+    expect(filterRecipients([], "full")).toEqual([]);
+  });
+
+  it("合成邮箱 + 不在团 + 不匹配声部 → 全部排除", () => {
+    const recipients = [
+      r("syn@placeholder.local", true, "小提琴"),
+      r("notin@test.com", false, "小提琴"),
+      r("nomatch@test.com", true, "双簧管"),
+    ];
+    expect(filterRecipients(recipients, "section", "小提琴")).toEqual([]);
   });
 });

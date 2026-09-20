@@ -182,7 +182,7 @@ export function CreateRehearsalForm({
             disabled={submitting}
             className="h-4 w-4 rounded border-border text-primary focus:ring-text-muted"
           />
-          同时发送邮件通知全团
+          向在团成员发送邮件通知
         </label>
       </div>
 

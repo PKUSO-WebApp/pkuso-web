@@ -17,6 +17,40 @@ import { isSyntheticEmail } from "@/lib/email-utils";
 
 export const runtime = "nodejs";
 
+export type RecipientRow = {
+  email: string;
+  is_in_orchestra: boolean | null;
+  instrument: string | null;
+};
+
+/**
+ * 按在团状态与声部过滤收件人。
+ * - 合排 (full)：排除 is_in_orchestra !== true 的成员
+ * - 分排 (section)：额外仅保留 instrument 在目标声部列表内的成员
+ */
+export function filterRecipients(
+  recipients: RecipientRow[],
+  type: TemplateType = "full",
+  targetSection?: string,
+): string[] {
+  let filtered = recipients.filter((r) => !isSyntheticEmail(r.email));
+
+  filtered = filtered.filter((r) => r.is_in_orchestra === true);
+
+  if (type === "section" && targetSection) {
+    const targetSections = targetSection
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (targetSections.length > 0) {
+      const targetSet = new Set(targetSections);
+      filtered = filtered.filter((r) => r.instrument && targetSet.has(r.instrument));
+    }
+  }
+
+  return filtered.map((r) => r.email);
+}
+
 export async function resolveTransporter() {
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
@@ -85,16 +119,14 @@ export async function POST(request: Request) {
 
     const { data: recipients, error: dbError } = await supabaseServer
       .from("profiles")
-      .select("email")
+      .select("email, is_in_orchestra, instrument")
       .eq("status", "approved")
       .not("email", "is", null)
       .neq("email", "");
     if (dbError || !recipients?.length)
       return NextResponse.json({ error: "无收件人" }, { status: 500 });
 
-    const emails = (recipients as Array<{ email: string }>)
-      .map((r) => r.email)
-      .filter((email) => !isSyntheticEmail(email));
+    const emails = filterRecipients(recipients as RecipientRow[], rehearsalType, targetSection);
 
     if (emails.length === 0) {
       return NextResponse.json({ error: "无有效收件人" }, { status: 500 });

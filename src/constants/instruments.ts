@@ -33,4 +33,4 @@ export const SECTION_GROUPS = {
 export type SectionGroup = keyof typeof SECTION_GROUPS;
 
 /** 扁平化的所有声部列表（用于联想搜索） */
-export const ALL_SECTIONS = Object.values(SECTION_GROUPS).flat() as readonly string[];
+export const ALL_SECTIONS = [...new Set(Object.values(SECTION_GROUPS).flat())] as readonly string[];

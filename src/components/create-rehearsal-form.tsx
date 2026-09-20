@@ -66,18 +66,6 @@ export function CreateRehearsalForm({
           />
         </div>
 
-        {isSection && (
-          <div className="space-y-1">
-            <label className="block text-label font-medium text-text-muted">针对声部</label>
-            <SectionSelect
-              value={form.targetSections}
-              onChange={(v) => onChange("targetSections", v)}
-              placeholder="输入声部名或声部组名"
-              disabled={submitting}
-            />
-          </div>
-        )}
-
         <div className="space-y-1">
           <label className="block text-label font-medium text-text-muted">开始时间</label>
           <DatePicker
@@ -107,6 +95,18 @@ export function CreateRehearsalForm({
             calendarClassName="react-datepicker-orchestra"
           />
         </div>
+
+        {isSection && (
+          <div className="space-y-1">
+            <label className="block text-label font-medium text-text-muted">针对声部</label>
+            <SectionSelect
+              value={form.targetSections}
+              onChange={(v) => onChange("targetSections", v)}
+              placeholder="输入声部名或声部组名"
+              disabled={submitting}
+            />
+          </div>
+        )}
 
         <div className="space-y-1">
           <label className="block text-label font-medium text-text-muted">排练地点</label>

@@ -30,17 +30,24 @@ export function SectionSelect({
   const getSuggestions = (query: string) => {
     const suggestions: { label: string; isGroup: boolean; sections?: string[] }[] = [];
 
-    // 匹配声部组
+    // 空输入时显示所有声部组
+    if (query === "") {
+      for (const [groupName, sections] of Object.entries(SECTION_GROUPS)) {
+        suggestions.push({ label: groupName, isGroup: true, sections: [...sections] });
+      }
+      return suggestions.filter((s) => !selectedSet.has(s.label));
+    }
+
+    // 非空输入：匹配声部组名（如"弦"匹配"弦乐"）
     for (const [groupName, sections] of Object.entries(SECTION_GROUPS)) {
-      if (groupName.includes(query) || sections.some((s) => s.includes(query))) {
+      if (groupName.includes(query)) {
         suggestions.push({ label: groupName, isGroup: true, sections: [...sections] });
       }
     }
 
-    // 匹配具体声部（排除已在组中匹配的）
-    const matchedSections = new Set(suggestions.flatMap((s) => s.sections || []));
+    // 匹配具体声部
     for (const section of ALL_SECTIONS) {
-      if (!matchedSections.has(section) && section.includes(query)) {
+      if (section.includes(query)) {
         suggestions.push({ label: section, isGroup: false });
       }
     }

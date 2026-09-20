@@ -166,7 +166,11 @@ export default function AdminCreateRehearsalPage() {
       }
 
       if (notifyByEmail) {
-        const dateStr = `${form.startTime.getFullYear()}-${String(form.startTime.getMonth() + 1).padStart(2, "0")}-${String(form.startTime.getDate()).padStart(2, "0")} ${String(form.startTime.getHours()).padStart(2, "0")}:${String(form.startTime.getMinutes()).padStart(2, "0")}`;
+        const startH = String(form.startTime.getHours()).padStart(2, "0");
+        const startM = String(form.startTime.getMinutes()).padStart(2, "0");
+        const endH = String(form.endTime.getHours()).padStart(2, "0");
+        const endM = String(form.endTime.getMinutes()).padStart(2, "0");
+        const dateStr = `${form.startTime.getFullYear()}-${String(form.startTime.getMonth() + 1).padStart(2, "0")}-${String(form.startTime.getDate()).padStart(2, "0")} ${startH}:${startM} - ${endH}:${endM}`;
         try {
           const { supabase } = await import("@/lib/supabase");
           const {

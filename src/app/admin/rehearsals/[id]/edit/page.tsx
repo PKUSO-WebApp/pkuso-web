@@ -20,7 +20,7 @@ function buildInitialForm(item: RehearsalRow): CreateFormState {
   const hasRadius = item.checkin_radius_m != null;
   return {
     type: (item.type ?? "full") as "full" | "section",
-    targetSection: item.target_section ?? "",
+    targetSections: (item.target_section ?? []) as string[],
     startTime: item.start_time ? parseLocalISO(item.start_time) : null,
     endTime: item.end_time ? parseLocalISO(item.end_time) : null,
     location: item.location ?? "",
@@ -86,7 +86,7 @@ function EditForm({ item }: { item: RehearsalRow }) {
 
   const handleChange = (
     field: keyof CreateFormState,
-    value: string | number | boolean | Date | null,
+    value: string | number | boolean | Date | null | string[],
   ) => {
     if (field === "startTime" && value instanceof Date) {
       // +3h 默认时长，但不允许跨天：最晚 capped 到当天 23:59
@@ -163,7 +163,7 @@ function EditForm({ item }: { item: RehearsalRow }) {
 
       const payload: Record<string, unknown> = {
         type: form.type,
-        target_section: form.type === "section" ? form.targetSection || null : null,
+        target_section: form.type === "section" ? form.targetSections : [],
         start_time: formatLocalISO(form.startTime),
         end_time: formatLocalISO(form.endTime),
         location: form.location,

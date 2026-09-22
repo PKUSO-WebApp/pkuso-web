@@ -138,7 +138,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           });
           return { instrument, subPart };
         } else {
-          updateFile(index, { llmResult: `LLM 分析失败: ${data?.error || "未知"}` });
+          const errMsg = data?.error || data?.message || "未知错误";
+          updateFile(index, { llmResult: `LLM 分析失败: ${errMsg}` });
           return undefined;
         }
       } catch (err: unknown) {
@@ -361,18 +362,42 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             </div>
 
             {files.length > 0 && (
-              <div className="flex justify-end gap-3">
-                <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">
-                  取消
-                </button>
-                <button
-                  onClick={startAnalysis}
-                  disabled={files.length === 0}
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
-                >
-                  开始分析 ({files.length} 个文件)
-                </button>
-              </div>
+              <>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {files.map((f, i) => (
+                    <div
+                      key={i}
+                      className="bg-background border border-border rounded-lg px-3 py-2 flex items-center justify-between"
+                    >
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-text truncate">{f.name}</p>
+                          <p className={`text-xs ${statusColor(f.status)}`}>{statusText(f)}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                        className="p-1 text-text-muted hover:text-danger"
+                        title="移除"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-3">
+                  <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">
+                    取消
+                  </button>
+                  <button
+                    onClick={startAnalysis}
+                    disabled={files.length === 0}
+                    className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
+                  >
+                    开始分析 ({files.length} 个文件)
+                  </button>
+                </div>
+              </>
             )}
           </>
         )}
@@ -386,6 +411,20 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
               >
                 <div className="flex items-center justify-between px-3 py-2">
                   <div className="flex items-center gap-2 flex-1 min-w-0">
+                    {hasDetails(f) ? (
+                      <button
+                        onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
+                        className="shrink-0 text-text-muted hover:text-text"
+                      >
+                        {expandedIdx === i ? (
+                          <ChevronDown className="w-4 h-4" />
+                        ) : (
+                          <ChevronRight className="w-4 h-4" />
+                        )}
+                      </button>
+                    ) : (
+                      <span className="w-4 shrink-0" />
+                    )}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-text truncate">{f.name}</p>
                       <p className={`text-xs ${statusColor(f.status)}`}>{statusText(f)}</p>
@@ -395,7 +434,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                     <span className="animate-spin text-primary">⏳</span>
                   )}
                 </div>
-                {hasDetails(f) && (
+                {expandedIdx === i && hasDetails(f) && (
                   <div className="border-t border-border px-3 py-2 text-xs space-y-2 bg-muted/30">
                     {f.ocrText && (
                       <div>

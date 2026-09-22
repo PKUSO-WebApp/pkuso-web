@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
+import { Modal } from "@/components/ui/Modal";
 import { UploadModal } from "./upload-modal";
 
 interface SheetMusic {
@@ -25,12 +26,29 @@ export default function SheetMusicPage() {
   const [selectedScoreId, setSelectedScoreId] = useState<string | null>(null);
   const [newScore, setNewScore] = useState({ title: "", composer: "", notes: "" });
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // 防重复提交：ref 同步阻断竞态窗口，state 异步兜底。React setState 是异步的，
+  // 两次快速点击之间 state 仍是旧值，只靠 state 挡不住（仓库既有写法见
+  // admin/rehearsals/new/page.tsx）。
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  // 「新增曲子」表单的会话令牌：每次打开/关闭都自增。
+  // 提交是异步的，若用户在提交途中关掉（或关掉后重开）表单，那笔陈旧回调回来时
+  // 不该再动当前表单 —— 否则会把用户刚敲进去的内容清空，还替他弹出上传弹窗。
+  const formTokenRef = useRef(0);
 
   useEffect(() => {
     setTitle("谱务管理");
     setHeaderRight(
       <button
-        onClick={() => setShowCreateModal(true)}
+        onClick={() => {
+          // 打开即新开一次表单会话：令牌自增让途中的陈旧提交失效，同时清掉上次残留的输入
+          // 与提交态（否则新表单会被那笔在飞请求连坐锁住）
+          formTokenRef.current += 1;
+          submittingRef.current = false;
+          setIsSubmitting(false);
+          setNewScore({ title: "", composer: "", notes: "" });
+          setShowCreateModal(true);
+        }}
         className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded-lg hover:opacity-90"
       >
         新增
@@ -71,9 +89,24 @@ export default function SheetMusicPage() {
     }
   };
 
+  const closeCreateModal = () => {
+    formTokenRef.current += 1;
+    // 用户放弃了这次表单：立刻解掉提交态，否则重开的新表单会被那笔在飞请求连坐锁住。
+    // 在飞请求的 finally 有令牌守卫，不会反过来清掉新表单的提交态。
+    submittingRef.current = false;
+    setIsSubmitting(false);
+    setShowCreateModal(false);
+  };
+
   const createScore = async () => {
+    // 双重检查：ref 同步阻断，state 异步兜底
+    if (submittingRef.current || isSubmitting) return;
     if (!newScore.title.trim()) return;
 
+    submittingRef.current = true;
+    setIsSubmitting(true);
+    // 记下这次提交属于哪一次表单会话
+    const token = formTokenRef.current;
     try {
       const { data, error } = await supabase
         .from("sheet_music")
@@ -87,15 +120,26 @@ export default function SheetMusicPage() {
 
       if (error) throw error;
 
-      setScores([data, ...scores]);
+      // 曲目确实建好了，无论表单后来怎样都要进列表；用函数式更新避免闭包里的旧快照
+      setScores((prev) => [data, ...prev]);
+
+      // 表单已经不是这一份了（用户关掉或重开了）：只入列表，别动当前表单和弹窗
+      if (formTokenRef.current !== token) return;
+
       setShowCreateModal(false);
       setNewScore({ title: "", composer: "", notes: "" });
-
       setSelectedScoreId(data.id);
       setShowUploadModal(true);
     } catch (error) {
       console.error("Error creating score:", error);
-      alert("创建失败");
+      // 用户已放弃这次表单就不要再弹窗打扰
+      if (formTokenRef.current === token) alert("创建失败");
+    } finally {
+      // 只清掉属于自己这次会话的提交态；用户关掉/重开表单后不要动后来者的
+      if (formTokenRef.current === token) {
+        submittingRef.current = false;
+        setIsSubmitting(false);
+      }
     }
   };
 
@@ -181,66 +225,68 @@ export default function SheetMusicPage() {
         )}
       </div>
 
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-card border border-border rounded-lg p-6 w-full max-w-md mx-4">
-            <h2 className="text-lg font-semibold text-text mb-4">新增曲子</h2>
+      <Modal
+        open={showCreateModal}
+        onClose={closeCreateModal}
+        title="新增曲子"
+        // 提交途中不允许点遮罩关掉：关掉后那笔陈旧提交回来会替用户弹出上传弹窗，
+        // 并清空他重开表单后刚敲进去的内容（仓库既有写法见 create-schedule-modal.tsx）
+        closeOnOverlay={!isSubmitting}
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-text mb-1">
+              曲名 <span className="text-danger">*</span>
+            </label>
+            <input
+              type="text"
+              value={newScore.title}
+              onChange={(e) => setNewScore({ ...newScore, title: e.target.value })}
+              className="w-full px-3 py-2 bg-muted border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="如：第五交响曲"
+            />
+          </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-text mb-1">
-                  曲名 <span className="text-danger">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={newScore.title}
-                  onChange={(e) => setNewScore({ ...newScore, title: e.target.value })}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="如：第五交响曲"
-                />
-              </div>
+          <div>
+            <label className="block text-sm font-medium text-text mb-1">作曲家</label>
+            <input
+              type="text"
+              value={newScore.composer}
+              onChange={(e) => setNewScore({ ...newScore, composer: e.target.value })}
+              className="w-full px-3 py-2 bg-muted border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="如：肖斯塔科维奇"
+            />
+          </div>
 
-              <div>
-                <label className="block text-sm font-medium text-text mb-1">作曲家</label>
-                <input
-                  type="text"
-                  value={newScore.composer}
-                  onChange={(e) => setNewScore({ ...newScore, composer: e.target.value })}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="如：肖斯塔科维奇"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-text mb-1">备注</label>
-                <textarea
-                  value={newScore.notes}
-                  onChange={(e) => setNewScore({ ...newScore, notes: e.target.value })}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-primary resize-none"
-                  rows={3}
-                  placeholder="如：2024新年音乐会用"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3 mt-6">
-              <button
-                onClick={() => setShowCreateModal(false)}
-                className="px-4 py-2 text-text-muted hover:text-text"
-              >
-                取消
-              </button>
-              <button
-                onClick={createScore}
-                disabled={!newScore.title.trim()}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
-              >
-                创建
-              </button>
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-text mb-1">备注</label>
+            <textarea
+              value={newScore.notes}
+              onChange={(e) => setNewScore({ ...newScore, notes: e.target.value })}
+              className="w-full px-3 py-2 bg-muted border border-border rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-primary"
+              rows={3}
+              placeholder="如：2024新年音乐会用"
+            />
           </div>
         </div>
-      )}
+
+        <div className="flex justify-end gap-3 mt-6">
+          <button
+            onClick={closeCreateModal}
+            disabled={isSubmitting}
+            className="px-4 py-2 text-text-muted hover:text-text disabled:opacity-50"
+          >
+            取消
+          </button>
+          <button
+            onClick={createScore}
+            disabled={isSubmitting || !newScore.title.trim()}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
+          >
+            创建
+          </button>
+        </div>
+      </Modal>
 
       {selectedScoreId && (
         <UploadModal

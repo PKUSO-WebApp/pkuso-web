@@ -192,7 +192,7 @@ SMTP 测试用 Mailpit 替代 Ethereal（Ethereal 公网 SMTP 在北大校园网
 
 - 发现后端问题 → 在 `pkuso-backend` 仓库创建 Issue
 - 需要新表/列/函数 → 在 `pkuso-backend` 创建 PR
-- 紧急修复 → 参考 `pkuso-backend/CLAUDE.md` 的 MCP 审计流程
+- 紧急修复 → 在 `pkuso-backend` 走加急 PR，**不要在本仓库或通过 MCP 直接改线上**
 
 ### 类型同步
 
@@ -209,9 +209,14 @@ SMTP 测试用 Mailpit 替代 Ethereal（Ethereal 公网 SMTP 在北大校园网
 | `pkuso-mp`      | 微信小程序（成员端）                               | 消费 backend 产生的类型 |
 | `pkuso-web`     | 管理端 Web 应用                                    | 消费 backend 产生的类型 |
 
-### MCP 操作审计
+### MCP 的使用边界
 
-通过 MCP 执行的任何数据库操作必须遵守 `pkuso-backend/CLAUDE.md` 的审计规则。
+**数据库变更一律走 `pkuso-backend` 仓库的 CI，不再通过 MCP 直接部署 migration。**
+
+- **不通过 MCP 执行 DDL**，不通过 MCP 应用 migration（`supabase db push` / `db pull` 等一律不走 MCP）
+- migration 写在 `pkuso-backend/supabase/migrations/` → 推 `main` → CI 自动应用到 dev；prod 手动触发 `Deploy to Prod`
+- 本仓库（pkuso-web）完全不碰数据库 schema
+- MCP 仅用于**只读**用途：查询现状、排查问题、审计。**任何写操作都不走 MCP**
 
 ## 数据库操作注意事项
 
@@ -280,7 +285,9 @@ Supabase CLI 多个子命令在非 TTY（自动化/子智能体）环境下会�
 
 4. **CI 环境**：设置 `SUPABASE_ACCESS_TOKEN` 环境变量可跳过 `login` 交互；`SUPABASE_FORCE_PUSH=true` 可让 `db push` 跳过确认。
 
-**子智能体（pkuso-dba 等）执行任何 supabase 命令时，必须显式带 `--yes` 或对应非交互参数，禁止裸跑 `supabase db push` / `db pull` / `db reset` / `link`。** 调用 pkuso-dba 时主智能体应在指令中强调这一点。
+**在非 TTY 环境（自动化脚本、子智能体）执行任何 supabase 命令时，必须显式带 `--yes` 或对应非交互参数，禁止裸跑 `supabase db push` / `db pull` / `db reset` / `link`。**
+
+> 注：数据库变更一律走 `pkuso-backend` 仓库 CI（见上文「MCP 的使用边界」），本仓库不应出现 `db push` 之类的操作。本节保留是因为排查问题时仍可能需要在本地跑只读的 supabase 命令。
 
 ### PostgREST 外键必须指向 public schema
 
@@ -406,45 +413,33 @@ const fetchAuthorName = async (scheduleId: string) => {
 - **跨会话清理**：组件卸载时也清除 `sessionStorage` 计数，避免残留计数导致后续访问误判为失败
 - **提示文案区分**：加载中显示"正在加载…"，未授权显示"正在跳转…"，避免误导
 
-## Subagent Team
+## 开发工作流
 
-项目配置了 5 个专用 subagent（定义在 `.claude/agents/`），由主智能体按流水线调度。子智能体上下文互相隔离，之间不能互相调用。
-
-| Agent             | 模型      | 职责                                                          | 工具                                                         |
-| ----------------- | --------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
-| pkuso-implementer | Sonnet    | 编码实现（Issue 明确、分支就绪后调用）                        | Read/Write/Edit/Glob/Grep/Bash/Task/Skill/WebSearch/WebFetch |
-| pkuso-reviewer    | **Haiku** | CLAUDE.md 合规审查（命名/颜色 Token/架构/编码规范）           | Read/Glob/Grep/Bash（只读，不修代码）                        |
-| pkuso-adversary   | Sonnet    | 找 Bug/逻辑漏洞/边界情况（reviewer PASS 后调用）              | Read/Glob/Grep/Bash（只读，不修代码）                        |
-| pkuso-tester      | Sonnet    | 测试补齐与回归（adversary 未击破后调用）                      | Read/Write/Edit/Glob/Grep/Bash/Task                          |
-| pkuso-dba         | Sonnet    | 数据库变更（schema/RLS/枚举/migration，唯一可产出 migration） | + Supabase MCP tools（只读，用于查询和分析）                 |
-
-**模型选择理由**：reviewer 是纯机械性规则匹配（grep 文件名/颜色/import），不需要推理能力，Haiku 比 Sonnet 便宜 ~10 倍。其余 agent 都需要理解代码语义、做判断或生成内容，必须 Sonnet。
-
-### 编排流水线
-
-完整流程走 `/pkuso-pipeline` skill（定义在 `.claude/skills/pkuso-pipeline/SKILL.md`）：
+**主智能体直接实现业务代码**，实现完成后由**独立的 subagent** 做两道评审。早先的多智能体编排流水线（implementer / tester / dba 分工）**已废弃**。
 
 ```
-DBA(按需) → 实现 → 审查 → 对抗 → 测试 → 提交
+实现（主智能体） → 合规审查（subagent） → 对抗测试（subagent） → 提交
 ```
 
-- **关卡失败**：携带完整报告回 implementer 返工，从 reviewer 重走全流程，**禁止跳关**
-- **上下文隔离**：每次调用子智能体时传入完整背景（任务描述、涉及文件、验收标准、上一环节报告）
-- **透明声明**：激活子智能体前向用户输出 `🤖 正在激活 [Agent] 处理 [子任务]`
+### 两道评审关卡
 
-### 主智能体编辑权限
+| 环节     | 职责                                                          | 定义                                |
+| -------- | ------------------------------------------------------------- | ----------------------------------- |
+| 合规审查 | 对照本文件检查命名 / 颜色 Token / 架构 / 编码规范，只读不改码 | `.claude/agents/pkuso-reviewer.md`  |
+| 对抗测试 | 主动找 Bug、逻辑漏洞、边界情况，只读不改码                    | `.claude/agents/pkuso-adversary.md` |
 
-**主智能体只编排，不写业务代码。** `src/` 下的任何修改一律由 pkuso-implementer 执行——哪怕只是 reviewer 指出的一行小改，也必须携带报告回 implementer 返工。原因：子智能体上下文隔离，主智能体直接改会导致 reviewer 报告、implementer 自检声明与仓库实际状态脱节。
+- **必须是独立上下文的 subagent**：自己写的代码自己审有盲区 —— 这是这两道关卡存在的唯一理由
+- **关卡失败**：携带完整报告修复后，**从合规审查重走**，禁止跳关直接进提交
+- **透明声明**：激活 subagent 前向用户输出 `🤖 正在激活 [环节] ...`
+- **传入完整背景**：任务描述、涉及文件、验收标准、前序报告（subagent 上下文互相隔离，不要假设对方"记得"）
 
-唯一例外（微修复通道，同时满足全部条件）：
+### 编辑权限
 
-1. 单行内的纯机械修正（错别字、文案、import 顺序、格式化、显式类型标注），不含逻辑/条件/SQL/样式 token 变更
-2. 改完立即调 pkuso-reviewer 复核该行，拿到 PASS
-3. 最终交付汇报中显式声明"主智能体代改了什么、为什么"
+主智能体**直接编写业务代码**（与旧流程相反）。评审 subagent **只读、不修代码** —— 它们指出的问题由主智能体修复。
 
 ## 交付流程
 
-功能开发走 **Issue → 分支 → 编排流水线 → PR → CI → Squash Merge**。Conventional Commits 含 `Closes #<issue>`。
+功能开发走 **Issue → 分支 → 实现 → 合规审查 → 对抗测试 → PR → CI → Squash Merge**。Conventional Commits 含 `Closes #<issue>`。
 
 常见坑：
 

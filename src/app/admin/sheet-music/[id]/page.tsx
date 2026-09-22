@@ -58,7 +58,7 @@ export default function ScoreDetailPage() {
   }, [scoreId]);
 
   const downloadFile = async (filePath: string, fileName: string) => {
-    const { data, error } = await supabase.storage.from("sheet-music-files").download(filePath);
+    const { data, error } = await supabase.storage.from("sheet-music").download(filePath);
 
     if (error) {
       console.error("Download error:", error);

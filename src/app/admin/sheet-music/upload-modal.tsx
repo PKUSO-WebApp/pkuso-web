@@ -67,20 +67,18 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   };
 
   const analyzeInstrument = async (file: File): Promise<string | undefined> => {
-    // 取 PDF 第一页图片进行 OCR + LLM 分析
     try {
-      // 简单方式：将整个 PDF 作为 base64 发送（Edge Function 会处理）
       const base64 = await fileToBase64(file);
 
-      // 调用 OCR
+      // 调用 OCR（发送 PDF base64 + mime_type）
       const { data: ocrData } = await supabase.functions.invoke("ocr-analyze", {
-        body: { image_base64: base64, language: "eng" },
+        body: { file_base64: base64, mime_type: file.type || "application/pdf", language: "eng" },
       });
 
       if (ocrData?.success && ocrData.text) {
-        // 调用 LLM
+        // 调用 LLM（传入文件名辅助判断）
         const { data: llmData } = await supabase.functions.invoke("llm-analyze", {
-          body: { ocr_text: ocrData.text },
+          body: { ocr_text: ocrData.text, filename: file.name },
         });
 
         if (llmData?.success) {
@@ -130,7 +128,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         // 上传 PDF 到 Storage
         const filePath = `${scoreId}/${uploadFile.file.name}`;
         const { error: uploadError } = await supabase.storage
-          .from("sheet-music-files")
+          .from("sheet-music")
           .upload(filePath, uploadFile.file, { contentType: "application/pdf", upsert: true });
 
         if (uploadError) {

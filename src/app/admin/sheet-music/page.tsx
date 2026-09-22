@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { useAdminPageHeader } from "@/context/admin-page-header-context";
 import { UploadModal } from "./upload-modal";
 
 interface SheetMusic {
@@ -11,19 +13,51 @@ interface SheetMusic {
   composer: string | null;
   notes: string | null;
   created_at: string;
-  parts_count?: number;
 }
 
 export default function SheetMusicPage() {
   const router = useRouter();
+  const { setTitle, setHeaderRight } = useAdminPageHeader();
   const [scores, setScores] = useState<SheetMusic[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [selectedScoreId, setSelectedScoreId] = useState<string | null>(null);
   const [newScore, setNewScore] = useState({ title: "", composer: "", notes: "" });
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const fetchScores = useCallback(async () => {
+  useEffect(() => {
+    setTitle("谱务管理");
+    setHeaderRight(
+      <button
+        onClick={() => setShowCreateModal(true)}
+        className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded-lg hover:opacity-90"
+      >
+        新增
+      </button>,
+    );
+    return () => setHeaderRight(null);
+  }, [setTitle, setHeaderRight]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("sheet_music")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (error) throw error;
+        setScores(data || []);
+      } catch (error) {
+        console.error("Error fetching scores:", error);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const refetch = async () => {
     try {
       const { data, error } = await supabase
         .from("sheet_music")
@@ -34,10 +68,8 @@ export default function SheetMusicPage() {
       setScores(data || []);
     } catch (error) {
       console.error("Error fetching scores:", error);
-    } finally {
-      setLoading(false);
     }
-  }, []);
+  };
 
   const createScore = async () => {
     if (!newScore.title.trim()) return;
@@ -67,14 +99,43 @@ export default function SheetMusicPage() {
     }
   };
 
-  const openUpload = (scoreId: string) => {
-    setSelectedScoreId(scoreId);
-    setShowUploadModal(true);
-  };
+  const deleteScore = async (score: SheetMusic) => {
+    if (deletingId) return;
+    if (!confirm(`确认删除曲目「${score.title}」？`)) return;
 
-  useEffect(() => {
-    fetchScores();
-  }, [fetchScores]);
+    setDeletingId(score.id);
+    try {
+      // 查所有声部的文件，删 storage
+      const { data: parts } = await supabase
+        .from("sheet_music_parts")
+        .select("id")
+        .eq("sheet_music_id", score.id);
+
+      if (parts && parts.length > 0) {
+        const { data: files } = await supabase
+          .from("sheet_music_files")
+          .select("storage_path")
+          .in(
+            "part_id",
+            parts.map((p) => p.id),
+          );
+
+        if (files && files.length > 0) {
+          await supabase.storage.from("sheet-music").remove(files.map((f) => f.storage_path));
+        }
+      }
+
+      // DB CASCADE 删除 parts + files
+      const { error } = await supabase.from("sheet_music").delete().eq("id", score.id);
+      if (error) throw error;
+      setScores((prev) => prev.filter((s) => s.id !== score.id));
+    } catch (error) {
+      console.error("Delete score error:", error);
+      alert("删除失败");
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -85,20 +146,10 @@ export default function SheetMusicPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-text">谱务管理</h1>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90"
-        >
-          新增曲子
-        </button>
-      </div>
-
-      <div className="grid gap-4">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-3">
         {scores.length === 0 ? (
-          <div className="text-center py-12 text-text-muted">暂无曲子，点击「新增曲子」开始</div>
+          <div className="text-center py-12 text-text-muted">暂无曲子，点击右上角「新增」开始</div>
         ) : (
           scores.map((score) => (
             <div
@@ -107,27 +158,23 @@ export default function SheetMusicPage() {
               onClick={() => router.push(`/admin/sheet-music/${score.id}`)}
             >
               <div className="flex items-start justify-between">
-                <div>
+                <div className="flex-1 min-w-0">
                   <h3 className="font-semibold text-text">{score.title}</h3>
                   {score.composer && (
                     <p className="text-sm text-text-muted mt-1">{score.composer}</p>
                   )}
                   {score.notes && <p className="text-sm text-text-muted mt-1">{score.notes}</p>}
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openUpload(score.id);
-                    }}
-                    className="px-3 py-1 text-sm text-primary hover:bg-primary/10 rounded"
-                  >
-                    上传
-                  </button>
-                  <div className="text-sm text-text-muted">
-                    {new Date(score.created_at).toLocaleDateString("zh-CN")}
-                  </div>
-                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteScore(score);
+                  }}
+                  disabled={!!deletingId}
+                  className="ml-3 p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded shrink-0 disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
             </div>
           ))
@@ -204,7 +251,7 @@ export default function SheetMusicPage() {
           }}
           scoreId={selectedScoreId}
           onUploaded={() => {
-            fetchScores();
+            refetch();
           }}
         />
       )}

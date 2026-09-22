@@ -19,6 +19,7 @@ import {
   MessageSquare,
   Mail,
   Upload,
+  FileMusic,
 } from "lucide-react";
 
 interface FeatureItem {
@@ -139,6 +140,7 @@ export default function AdminHomePage() {
     { title: "系统通知", href: "/admin/system-notify", icon: Bell },
     { title: "反馈查看", href: "/admin/feedback", icon: MessageSquare },
     { title: "邮件设置", href: "/admin/email-settings", icon: Mail },
+    { title: "谱务管理", href: "/admin/sheet-music", icon: FileMusic },
     { title: "数据导入", href: "/admin/config/import", icon: Upload },
   ];
 

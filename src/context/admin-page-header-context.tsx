@@ -42,7 +42,7 @@ export function AdminPageHeaderProvider({ children }: { children: React.ReactNod
   });
 
   const setTitle = React.useCallback((title: string) => {
-    setState((prev) => ({ ...prev, title, hideBackButton: false, headerRight: null }));
+    setState((prev) => ({ ...prev, title, hideBackButton: false }));
   }, []);
 
   const setHeaderRight = React.useCallback((node: React.ReactNode) => {

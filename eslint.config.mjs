@@ -15,7 +15,14 @@ const eslintConfig = defineConfig([
       "react-hooks/set-state-in-effect": "warn",
     },
   },
-  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts"]),
+  globalIgnores([
+    ".next/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+    // pdf.js 的字体/解码资源（vendor 文件，从 node_modules/pdfjs-dist 拷贝）
+    "public/pdfjs/**",
+  ]),
 ]);
 
 export default eslintConfig;

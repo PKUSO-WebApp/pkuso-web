@@ -5,3 +5,5 @@ node_modules/
 coverage/
 *.tsbuildinfo
 src/types/database.types.ts
+# pdf.js 的字体/解码资源（vendor 文件，从 node_modules/pdfjs-dist 拷贝）
+public/pdfjs/

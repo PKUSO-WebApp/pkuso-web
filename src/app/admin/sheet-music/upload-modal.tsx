@@ -5,6 +5,7 @@ import JSZip from "jszip";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { supabase } from "@/lib/supabase";
+import { INSTRUMENT_ORDER, OTHER_INSTRUMENT_GROUP } from "@/constants/instruments";
 import type { PDFPageProxy } from "pdfjs-dist";
 import {
   decideTitleCrop,
@@ -13,53 +14,79 @@ import {
   type CropDecision,
 } from "./staff-line";
 
-// 英文乐器名 -> 中文映射（用于显示和文件名）
-const INSTRUMENT_CN_MAP: Record<string, string> = {
-  Violin: "小提琴",
-  Viola: "中提琴",
-  Cello: "大提琴",
-  Contrabass: "低音提琴",
-  Flute: "长笛",
-  Piccolo: "短笛",
-  Oboe: "双簧管",
-  Clarinet: "单簧管",
-  Bassoon: "巴松管",
-  Contrabassoon: "倍巴松管",
-  Horn: "圆号",
-  Trumpet: "小号",
-  Trombone: "长号",
-  Tuba: "大号",
-  Percussion: "打击乐",
-  Timpani: "定音鼓",
-  Drums: "鼓",
-  Triangle: "三角铁",
-  Cymbals: "钹",
-  Piano: "钢琴",
-  Celesta: "钢片琴",
-  Harp: "竖琴",
-  Guitar: "吉他",
-};
+/**
+ * 乐器名现在是**开放集**：后端 llm-analyze 直接返回中文（`木琴` / `英国管` /
+ * `低音单簧管`…），不再走「英文字典 → 中文」的映射。
+ *
+ * 原先那张 `INSTRUMENT_CN_MAP` 已删除 —— 它是开放集合的映射，每来一个新乐器就要
+ * 加一行，而新乐器是无限的，注定追不上（它把 Bassoon 译成「巴松管」，与项目标准
+ * 的「大管」冲突，就是这个割裂的产物）。
+ */
 
-// 小提琴特殊处理：1声部=第一小提琴，2声部=第二小提琴
-const VIOLIN_PART_CN: Record<number, string> = {
-  1: "第一小提琴",
-  2: "第二小提琴",
-};
-
-function toCn(inst: string): string {
-  return INSTRUMENT_CN_MAP[inst] || inst;
+/**
+ * 文件名：`{乐器名}[_{subPart}].pdf`。**声部不进文件名，它是目录**（见 pathOf）。
+ * 例：`打击乐/木琴.pdf`、`圆号/圆号_1.pdf`、`第一小提琴/小提琴_1.pdf`。
+ * 同名冲突由 subPart 后缀解决，重传靠 upsert 覆盖。
+ */
+function generateFileName(instrument: string, subPart: number | null): string {
+  const base = instrument.trim();
+  if (subPart !== null && subPart > 0) return `${base}_${subPart}.pdf`;
+  return `${base}.pdf`;
 }
 
-function generateFileName(instrument: string, subPart: number | null): string {
-  // 小提琴特殊处理
-  if (instrument === "Violin" && subPart !== null && subPart > 0) {
-    return `${VIOLIN_PART_CN[subPart] || `小提琴_${subPart}`}.pdf`;
-  }
-  const base = toCn(instrument).trim();
-  if (subPart !== null && subPart > 0) {
-    return `${base}_${subPart}.pdf`;
-  }
-  return `${base}.pdf`;
+/**
+ * 存储键：`{scoreId}/{行 id}.pdf`。
+ *
+ * ⚠️ **不能用声部/乐器名做路径段** —— Supabase Storage 的键只允许
+ * 字母数字与 `_ - . ' , ! * & $ @ = ; : + ? ( )` 和空白，**中日韩字符一律被
+ * 拒为 `Invalid key`**（官方文档 *File names restrictions*）。中文名此前一直
+ * 写在路径里，所以这个上传功能**从来没有成功过一次**（`sheet_music_files` 长期 0 行
+ * 就是这个原因，不是"新功能还没用"）。
+ *
+ * 人类可读的名字改放 DB：`sheet_music_files.file_name` 与 `.instrument` 两列，
+ * 下载时用 `download` 参数还原文件名。用行自己的 id 还顺带让「两个文件算出同一条
+ * 路径互相覆盖」由**构造**消失（每个键唯一），不再需要批内查重。
+ */
+function pathOf(scoreId: string, storageId: string): string {
+  return `${scoreId}/${storageId}.pdf`;
+}
+
+/** 零宽字符与控制字符。`.trim()` 不管它们 —— `"​".trim() === "​"` 是 JS 规范行为。 */
+const INVISIBLE = /[\p{Cf}\p{Cc}]/gu;
+
+/** 名字是不是「空的」：只有空白、或只有不可见字符，都算空。 */
+function isBlankName(s: string): boolean {
+  return s.replace(INVISIBLE, "").trim() === "";
+}
+
+/**
+ * 会被当成路径段的字段里不允许出现的东西。
+ *
+ * `..` 构成路径穿越；控制字符与零宽字符会造出「肉眼同名」的目录。
+ * **`/` 刻意不在此列** —— #12 明确允许「木琴/钟琴」这种合称，代价只是多一层目录；
+ * 后端对**它自己返回的**值用的是同一条判据（见 `llm-analyze/analyze.ts`），
+ * 这里补的是后端管不到的**用户手输**。
+ */
+const UNSAFE_IN_PATH = /\.\.|\p{Cc}|\p{Cf}/u;
+
+/**
+ * 后端返回的 `section` 是否落在项目标准的 16 声部内。
+ *
+ * **只校验，不映射** —— 后端 prompt 的词表与 `INSTRUMENT_ORDER` 是两份手抄副本，
+ * 这里是把「词表漂移」变成界面上的可见告警，而不是再引入一张跨仓同步的映射表。
+ * 「其他」是契约里的合法弃权声部，不算漂移。
+ */
+function isKnownSection(section: string): boolean {
+  return (
+    section === OTHER_INSTRUMENT_GROUP || (INSTRUMENT_ORDER as readonly string[]).includes(section)
+  );
+}
+
+/** 行内文案：识别出了什么 / 需人工确认（未识别时输入框留空、不预填） */
+function analysisSummary(section: string, instrument: string, subPart: number | null): string {
+  if (!instrument) return "需人工确认（未识别出乐器）";
+  const sub = subPart !== null && subPart > 0 ? ` ${subPart}` : "";
+  return `识别结果: ${section} / ${instrument}${sub}`;
 }
 
 interface UploadFile {
@@ -67,10 +94,19 @@ interface UploadFile {
   originalName: string; // 原始文件名，展示用；上传文件名由 generateFileName 生成
   status: "pending" | "analyzing" | "analyzed" | "uploading" | "done" | "error";
   error?: string;
+  /** 声部（闭集，写进 sheet_music_parts.section，也是存储路径的目录） */
+  sectionGuess?: string;
+  sectionEdit?: string;
+  /** 中文乐器名（开集，写进 sheet_music_files.instrument，也是文件名主干的来源） */
   instrumentGuess?: string;
   instrumentEdit?: string;
   subPartGuess?: number | null;
   subPartEdit?: number | null;
+  /**
+   * 存储键里那一段 id。**每行生成一次、重试复用**，这样失败重传走 `upsert`
+   * 覆盖同一个对象，不会留下一堆孤儿文件。
+   */
+  storageId?: string;
   ocrText?: string;
   llmResult?: string;
   preview?: string; // 实际送去 OCR 的那张图的缩略图（排查用）
@@ -503,10 +539,13 @@ async function runOcr(imageBase64: string): Promise<string> {
  * 而它们的页面常是扫描乐谱、OCR 读出来是乱的 —— 这种情况下文件名比 OCR 可靠得多。
  * 后端 llm-analyze 只接受 text/ocr_text 字段，因此这里合并成一段文本发送。
  */
-async function runLlmAnalysis(
-  fileName: string,
-  ocrText: string,
-): Promise<{ instrument: string; subPart: number | null }> {
+interface LlmAnalysis {
+  section: string;
+  instrument: string;
+  subPart: number | null;
+}
+
+async function runLlmAnalysis(fileName: string, ocrText: string): Promise<LlmAnalysis> {
   const input = [`文件名: ${fileName}`];
   if (ocrText) input.push(`OCR 文本: ${ocrText}`);
 
@@ -518,7 +557,14 @@ async function runLlmAnalysis(
     throw new Error(`LLM 请求失败: ${await invokeErrorDetail(error)}`);
   }
   if (data?.success) {
-    return { instrument: String(data.instrument), subPart: data.subPart ?? null };
+    // 响应字段平铺在顶层。`instrument` 为空串即「未识别」—— 后端把
+    // 「证据不足 / 答不出来（unknown、无法判断…）」都收敛成了空串，
+    // 所以这里**不预填**，见 startAnalysis 里的处理。
+    return {
+      section: String(data.section ?? OTHER_INSTRUMENT_GROUP),
+      instrument: String(data.instrument ?? ""),
+      subPart: data.subPart ?? null,
+    };
   }
   throw new Error(`LLM 分析失败: ${data?.error || data?.message || "未知错误"}`);
 }
@@ -666,27 +712,23 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
       updateFile(i, { llmResult: "等待 LLM 分析..." });
       try {
-        let { instrument, subPart } = await runLlmAnalysis(files[i].originalName, ocrText);
+        let analysis = await runLlmAnalysis(files[i].originalName, ocrText);
 
-        // LLM 判不出乐器时，回退整页 OCR 再判一次。
-        //
-        // ⚠️ 这条分支目前不会触发，属预期而非 bug：后端 llm-analyze 的 prompt 自相矛盾 ——
-        // 规则 2「instrument 必须完全匹配列表」与规则 4「无法识别返回 unknown」冲突，
-        // temperature 为 0 时 LLM 会硬选列表里最接近的一个（Campanelli e Silofono 被判成
-        // Percussion 就是这么来的），于是 unknown 几乎不出现。后端修复在 pkuso-backend
-        // 单独进行；修好之前这里保持原样，不要当成死代码删掉。
-        if (instrument === "unknown" && rendered?.cropped && !usedFullPage) {
+        // 识别不出时回退整页 OCR 再判一次：裁切条只含首页标题区，
+        // 乐器名未必落在那里。空串是后端约定的「未识别」——
+        // 它把「证据不足」和模型答「unknown / 无法判断」都收敛成了空串。
+        if (!analysis.instrument && rendered?.cropped && !usedFullPage) {
           const { fullBase64, fullPreview, preview, cropNote } = rendered;
           usedFullPage = true;
           try {
-            updateFile(i, { llmResult: "LLM 无法判断，回退整页 OCR 重试..." });
+            updateFile(i, { llmResult: "未能识别，回退整页 OCR 重试..." });
             ocrText = await runOcr(fullBase64);
-            ({ instrument, subPart } = await runLlmAnalysis(files[i].originalName, ocrText));
+            analysis = await runLlmAnalysis(files[i].originalName, ocrText);
             // 两步都成功了才改缩略图与裁切说明，否则界面会说「已改用整页」而结果其实来自裁切条
             updateFile(i, {
               ocrText,
               preview: fullPreview || preview || undefined,
-              cropNote: `${cropNote}｜回退项：LLM 判为 unknown，已改用整页`,
+              cropNote: `${cropNote}｜回退项：未能识别，已改用整页`,
             });
           } catch (err) {
             // 回退失败就保留第一次的结果，不要让整行失败
@@ -695,14 +737,21 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           }
         }
 
-        const display = subPart !== null ? `${instrument} ${subPart}` : instrument;
+        const { section, instrument, subPart } = analysis;
+        // 未识别时**不预填** instrumentEdit（留空串）：预填一个猜测值会被用户直接
+        // 接受，等于把错误洗成「已确认」。空的输入框会逼用户做一次真实判断。
         updateFile(i, {
           status: "analyzed",
-          llmResult: `识别结果: ${display}`,
+          llmResult: analysisSummary(section, instrument, subPart),
+          sectionGuess: section,
+          sectionEdit: section,
           instrumentGuess: instrument,
           instrumentEdit: instrument,
           subPartGuess: subPart,
           subPartEdit: subPart,
+          // 存储键要在**分析完成时**就定下来（每行一次、重试复用），
+          // 而不是每次点上传现生成 —— 否则失败重传会不断产生新对象。
+          storageId: crypto.randomUUID(),
         });
       } catch (err) {
         updateFile(i, {
@@ -720,19 +769,23 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     setPhase("confirm");
   };
 
-  const getOrCreatePart = async (instrument: string): Promise<string | null> => {
+  /**
+   * 声部现在是**闭集**，分组靠 `section` 而不是乐器名 —— 木琴与马林巴都归打击乐，
+   * 低音大管归大管。乐器名只进文件名与展示。
+   */
+  const getOrCreatePart = async (section: string): Promise<string | null> => {
     const { data: existing } = await supabase
       .from("sheet_music_parts")
       .select("id")
       .eq("sheet_music_id", scoreId)
-      .eq("instrument", instrument)
+      .eq("section", section)
       .maybeSingle();
 
     if (existing) return existing.id;
 
     const { data: newPart, error } = await supabase
       .from("sheet_music_parts")
-      .insert({ sheet_music_id: scoreId, instrument })
+      .insert({ sheet_music_id: scoreId, section })
       .select("id")
       .single();
 
@@ -745,6 +798,25 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
   const handleInstrumentChange = (index: number, value: string) => {
     updateFile(index, { instrumentEdit: value });
+  };
+
+  const handleSectionChange = (index: number, value: string) => {
+    updateFile(index, { sectionEdit: value });
+  };
+
+  /**
+   * 预览「这将存成什么名字」。乐器名为空时返回空串。
+   *
+   * 预览的是**人类可读的名字**（`声部 / 文件名`）而不是真实的存储键 ——
+   * 存储键现在是 `{scoreId}/{行 id}.pdf`，给用户看一串 uuid 没有意义；
+   * 可读名落 `sheet_music_files.file_name`，下载时会用它还原文件名。
+   */
+  const previewPath = (f: UploadFile) => {
+    const instrument = (f.instrumentEdit ?? f.instrumentGuess ?? "").trim();
+    if (!instrument) return "";
+    const section = (f.sectionEdit ?? f.sectionGuess ?? "").trim();
+    const subPart = f.subPartEdit !== undefined ? f.subPartEdit : (f.subPartGuess ?? null);
+    return `${section} / ${generateFileName(instrument, subPart)}`;
   };
 
   const handleSubPartChange = (index: number, value: string) => {
@@ -777,7 +849,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         // 而非抛错，是断网的默认路径）会把该文件在同一会话内永久钉死
         if (uploadFile.status === "done") continue;
 
-        const instrument = uploadFile.instrumentEdit || uploadFile.instrumentGuess;
+        // 声部与乐器名分开取：声部是闭集（写进 parts.section，也是存储目录名），
+        // 乐器名是开集（写进 files.instrument，也是文件名主干）
+        const section = (uploadFile.sectionEdit ?? uploadFile.sectionGuess ?? "").trim();
+        const instrument = (uploadFile.instrumentEdit ?? uploadFile.instrumentGuess ?? "").trim();
         // 用 undefined 判断而不是 ??：用户把分声部清空时 subPartEdit 是 null，
         // 用 ?? 会被 subPartGuess 悄悄捡回来，导致「清不掉」
         const subPart =
@@ -785,21 +860,41 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             ? uploadFile.subPartEdit
             : (uploadFile.subPartGuess ?? null);
 
-        if (!instrument) {
-          updateFile(i, { status: "error", error: "未指定声部" });
+        // 这里也把 `?? ` 而不是 `||` 用在 instrument 上：用户主动清空输入框时
+        // 不该被 instrumentGuess 悄悄捡回来 —— 空乐器名必须**拦下**（后端的
+        // 「未识别」正是空串），否则会建出一个没有名字的声部/文件。
+        // 拦下，但**不改状态**。这两行缺的是用户补填，而编辑器只在有识别结果的行上
+        // 渲染 —— 置成 error 会让输入框消失，界面变成「让你填却没有字段可填」，
+        // 用户只能关掉弹窗、连带丢掉整批已经烧掉 OCR 配额的分析结果。
+        //
+        // 空判据必须**连不可见字符一起算空**：`"​".trim()` 还是它自己，
+        // 放过去会建出一个肉眼看着是空、实际叫 "​" 的声部与文件。
+        if (isBlankName(instrument) || isBlankName(section)) {
+          updateFile(i, {
+            error: isBlankName(instrument)
+              ? "未识别的乐器名，请先填写再上传"
+              : "未指定声部，请先填写再上传",
+          });
           continue;
         }
+        // 后端只管得住它自己返回的值，用户手输的这一层得前端自己把关
+        if (UNSAFE_IN_PATH.test(instrument) || UNSAFE_IN_PATH.test(section)) {
+          updateFile(i, { error: "声部或乐器名里不能有「..」或控制字符" });
+          continue;
+        }
+        // 这一行能往下走了，把上一次的拦截/失败提示清掉，免得文案留在界面上说谎
+        updateFile(i, { error: undefined });
 
         updateFile(i, { status: "uploading" });
 
-        const partId = await getOrCreatePart(instrument);
+        const partId = await getOrCreatePart(section);
         if (!partId) {
           updateFile(i, { status: "error", error: "创建声部失败" });
           continue;
         }
 
         const generatedFileName = generateFileName(instrument, subPart);
-        const filePath = `${scoreId}/${instrument}/${generatedFileName}`;
+        const filePath = pathOf(scoreId, uploadFile.storageId ?? crypto.randomUUID());
         const { error: uploadError } = await supabase.storage
           .from("sheet-music")
           .upload(filePath, uploadFile.file, { contentType: "application/pdf", upsert: true });
@@ -813,6 +908,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           part_id: partId,
           storage_path: filePath,
           file_name: generatedFileName,
+          // 乐器名单独存一列，与派生出的文件名分开 —— 便于区分
+          // 「LLM 答错」与「文件名生成错」
+          instrument,
           file_size: uploadFile.file.size,
           uploaded_by: user.id,
         });
@@ -846,24 +944,37 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
   const statusText = (f: UploadFile) => {
     // 取 Edit 优先的值：用户清空分声部后，行文案必须与文件名预览、落库结果一致，
-    // 否则用户会以为「清空没生效」
-    const inst = toCn(f.instrumentEdit || f.instrumentGuess || "");
+    // 否则用户会以为「清空没生效」。用 `??` 而不是 `||` —— 主动清空乐器名时
+    // 不该被 Guess 悄悄捡回来。
+    const section = f.sectionEdit ?? f.sectionGuess ?? "";
+    const instrument = f.instrumentEdit ?? f.instrumentGuess ?? "";
     const subPart = f.subPartEdit !== undefined ? f.subPartEdit : f.subPartGuess;
-    const sub = subPart !== null && subPart !== undefined ? ` ${subPart}` : "";
+    const sub = subPart !== null && subPart !== undefined && subPart > 0 ? ` ${subPart}` : "";
     switch (f.status) {
       case "pending":
         return "待分析";
       case "analyzing":
         return "分析中...";
       case "analyzed":
-        return inst ? `已识别 → ${inst}${sub}` : "识别失败";
+        // 空乐器名 = 后端弃权（证据不足 / 答不出来），必须与「已识别」区分开：
+        // 输入框是空的、等用户填，不能显示成识别成功
+        return instrument ? `已识别 → ${section} / ${instrument}${sub}` : "需人工确认";
       case "uploading":
         return "上传中...";
       case "done":
-        return inst ? `已上传 → ${inst}${sub}` : "已上传";
+        return instrument ? `已上传 → ${section} / ${instrument}${sub}` : "已上传";
       case "error":
         return `失败: ${f.error}`;
     }
+  };
+
+  /**
+   * 声部词表漂移告警。后端 prompt 里的 16 个声部名与前端 `INSTRUMENT_ORDER`
+   * 是两份手抄副本，没有跨仓同步机制 —— 这条告警就是那个机制缺席时的可见信号。
+   */
+  const sectionWarning = (f: UploadFile) => {
+    const s = (f.sectionEdit ?? f.sectionGuess ?? "").trim();
+    return s && !isKnownSection(s) ? `声部「${s}」不在标准列表内` : "";
   };
 
   const statusColor = (status: UploadFile["status"]) => {
@@ -888,12 +999,32 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
   // 是否有文件正在分析中
   const hasAnalyzingFiles = files.some((f) => f.status === "analyzing");
-  // 是否有已分析成功的文件（用于启用确认按钮）
-  const hasAnalyzedFiles = files.some((f) => f.status === "analyzed");
+  /**
+   * 这次点「确认上传」真的会去传的行数（兼作按钮的启用判据与进度显示）。
+   *
+   * 判据必须是「**还没传成功的、且分析过**」，不能是「状态是 analyzed」——
+   * 上传失败的行会变 `error`，若不算进来，analyzed 计数归零会让按钮**永久禁用**，
+   * 而上传循环的注释明写「失败的行要允许重试」。那时用户唯一的出路是关掉弹窗，
+   * 而代价是丢掉整批已经烧掉 OCR 配额的分析结果。
+   */
+  const uploadableCount = files.filter(
+    (f) => f.status !== "done" && f.instrumentGuess !== undefined,
+  ).length;
 
   return (
-    <Modal open={open} onClose={onClose} title="上传乐谱文件">
-      <div className="space-y-4">
+    // 用全屏层而不是默认的底部弹窗：20 个文件的结果 + 每行的三个输入框，
+    // 底部弹窗装不下（原先列表只有 max-h-80，剩下的全靠页面自己滚）。
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="上传乐谱文件"
+      position="fullscreen"
+      // 上传途中不让点遮罩关掉：会静默中止剩余的传输，用户以为只是关了窗口。
+      // 仓库既有写法同此（page.tsx 新增曲子弹窗、create-schedule-modal.tsx）。
+      // 分析阶段仍可关（那是「取消分析」的正当出口）。
+      closeOnOverlay={phase !== "uploading"}
+    >
+      <div className="flex flex-1 min-h-0 flex-col gap-4">
         {phase === "select" && (
           <>
             <div
@@ -914,7 +1045,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
             {files.length > 0 && (
               <>
-                <div className="space-y-2 max-h-60 overflow-y-auto">
+                <div className="flex-1 min-h-0 overflow-y-auto space-y-2">
                   {files.map((f, i) => (
                     <div
                       key={i}
@@ -953,76 +1084,17 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           </>
         )}
 
-        {phase === "analyzing" && (
-          <div className="space-y-2 max-h-80 overflow-y-auto">
-            {files.map((f, i) => (
-              <div key={i} className="bg-card border border-border rounded-lg overflow-hidden">
-                <div className="flex items-center justify-between px-3 py-2">
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    {hasDetails(f) ? (
-                      <button
-                        onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
-                        className="shrink-0 text-text-muted hover:text-text"
-                      >
-                        {expandedIdx === i ? (
-                          <ChevronDown className="w-4 h-4" />
-                        ) : (
-                          <ChevronRight className="w-4 h-4" />
-                        )}
-                      </button>
-                    ) : (
-                      <span className="w-4 shrink-0" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-text truncate">{f.originalName}</p>
-                      <p className={`text-xs ${statusColor(f.status)}`}>{statusText(f)}</p>
-                    </div>
-                  </div>
-                  {f.status === "analyzing" && (
-                    <span className="animate-spin text-primary">⏳</span>
-                  )}
-                </div>
-                {expandedIdx === i && hasDetails(f) && (
-                  <div className="border-t border-border px-3 py-2 text-xs space-y-2 bg-muted/30">
-                    {f.preview && (
-                      <div>
-                        <span className="font-medium text-text-muted">
-                          送检图像{f.sourcePage ? `（第 ${f.sourcePage} 页）` : ""}：
-                        </span>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={f.preview}
-                          alt="送去 OCR 的图像"
-                          className="mt-1 w-40 border border-border rounded"
-                        />
-                      </div>
-                    )}
-                    {f.cropNote && <p className="text-text-muted">{f.cropNote}</p>}
-                    {f.warning && <p className="text-warning">{f.warning}</p>}
-                    {f.ocrText && (
-                      <div>
-                        <span className="font-medium text-text-muted">OCR 文本：</span>
-                        <pre className="mt-1 p-2 bg-muted border border-border rounded text-text max-h-24 overflow-y-auto whitespace-pre-wrap break-all">
-                          {f.ocrText}
-                        </pre>
-                      </div>
-                    )}
-                    {f.llmResult && (
-                      <div>
-                        <span className="font-medium text-text-muted">LLM 结果：</span>
-                        <p className="mt-1 text-text">{f.llmResult}</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {(phase === "confirm" || phase === "uploading") && (
+        {/*
+         * 单一列表，**按行状态驱动**而不是按阶段切换。
+         *
+         * 原先「分析中」与「确认」是两个几乎相同的块，编辑 UI 只长在后者里 ——
+         * 于是用户必须等**全部**文件跑完才能改任何一个。现在两者合并：某个文件
+         * 一分析完（status 变 "analyzed"）它那一行的输入框就出现，不必等其余的。
+         */}
+        {phase !== "select" && (
           <>
-            <div className="space-y-2 max-h-80 overflow-y-auto">
+            {/* flex-1 min-h-0：全屏层里列表吃掉剩余高度、自己滚；页脚固定在底部 */}
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-2">
               {files.map((f, i) => (
                 <div key={i} className="bg-card border border-border rounded-lg overflow-hidden">
                   <div className="px-3 py-2 space-y-2">
@@ -1045,61 +1117,108 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                         <p className="text-sm text-text truncate">{f.originalName}</p>
                         <p className={`text-xs ${statusColor(f.status)}`}>{statusText(f)}</p>
                       </div>
+                      {f.status === "analyzing" && (
+                        <span className="shrink-0 animate-spin text-primary">⏳</span>
+                      )}
                     </div>
 
-                    {f.status === "analyzed" && (
-                      <div className="space-y-1.5 pl-5 border-l border-border">
-                        <div className="flex items-center gap-0.5">
-                          <label className="text-xs text-text-muted w-12 shrink-0">乐器</label>
-                          <input
-                            type="text"
-                            value={f.instrumentEdit || ""}
-                            onChange={(e) => handleInstrumentChange(i, e.target.value)}
-                            placeholder="乐器名"
-                            className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-26 shrink-0"
-                          />
-                          <label className="text-xs text-text-muted w-12 shrink-0 ml-1">
-                            分声部
-                          </label>
-                          <input
-                            type="text"
-                            value={
-                              f.subPartEdit !== null && f.subPartEdit !== undefined
-                                ? String(f.subPartEdit)
-                                : ""
-                            }
-                            onChange={(e) => handleSubPartChange(i, e.target.value)}
-                            placeholder="分声部号"
-                            className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-8 shrink-0"
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                          />
-                          <button
-                            onClick={() =>
-                              updateFile(i, {
-                                instrumentEdit: f.instrumentGuess || "",
-                                subPartEdit: f.subPartGuess,
-                              })
-                            }
-                            className="p-1 text-text-muted hover:text-primary shrink-0"
-                            title="重置为识别结果"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <span className="text-xs text-text-muted">预览：</span>
-                          <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
-                            {generateFileName(
-                              f.instrumentEdit || f.instrumentGuess || "",
-                              f.subPartEdit !== undefined
-                                ? f.subPartEdit
-                                : (f.subPartGuess ?? null),
+                    {/* 只要这一行**有识别结果**就渲染编辑器，不只是 analyzed：
+                        上传失败的行同样需要能改（否则名字打错一次就把该行钉死，
+                        只能关掉弹窗重来）。用 `instrumentGuess !== undefined` 区分
+                        「分析过」与「分析本身就失败了」——后者没有可编辑的内容。 */}
+                    {(f.status === "analyzed" || f.status === "error") &&
+                      f.instrumentGuess !== undefined && (
+                        <div className="space-y-1.5 pl-5 border-l border-border">
+                          <div className="flex items-center gap-0.5">
+                            <label className="text-xs text-text-muted w-12 shrink-0">声部</label>
+                            {/* 声部按契约是**闭集**，所以用 select 而不是自由文本 ——
+                                否则用户能凭空造出一个声部名写进 parts.section、还会变成
+                                storage 的目录（`/` 与 `..` 一并进路径）。后端返回的值若
+                                不在闭集里，临时补一个选项把它显示出来：词表漂移依然
+                                看得见、也依然改得掉。 */}
+                            <select
+                              value={f.sectionEdit ?? f.sectionGuess ?? OTHER_INSTRUMENT_GROUP}
+                              onChange={(e) => handleSectionChange(i, e.target.value)}
+                              disabled={phase === "uploading"}
+                              className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-26 shrink-0 disabled:opacity-50"
+                            >
+                              {!isKnownSection(f.sectionEdit ?? f.sectionGuess ?? "") && (
+                                <option value={f.sectionEdit ?? f.sectionGuess ?? ""}>
+                                  {f.sectionEdit ?? f.sectionGuess}（非标准）
+                                </option>
+                              )}
+                              {INSTRUMENT_ORDER.map((s) => (
+                                <option key={s} value={s}>
+                                  {s}
+                                </option>
+                              ))}
+                              <option value={OTHER_INSTRUMENT_GROUP}>
+                                {OTHER_INSTRUMENT_GROUP}
+                              </option>
+                            </select>
+                            <label className="text-xs text-text-muted w-12 shrink-0 ml-1">
+                              乐器
+                            </label>
+                            <input
+                              type="text"
+                              value={f.instrumentEdit ?? f.instrumentGuess ?? ""}
+                              onChange={(e) => handleInstrumentChange(i, e.target.value)}
+                              placeholder="乐器名"
+                              disabled={phase === "uploading"}
+                              className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-26 shrink-0 disabled:opacity-50"
+                            />
+                            <label className="text-xs text-text-muted w-12 shrink-0 ml-1">
+                              分声部
+                            </label>
+                            <input
+                              type="text"
+                              value={
+                                f.subPartEdit !== null && f.subPartEdit !== undefined
+                                  ? String(f.subPartEdit)
+                                  : ""
+                              }
+                              onChange={(e) => handleSubPartChange(i, e.target.value)}
+                              placeholder="号"
+                              disabled={phase === "uploading"}
+                              className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-8 shrink-0 disabled:opacity-50"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                            />
+                            <button
+                              onClick={() =>
+                                updateFile(i, {
+                                  sectionEdit: f.sectionGuess ?? OTHER_INSTRUMENT_GROUP,
+                                  instrumentEdit: f.instrumentGuess ?? "",
+                                  subPartEdit: f.subPartGuess,
+                                })
+                              }
+                              disabled={phase === "uploading"}
+                              className="p-1 text-text-muted hover:text-primary shrink-0 disabled:opacity-50"
+                              title="重置为识别结果"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                          {sectionWarning(f) && (
+                            <p className="text-xs text-warning">{sectionWarning(f)}</p>
+                          )}
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-text-muted">路径：</span>
+                            {previewPath(f) ? (
+                              <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono break-all">
+                                {previewPath(f)}
+                              </code>
+                            ) : (
+                              <span className="text-xs text-text-muted">填写乐器名后显示</span>
                             )}
-                          </code>
+                          </div>
+                          {!(f.instrumentEdit ?? f.instrumentGuess ?? "").trim() && (
+                            <p className="text-xs text-warning">未识别出乐器，请先填写再上传</p>
+                          )}
+                          {/* 拦截提示与上传失败原因都落在这里 —— 行状态可能仍是 analyzed */}
+                          {f.error && <p className="text-xs text-danger">{f.error}</p>}
                         </div>
-                      </div>
-                    )}
+                      )}
                   </div>
 
                   {expandedIdx === i && hasDetails(f) && (
@@ -1141,23 +1260,24 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
             <div className="flex justify-end gap-3 pt-2 border-t border-border">
               <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">
-                取消
+                {phase === "analyzing" ? "取消分析" : "取消"}
               </button>
-              {phase === "confirm" && (
-                <button
-                  onClick={confirmUpload}
-                  disabled={!hasAnalyzedFiles || hasAnalyzingFiles}
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
-                >
-                  确认上传 ({files.filter((f) => f.status === "analyzed").length} 个文件)
-                </button>
-              )}
-              {phase === "uploading" && (
+              {/* 分析期间就把「确认上传」显示出来、但禁用：让用户看得见终点在哪、
+                  还差几个文件，而不是对着一个转圈图标猜还要等多久。 */}
+              {phase === "uploading" ? (
                 <button
                   disabled
                   className="px-4 py-2 bg-primary text-primary-foreground rounded-lg opacity-50"
                 >
                   上传中...
+                </button>
+              ) : (
+                <button
+                  onClick={confirmUpload}
+                  disabled={phase === "analyzing" || uploadableCount === 0 || hasAnalyzingFiles}
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
+                >
+                  确认上传（{uploadableCount}/{files.length}）
                 </button>
               )}
             </div>

@@ -76,6 +76,24 @@ describe("Modal 焦点管理（Issue #186）", () => {
     expect(overlay).toHaveAttribute("tabindex", "-1");
   });
 
+  it("fullscreen 变体沿用同一套焦点机制（换布局不该绕过 trap）", () => {
+    const onClose = vi.fn();
+    render(
+      <Modal open onClose={onClose} title="全屏层" position="fullscreen">
+        <input aria-label="输入框" placeholder="输入" />
+        <button type="button">面板按钮</button>
+      </Modal>,
+    );
+    const dialog = screen.getByRole("dialog");
+    // 焦点仍然移入面板根
+    expect(document.activeElement).toBe(dialog.querySelector('div[tabindex="-1"]'));
+    // Tab 仍然在面板内循环
+    const panelBtn = screen.getByRole("button", { name: "面板按钮" });
+    panelBtn.focus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "关闭" }));
+  });
+
   it("inert 子树内元素不参与 Tab 循环", () => {
     render(
       <div>

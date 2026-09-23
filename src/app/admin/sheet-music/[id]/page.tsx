@@ -17,7 +17,9 @@ interface SheetMusicFile {
 
 interface SheetMusicPart {
   id: string;
-  instrument: string;
+  /** 声部名。旧的 `instrument` 列已废弃（识别改造后语义迁到 `section`），
+   *  新写入的行该列为 NULL —— 所以这里读 section，且允许为空。 */
+  section: string | null;
   sort_order: number;
   files: SheetMusicFile[];
 }
@@ -161,7 +163,7 @@ export default function ScoreDetailPage() {
   const deletePart = async (part: SheetMusicPart) => {
     if (deletingId) return;
     const fileCount = part.files.length;
-    if (!confirm(`确认删除声部「${part.instrument}」及其 ${fileCount} 个文件？`)) return;
+    if (!confirm(`确认删除声部「${part.section ?? "未命名"}」及其 ${fileCount} 个文件？`)) return;
 
     setDeletingId(part.id);
     try {
@@ -236,7 +238,7 @@ export default function ScoreDetailPage() {
                 >
                   <div className="flex items-center justify-between px-4 py-2 bg-muted/50 border-b border-border">
                     <div>
-                      <span className="font-medium text-text">{part.instrument}</span>
+                      <span className="font-medium text-text">{part.section ?? "未命名"}</span>
                       <span className="text-xs text-text-muted ml-2">
                         {part.files.length} 个文件
                       </span>

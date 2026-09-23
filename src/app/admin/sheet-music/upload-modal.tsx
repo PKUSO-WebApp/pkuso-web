@@ -933,6 +933,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   const hasAnalyzingFiles = files.some((f) => f.status === "analyzing");
   // 是否有已分析成功的文件（用于启用确认按钮）
   const hasAnalyzedFiles = files.some((f) => f.status === "analyzed");
+  // 已分析完的数量，用于在按钮上显示进度（分析期间按钮是禁用的，见页脚）
+  const analyzedCount = files.filter((f) => f.status === "analyzed").length;
 
   return (
     <Modal open={open} onClose={onClose} title="上传乐谱文件">
@@ -996,74 +998,14 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           </>
         )}
 
-        {phase === "analyzing" && (
-          <div className="space-y-2 max-h-80 overflow-y-auto">
-            {files.map((f, i) => (
-              <div key={i} className="bg-card border border-border rounded-lg overflow-hidden">
-                <div className="flex items-center justify-between px-3 py-2">
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    {hasDetails(f) ? (
-                      <button
-                        onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
-                        className="shrink-0 text-text-muted hover:text-text"
-                      >
-                        {expandedIdx === i ? (
-                          <ChevronDown className="w-4 h-4" />
-                        ) : (
-                          <ChevronRight className="w-4 h-4" />
-                        )}
-                      </button>
-                    ) : (
-                      <span className="w-4 shrink-0" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-text truncate">{f.originalName}</p>
-                      <p className={`text-xs ${statusColor(f.status)}`}>{statusText(f)}</p>
-                    </div>
-                  </div>
-                  {f.status === "analyzing" && (
-                    <span className="animate-spin text-primary">⏳</span>
-                  )}
-                </div>
-                {expandedIdx === i && hasDetails(f) && (
-                  <div className="border-t border-border px-3 py-2 text-xs space-y-2 bg-muted/30">
-                    {f.preview && (
-                      <div>
-                        <span className="font-medium text-text-muted">
-                          送检图像{f.sourcePage ? `（第 ${f.sourcePage} 页）` : ""}：
-                        </span>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={f.preview}
-                          alt="送去 OCR 的图像"
-                          className="mt-1 w-40 border border-border rounded"
-                        />
-                      </div>
-                    )}
-                    {f.cropNote && <p className="text-text-muted">{f.cropNote}</p>}
-                    {f.warning && <p className="text-warning">{f.warning}</p>}
-                    {f.ocrText && (
-                      <div>
-                        <span className="font-medium text-text-muted">OCR 文本：</span>
-                        <pre className="mt-1 p-2 bg-muted border border-border rounded text-text max-h-24 overflow-y-auto whitespace-pre-wrap break-all">
-                          {f.ocrText}
-                        </pre>
-                      </div>
-                    )}
-                    {f.llmResult && (
-                      <div>
-                        <span className="font-medium text-text-muted">LLM 结果：</span>
-                        <p className="mt-1 text-text">{f.llmResult}</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {(phase === "confirm" || phase === "uploading") && (
+        {/*
+         * 单一列表，**按行状态驱动**而不是按阶段切换。
+         *
+         * 原先「分析中」与「确认」是两个几乎相同的块，编辑 UI 只长在后者里 ——
+         * 于是用户必须等**全部**文件跑完才能改任何一个。现在两者合并：某个文件
+         * 一分析完（status 变 "analyzed"）它那一行的输入框就出现，不必等其余的。
+         */}
+        {phase !== "select" && (
           <>
             <div className="space-y-2 max-h-80 overflow-y-auto">
               {files.map((f, i) => (
@@ -1088,6 +1030,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                         <p className="text-sm text-text truncate">{f.originalName}</p>
                         <p className={`text-xs ${statusColor(f.status)}`}>{statusText(f)}</p>
                       </div>
+                      {f.status === "analyzing" && (
+                        <span className="shrink-0 animate-spin text-primary">⏳</span>
+                      )}
                     </div>
 
                     {f.status === "analyzed" && (
@@ -1201,23 +1146,24 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
             <div className="flex justify-end gap-3 pt-2 border-t border-border">
               <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">
-                取消
+                {phase === "analyzing" ? "取消分析" : "取消"}
               </button>
-              {phase === "confirm" && (
-                <button
-                  onClick={confirmUpload}
-                  disabled={!hasAnalyzedFiles || hasAnalyzingFiles}
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
-                >
-                  确认上传 ({files.filter((f) => f.status === "analyzed").length} 个文件)
-                </button>
-              )}
-              {phase === "uploading" && (
+              {/* 分析期间就把「确认上传」显示出来、但禁用：让用户看得见终点在哪、
+                  还差几个文件，而不是对着一个转圈图标猜还要等多久。 */}
+              {phase === "uploading" ? (
                 <button
                   disabled
                   className="px-4 py-2 bg-primary text-primary-foreground rounded-lg opacity-50"
                 >
                   上传中...
+                </button>
+              ) : (
+                <button
+                  onClick={confirmUpload}
+                  disabled={phase === "analyzing" || !hasAnalyzedFiles || hasAnalyzingFiles}
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
+                >
+                  确认上传（{analyzedCount}/{files.length}）
                 </button>
               )}
             </div>

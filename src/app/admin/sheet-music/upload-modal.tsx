@@ -42,8 +42,9 @@ import {
  * 就是这个原因，不是"新功能还没用"）。
  *
  * 人类可读的名字改放 DB：`sheet_music_files.file_name` 与 `.instrument` 两列，
- * 下载时用 `download` 参数还原文件名。用行自己的 id 还顺带让「两个文件算出同一条
- * 路径互相覆盖」由**构造**消失（每个键唯一），不再需要批内查重。
+ * 下载时由客户端 `a.download = file_name` 还原文件名（`storage.download(path)`
+ * 拿回 blob 后自己触发下载，**不走 `download` 选项**）。用行自己的 id 还顺带让
+ * 「两个文件算出同一条路径互相覆盖」由**构造**消失（每个键唯一），不再需要批内查重。
  */
 function pathOf(scoreId: string, storageId: string): string {
   return `${scoreId}/${storageId}.pdf`;
@@ -68,7 +69,9 @@ function isBlankName(s: string): boolean {
  * （`pkuso-backend` 的 `analyze.ts`：`MAX_INSTRUMENT_CHARS` / `ILLEGAL_IN_INSTRUMENT`），
  * 前端这一份当时没跟上。
  *
- * **`/` 刻意不在此列** —— #12 明确允许「木琴/钟琴」这种合称，代价只是多一层目录。
+ * **`/` 刻意不在此列** —— #12 明确允许「木琴/钟琴」这种合称。
+ * （它现在只影响下载文件名里多一个斜杠，不再是「多一层目录」——那是上面那段
+ * 已作废的存储路径前提。）
  */
 const UNSAFE_IN_PATH = /\.\.|\p{Cc}|\p{Cf}/u;
 

@@ -1004,6 +1004,15 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   const uploadableCount = files.filter(
     (f) => f.status !== "done" && f.instrumentGuess !== undefined,
   ).length;
+  /** 传成功的行数。用于判断「这一批是不是已经干完了」。 */
+  const doneCount = files.filter((f) => f.status === "done").length;
+  /**
+   * 活干完了：没有待传的行，且至少成功过一个。
+   *
+   * 没有这个状态时，全部传完后按钮是「确认上传（0/N）」且禁用 —— 用户没有任何
+   * **正向出口**，只能点「取消」或右上角关闭，看起来像没成功。（合规审查报过。）
+   */
+  const allDone = uploadableCount === 0 && doneCount > 0 && !hasAnalyzingFiles;
 
   return (
     // 用全屏层而不是默认的底部弹窗：20 个文件的结果 + 每行的三个输入框，
@@ -1264,6 +1273,15 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                   className="px-4 py-2 bg-primary text-primary-foreground rounded-lg opacity-50"
                 >
                   上传中...
+                </button>
+              ) : allDone ? (
+                // 干完了就给一个**正向出口**：全部传完后还显示禁用的「确认上传（0/N）」
+                // 会让用户以为没成功，而唯一能点的是「取消」。
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90"
+                >
+                  完成（已上传 {doneCount} 个）
                 </button>
               ) : (
                 <button

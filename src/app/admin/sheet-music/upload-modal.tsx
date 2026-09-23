@@ -34,14 +34,21 @@ function generateFileName(instrument: string, subPart: number | null): string {
   return `${base}.pdf`;
 }
 
-/** 存储路径：声部做目录，文件名干净。 */
-function pathOf(
-  scoreId: string,
-  section: string,
-  instrument: string,
-  subPart: number | null,
-): string {
-  return `${scoreId}/${section}/${generateFileName(instrument, subPart)}`;
+/**
+ * 存储键：`{scoreId}/{行 id}.pdf`。
+ *
+ * ⚠️ **不能用声部/乐器名做路径段** —— Supabase Storage 的键只允许
+ * 字母数字与 `_ - . ' , ! * & $ @ = ; : + ? ( )` 和空白，**中日韩字符一律被
+ * 拒为 `Invalid key`**（官方文档 *File names restrictions*）。中文名此前一直
+ * 写在路径里，所以这个上传功能**从来没有成功过一次**（`sheet_music_files` 长期 0 行
+ * 就是这个原因，不是"新功能还没用"）。
+ *
+ * 人类可读的名字改放 DB：`sheet_music_files.file_name` 与 `.instrument` 两列，
+ * 下载时用 `download` 参数还原文件名。用行自己的 id 还顺带让「两个文件算出同一条
+ * 路径互相覆盖」由**构造**消失（每个键唯一），不再需要批内查重。
+ */
+function pathOf(scoreId: string, storageId: string): string {
+  return `${scoreId}/${storageId}.pdf`;
 }
 
 /** 零宽字符与控制字符。`.trim()` 不管它们 —— `"​".trim() === "​"` 是 JS 规范行为。 */
@@ -95,6 +102,11 @@ interface UploadFile {
   instrumentEdit?: string;
   subPartGuess?: number | null;
   subPartEdit?: number | null;
+  /**
+   * 存储键里那一段 id。**每行生成一次、重试复用**，这样失败重传走 `upsert`
+   * 覆盖同一个对象，不会留下一堆孤儿文件。
+   */
+  storageId?: string;
   ocrText?: string;
   llmResult?: string;
   preview?: string; // 实际送去 OCR 的那张图的缩略图（排查用）
@@ -731,6 +743,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           instrumentEdit: instrument,
           subPartGuess: subPart,
           subPartEdit: subPart,
+          // 存储键要在**分析完成时**就定下来（每行一次、重试复用），
+          // 而不是每次点上传现生成 —— 否则失败重传会不断产生新对象。
+          storageId: crypto.randomUUID(),
         });
       } catch (err) {
         updateFile(i, {
@@ -784,15 +799,18 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   };
 
   /**
-   * 路径预览。乐器名为空时返回空串而不是算出的退化路径（`其他/.pdf`）——
-   * 那正好在「待补填」这一行上说错话，而那一行最需要它说真话。
+   * 预览「这将存成什么名字」。乐器名为空时返回空串。
+   *
+   * 预览的是**人类可读的名字**（`声部 / 文件名`）而不是真实的存储键 ——
+   * 存储键现在是 `{scoreId}/{行 id}.pdf`，给用户看一串 uuid 没有意义；
+   * 可读名落 `sheet_music_files.file_name`，下载时会用它还原文件名。
    */
   const previewPath = (f: UploadFile) => {
     const instrument = (f.instrumentEdit ?? f.instrumentGuess ?? "").trim();
     if (!instrument) return "";
     const section = (f.sectionEdit ?? f.sectionGuess ?? "").trim();
     const subPart = f.subPartEdit !== undefined ? f.subPartEdit : (f.subPartGuess ?? null);
-    return pathOf(scoreId, section, instrument, subPart);
+    return `${section} / ${generateFileName(instrument, subPart)}`;
   };
 
   const handleSubPartChange = (index: number, value: string) => {
@@ -813,37 +831,6 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       if (!user) {
         alert("请先登录");
         return;
-      }
-
-      // 批内路径查重 —— 必须在动手上传**之前**做完。
-      //
-      // 两个文件算出同一条路径时：storage 是 `upsert: true`（后一个的字节顶掉前一个），
-      // 而 DB 是 insert（留下两行指向同一个对象，详情页会列出两个文件、其中一个是假的）。
-      // 这不是边角情形：`generateFileName` 只在 `subPart > 0` 时才加后缀，而 subPart
-      // 常常是 null —— 一本合本里的两份圆号分谱就会直接撞上。
-      const seenPath = new Map<string, number>();
-      const conflicted = new Set<number>();
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        // 只算这次真会传的行；已成功的不参与，被拦下的本来也传不了
-        if (f.status === "done" || f.instrumentGuess === undefined) continue;
-        const s = (f.sectionEdit ?? f.sectionGuess ?? "").trim();
-        const inst = (f.instrumentEdit ?? f.instrumentGuess ?? "").trim();
-        if (isBlankName(s) || isBlankName(inst)) continue;
-        const sp = f.subPartEdit !== undefined ? f.subPartEdit : (f.subPartGuess ?? null);
-        const prev = seenPath.get(pathOf(scoreId, s, inst, sp));
-        if (prev === undefined) {
-          seenPath.set(pathOf(scoreId, s, inst, sp), i);
-        } else {
-          conflicted.add(prev);
-          conflicted.add(i);
-        }
-      }
-      if (conflicted.size > 0) {
-        for (const idx of conflicted) {
-          updateFile(idx, { error: "与其他文件算出了同一条存储路径，请改声部 / 乐器名 / 分声部" });
-        }
-        return; // finally 会把 phase 复位，行照旧可编辑
       }
 
       for (let i = 0; i < files.length; i++) {
@@ -901,7 +888,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         }
 
         const generatedFileName = generateFileName(instrument, subPart);
-        const filePath = pathOf(scoreId, section, instrument, subPart);
+        const filePath = pathOf(scoreId, uploadFile.storageId ?? crypto.randomUUID());
         const { error: uploadError } = await supabase.storage
           .from("sheet-music")
           .upload(filePath, uploadFile.file, { contentType: "application/pdf", upsert: true });

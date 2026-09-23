@@ -5,6 +5,7 @@ import JSZip from "jszip";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { supabase } from "@/lib/supabase";
+import { runWithConcurrency } from "@/lib/concurrency";
 import { INSTRUMENT_ORDER, OTHER_INSTRUMENT_GROUP } from "@/constants/instruments";
 import type { PDFPageProxy } from "pdfjs-dist";
 import {
@@ -115,6 +116,40 @@ interface UploadFile {
   cropNote?: string; // 裁切决策回显（裁到哪 / 为什么没裁），排查「切错位置」用
 }
 
+/**
+ * 一行这次要落库的值（Edit 优先，用户清空后**不回退**到 Guess）。
+ *
+ * 分声部用 `!== undefined` 而不是 `??`：用户清空时 subPartEdit 是 null，
+ * 用 `??` 会被 subPartGuess 悄悄捡回来，导致「清不掉」。
+ */
+function editsOf(f: UploadFile): { section: string; instrument: string; subPart: number | null } {
+  return {
+    section: (f.sectionEdit ?? f.sectionGuess ?? "").trim(),
+    instrument: (f.instrumentEdit ?? f.instrumentGuess ?? "").trim(),
+    subPart: f.subPartEdit !== undefined ? f.subPartEdit : (f.subPartGuess ?? null),
+  };
+}
+
+/**
+ * 这一行为什么不能上传；空串 = 可以传。
+ *
+ * **判据只此一份。**（早先声部是「先串行预建」，那时这段话写的是「预建段与上传 worker
+ * 两处必须共用同一条判据」；声部改成按需建之后预建段没了，但规矩不变 —— 任何地方要判
+ * 「这一行能不能上传」，都调它，别就地再写一套。）
+ */
+function uploadBlocker({ section, instrument }: { section: string; instrument: string }): string {
+  // editsOf 用 `??` 而不是 `||` 取值，用户主动清空输入框时这里拿到的就是空串 ——
+  // 空乐器名必须**拦下**（后端的「未识别」正是空串），否则会建出一个没有名字的声部/文件。
+  // 空判据还必须**连不可见字符一起算空**：`"​".trim()` 还是它自己，
+  // 放过去会建出一个肉眼看着是空、实际叫 "​" 的声部与文件。
+  if (isBlankName(instrument)) return "未识别的乐器名，请先填写再上传";
+  if (isBlankName(section)) return "未指定声部，请先填写再上传";
+  // 后端只管得住它自己返回的值，用户手输的这一层得前端自己把关
+  if (UNSAFE_IN_PATH.test(instrument) || UNSAFE_IN_PATH.test(section))
+    return "声部或乐器名里不能有「..」或控制字符";
+  return "";
+}
+
 interface UploadModalProps {
   open: boolean;
   onClose: () => void;
@@ -174,8 +209,34 @@ const OCR_TIMEOUT_MS = 20000;
 // 「LLM 请求失败（AbortError）」，而不是后端算出来的准确原因（「上游请求失败（…）」
 // 或「上游响应无法解析（HTTP 500）」）。45s 给 6s 余量。
 // 正常一次 LLM 调用只要 2~5s，这只在上游持续故障时才走到；最坏单文件
-// ≈ OCR 65s + LLM 45s，批量耗时因此变长，但分析途中关掉弹窗即可中止（cancelledRef）。
+// ≈ OCR 65s + LLM 45s，批量耗时因此变长，但分析途中关掉弹窗即可中止（cancelledRef，
+// 最坏再多做已在飞的那 PIPELINE_CONCURRENCY 个）。
 const LLM_TIMEOUT_MS = 45000;
+
+/**
+ * 同时最多有几个文件在飞（分析、上传两段共用）。
+ *
+ * 批量耗时几乎全在网络等待（OCR 2~4s、LLM 2~5s、上传几 MB 的 PDF），串行时主线程基本闲着；
+ * 并发把这些等待叠起来。**CPU 部分不会因此变快** —— 渲染与 JPEG 编码仍在主线程排队
+ * （pdf.js 走 fake worker，见 loadPdfJs），并发只是让某个文件的网络往返不再挡着别的文件。
+ * 实测（**仓库外**的 `.render-harness/`，与 pkuso-web 同级；33 份真实分谱 + 模拟 6.5s/份网络）：
+ * 271s → 108s。
+ *
+ * 取 3 而不是更大，是因为再往上收益迅速变小：CPU 部分实测约 1.7s/份，3 路时已被网络那侧
+ * 盖住；OCR.space 免费档也没必要主动去撞突发限流（后端有 429 重试兜底，但那是兜底）。
+ *
+ * ⚠️ **内存不是这里的约束，而且别按「份数 × 单份内存」估** —— 早先这版注释就是那么写的，
+ * 基数低了约 14 倍。真 Chrome 里逐次记录 canvas 后备存储实测：
+ *   - 单份 canvas 峰值可达 **~282MB**（46 份语料里 28 份如此）。其中约 265MB 是 **pdf.js
+ *     自己解码那张 1500 DPI 扫描图时开的内部画布**（6467×8609 + 3234×4305），页面自己的
+ *     canvas 只有 16MB —— 真正的大头在 pdf.js 里，不在这一层；
+ *   - 另有 ~900MB 的 JS 堆瞬时高水位（强制 GC 后回落，不是泄漏）；
+ *   - 但 **3 份并发只把它放大 1.02~1.14 倍，不是 3 倍**：那段解码是纯主线程 CPU 活，
+ *     在飞的文件在解码段被自排队了。
+ * 也就是说「取 3 是安全的」结论成立，但兜住它的是**主线程串行**，不是「每份只花一点内存」。
+ * 想把常量调大的人，先看这条。
+ */
+const PIPELINE_CONCURRENCY = 3;
 
 // pdf.js 的字体与图像解码资源（public/pdfjs 下，从 node_modules/pdfjs-dist 拷贝）。
 // 缺了它们 pdf.js 不会报错，但会整页什么都不画：文本用未内嵌的标准字体、扫描件用 JBIG2/JPX 时命中。
@@ -576,8 +637,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 关闭弹窗会把本组件卸载（page.tsx 把 selectedScoreId 置 null），但 startAnalysis 的
-  // 循环还在跑：updateFile 变成 no-op，用户看不见进度、重开是全新空状态，OCR 配额却照烧 ——
-  // 最坏 20 个文件能在后台持续请求半小时以上。卸载时置位，循环每轮开头检查后退出。
+  // 并发池还在跑：updateFile 变成 no-op，用户看不见进度、重开是全新空状态，OCR 配额却照烧 ——
+  // 最坏 20 个文件（并发 3、单文件最坏 ≈ OCR 65s + LLM 45s）仍能在后台持续请求十几分钟。
+  // 卸载时置位，每个文件开头检查一次后退出（已在飞的那几个会跑完）。
   const cancelledRef = useRef(false);
   // 防重复提交：ref 同步阻断竞态窗口（setState 是异步的，两次快速点击之间 phase 仍是旧值）
   const analyzingRef = useRef(false);
@@ -629,142 +691,159 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     setFiles((prev) => prev.map((f, idx) => (idx === index ? { ...f, ...patch } : f)));
   };
 
+  /**
+   * 单个文件：取页 → OCR → LLM，每步只更新自己那一行。
+   *
+   * files 是点击那一刻的快照，worker 里的 updateFile 不会改到它——只用它决定处理哪些
+   * 文件，不要用它判断处理进度（上一版据此判断，导致永远进不了确认阶段）。
+   */
+  const analyzeOne = async (file: UploadFile, i: number) => {
+    // 弹窗被关掉就尽快收手：每个文件开头检查一次，最坏多做已在飞的那几个
+    if (cancelledRef.current) return;
+    if (file.status !== "pending") return;
+
+    updateFile(i, { status: "analyzing", ocrText: "正在提取页面...", llmResult: "" });
+
+    // 取页与 OCR 都是「能给就给」：失败不终止，退化成只用文件名让 LLM 判断
+    let ocrText = "";
+    let warning = "";
+    let rendered: RenderedPage | null = null;
+    let usedFullPage = false;
+
+    try {
+      rendered = await renderFirstContentPage(file.file);
+      warning = rendered.warning;
+      updateFile(i, {
+        preview: rendered.preview || undefined,
+        sourcePage: rendered.pageNo || undefined,
+        warning: warning || undefined,
+        cropNote: rendered.cropNote || undefined,
+      });
+
+      if (rendered.base64) {
+        const where = rendered.cropped ? "标题区" : "整页";
+        updateFile(i, { ocrText: `已取第 ${rendered.pageNo} 页（${where}），正在 OCR...` });
+
+        // 裁切条 OCR 失败也按「没读到」处理，一并交给下面的回退。
+        // 服务端表达「没读到文字」有两种形态：200 + 空 text，以及 400 + success:false
+        // （见 pkuso-backend 的 ocr-analyze：IsErroredOnProcessing 为真时回 400）——
+        // 后者会被 runOcr 抛成异常。只在返回空串时才回退，等于漏掉更常见的那一半，
+        // 而「切错位置」恰恰是最容易让裁切条读不到文字的情况。
+        let stripError = "";
+        try {
+          ocrText = await runOcr(rendered.base64);
+        } catch (err) {
+          if (!rendered.cropped) throw err; // 没裁切就没什么可回退的
+          ocrText = "";
+          stripError = err instanceof Error ? err.message : String(err);
+        }
+        updateFile(i, { ocrText });
+
+        // 标题区没读到文字就回退整页再试一次（未裁切时两者是同一张图，不回退）
+        if (rendered.cropped && ocrText.trim().length < MIN_OCR_CHARS) {
+          usedFullPage = true;
+          updateFile(i, { ocrText: "标题区未读到文字，回退整页 OCR…" });
+          try {
+            ocrText = await runOcr(rendered.fullBase64);
+          } catch (err) {
+            // 两次都失败时把两条原因都带上，否则第一条（往往更有诊断价值）会被吞掉
+            const fullError = err instanceof Error ? err.message : String(err);
+            throw new Error(stripError ? `标题区：${stripError}；整页：${fullError}` : fullError);
+          }
+          // 缩略图与裁切说明必须跟着换成「整页」。这两个字段的用途就是排查
+          // 「切错位置」，回退后还说「已裁至标题区」正好在最需要它时说反话。
+          updateFile(i, {
+            ocrText,
+            preview: rendered.fullPreview || rendered.preview || undefined,
+            cropNote: `${rendered.cropNote}｜回退项：标题区未读到文字，已改用整页`,
+          });
+        }
+      } else {
+        updateFile(i, { ocrText: warning });
+      }
+    } catch (err) {
+      warning = err instanceof Error ? err.message : String(err);
+      updateFile(i, { ocrText: warning, warning });
+    }
+
+    updateFile(i, { llmResult: "等待 LLM 分析..." });
+    try {
+      let analysis = await runLlmAnalysis(file.originalName, ocrText);
+
+      // 识别不出时回退整页 OCR 再判一次：裁切条只含首页标题区，
+      // 乐器名未必落在那里。空串是后端约定的「未识别」——
+      // 它把「证据不足」和模型答「unknown / 无法判断」都收敛成了空串。
+      if (!analysis.instrument && rendered?.cropped && !usedFullPage) {
+        const { fullBase64, fullPreview, preview, cropNote } = rendered;
+        usedFullPage = true;
+        try {
+          updateFile(i, { llmResult: "未能识别，回退整页 OCR 重试..." });
+          ocrText = await runOcr(fullBase64);
+          analysis = await runLlmAnalysis(file.originalName, ocrText);
+          // 两步都成功了才改缩略图与裁切说明，否则界面会说「已改用整页」而结果其实来自裁切条
+          updateFile(i, {
+            ocrText,
+            preview: fullPreview || preview || undefined,
+            cropNote: `${cropNote}｜回退项：未能识别，已改用整页`,
+          });
+        } catch (err) {
+          // 回退失败就保留第一次的结果，不要让整行失败
+          warning = err instanceof Error ? err.message : String(err);
+          updateFile(i, { warning });
+        }
+      }
+
+      const { section, instrument, subPart } = analysis;
+      // 未识别时**不预填** instrumentEdit（留空串）：预填一个猜测值会被用户直接
+      // 接受，等于把错误洗成「已确认」。空的输入框会逼用户做一次真实判断。
+      updateFile(i, {
+        status: "analyzed",
+        llmResult: analysisSummary(section, instrument, subPart),
+        sectionGuess: section,
+        sectionEdit: section,
+        instrumentGuess: instrument,
+        instrumentEdit: instrument,
+        subPartGuess: subPart,
+        subPartEdit: subPart,
+        // 存储键要在**分析完成时**就定下来（每行一次、重试复用），
+        // 而不是每次点上传现生成 —— 否则失败重传会不断产生新对象。
+        storageId: crypto.randomUUID(),
+      });
+    } catch (err) {
+      updateFile(i, {
+        status: "error",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
   const startAnalysis = async () => {
     if (analyzingRef.current) return;
     analyzingRef.current = true;
     setPhase("analyzing");
     cancelledRef.current = false;
 
-    // 单轮串行：每个文件依次走「取页 → OCR → LLM」，每步只更新自己那一行。
-    // 注意 files 是点击那一刻的快照，循环中 updateFile 不会改到它——只用它决定处理哪些文件，
-    // 不要用它判断处理进度（上一版据此判断，导致永远进不了确认阶段）。
-    for (let i = 0; i < files.length; i++) {
-      // 弹窗被关掉就尽快收手：每轮开头检查一次，最坏多做当前这一个文件
-      if (cancelledRef.current) {
-        analyzingRef.current = false;
-        return;
-      }
-      if (files[i].status !== "pending") continue;
-
-      updateFile(i, { status: "analyzing", ocrText: "正在提取页面...", llmResult: "" });
-
-      // 取页与 OCR 都是「能给就给」：失败不终止，退化成只用文件名让 LLM 判断
-      let ocrText = "";
-      let warning = "";
-      let rendered: RenderedPage | null = null;
-      let usedFullPage = false;
-
-      try {
-        rendered = await renderFirstContentPage(files[i].file);
-        warning = rendered.warning;
-        updateFile(i, {
-          preview: rendered.preview || undefined,
-          sourcePage: rendered.pageNo || undefined,
-          warning: warning || undefined,
-          cropNote: rendered.cropNote || undefined,
-        });
-
-        if (rendered.base64) {
-          const where = rendered.cropped ? "标题区" : "整页";
-          updateFile(i, { ocrText: `已取第 ${rendered.pageNo} 页（${where}），正在 OCR...` });
-
-          // 裁切条 OCR 失败也按「没读到」处理，一并交给下面的回退。
-          // 服务端表达「没读到文字」有两种形态：200 + 空 text，以及 400 + success:false
-          // （见 pkuso-backend 的 ocr-analyze：IsErroredOnProcessing 为真时回 400）——
-          // 后者会被 runOcr 抛成异常。只在返回空串时才回退，等于漏掉更常见的那一半，
-          // 而「切错位置」恰恰是最容易让裁切条读不到文字的情况。
-          let stripError = "";
-          try {
-            ocrText = await runOcr(rendered.base64);
-          } catch (err) {
-            if (!rendered.cropped) throw err; // 没裁切就没什么可回退的
-            ocrText = "";
-            stripError = err instanceof Error ? err.message : String(err);
-          }
-          updateFile(i, { ocrText });
-
-          // 标题区没读到文字就回退整页再试一次（未裁切时两者是同一张图，不回退）
-          if (rendered.cropped && ocrText.trim().length < MIN_OCR_CHARS) {
-            usedFullPage = true;
-            updateFile(i, { ocrText: "标题区未读到文字，回退整页 OCR…" });
-            try {
-              ocrText = await runOcr(rendered.fullBase64);
-            } catch (err) {
-              // 两次都失败时把两条原因都带上，否则第一条（往往更有诊断价值）会被吞掉
-              const fullError = err instanceof Error ? err.message : String(err);
-              throw new Error(stripError ? `标题区：${stripError}；整页：${fullError}` : fullError);
-            }
-            // 缩略图与裁切说明必须跟着换成「整页」。这两个字段的用途就是排查
-            // 「切错位置」，回退后还说「已裁至标题区」正好在最需要它时说反话。
-            updateFile(i, {
-              ocrText,
-              preview: rendered.fullPreview || rendered.preview || undefined,
-              cropNote: `${rendered.cropNote}｜回退项：标题区未读到文字，已改用整页`,
-            });
-          }
-        } else {
-          updateFile(i, { ocrText: warning });
-        }
-      } catch (err) {
-        warning = err instanceof Error ? err.message : String(err);
-        updateFile(i, { ocrText: warning, warning });
-      }
-
-      updateFile(i, { llmResult: "等待 LLM 分析..." });
-      try {
-        let analysis = await runLlmAnalysis(files[i].originalName, ocrText);
-
-        // 识别不出时回退整页 OCR 再判一次：裁切条只含首页标题区，
-        // 乐器名未必落在那里。空串是后端约定的「未识别」——
-        // 它把「证据不足」和模型答「unknown / 无法判断」都收敛成了空串。
-        if (!analysis.instrument && rendered?.cropped && !usedFullPage) {
-          const { fullBase64, fullPreview, preview, cropNote } = rendered;
-          usedFullPage = true;
-          try {
-            updateFile(i, { llmResult: "未能识别，回退整页 OCR 重试..." });
-            ocrText = await runOcr(fullBase64);
-            analysis = await runLlmAnalysis(files[i].originalName, ocrText);
-            // 两步都成功了才改缩略图与裁切说明，否则界面会说「已改用整页」而结果其实来自裁切条
-            updateFile(i, {
-              ocrText,
-              preview: fullPreview || preview || undefined,
-              cropNote: `${cropNote}｜回退项：未能识别，已改用整页`,
-            });
-          } catch (err) {
-            // 回退失败就保留第一次的结果，不要让整行失败
-            warning = err instanceof Error ? err.message : String(err);
-            updateFile(i, { warning });
-          }
-        }
-
-        const { section, instrument, subPart } = analysis;
-        // 未识别时**不预填** instrumentEdit（留空串）：预填一个猜测值会被用户直接
-        // 接受，等于把错误洗成「已确认」。空的输入框会逼用户做一次真实判断。
-        updateFile(i, {
-          status: "analyzed",
-          llmResult: analysisSummary(section, instrument, subPart),
-          sectionGuess: section,
-          sectionEdit: section,
-          instrumentGuess: instrument,
-          instrumentEdit: instrument,
-          subPartGuess: subPart,
-          subPartEdit: subPart,
-          // 存储键要在**分析完成时**就定下来（每行一次、重试复用），
-          // 而不是每次点上传现生成 —— 否则失败重传会不断产生新对象。
-          storageId: crypto.randomUUID(),
-        });
-      } catch (err) {
-        updateFile(i, {
-          status: "error",
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-
-      // 避免 LLM/OCR 限流，同时让出主线程刷新进度
-      if (i < files.length - 1) await sleep(800);
+    // 并发跑：每份文件各自走完「取页 → OCR → LLM」，最多 PIPELINE_CONCURRENCY 个同时在飞。
+    // 结果乱序完成没关系 —— 每步只按自己的下标 updateFile，互不干扰。
+    //
+    // 文件之间**不再 sleep**：原先那句「避免 LLM/OCR 限流」是误判 —— 当时那批 429 是
+    // ocr-analyze 里 pdf-lib 抽首页爆缓冲区导致的，不是服务端限流；而 OCR 与 LLM 两条
+    // 链路本来就各有 429 重试兜底（见 runOcr）。
+    try {
+      await runWithConcurrency(files, PIPELINE_CONCURRENCY, analyzeOne);
+    } catch (err) {
+      // 兜底：worker 理论上不抛（每个文件的失败都写进了它自己那一行），真抛了也不能让弹窗
+      // 卡在「分析中」—— 「确认上传」会被 hasAnalyzingFiles 永久禁用，用户唯一的出路是
+      // 关掉弹窗，而代价是丢掉整批已经烧掉 OCR 配额的分析结果。
+      console.error("分析阶段意外中断:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      setFiles((prev) =>
+        prev.map((f) => (f.status === "analyzing" ? { ...f, status: "error", error: message } : f)),
+      );
+    } finally {
+      analyzingRef.current = false;
     }
 
-    analyzingRef.current = false;
     if (cancelledRef.current) return;
     setPhase("confirm");
   };
@@ -839,58 +918,54 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         return;
       }
 
-      for (let i = 0; i < files.length; i++) {
-        // 上传阶段点「取消」会卸载组件，这里要及时收手：
-        // 否则剩余文件照样写 storage + DB，用户以为取消了其实照传不误
-        if (cancelledRef.current) return;
+      // 声部：**按需建、同一个声部全批只发一次** SELECT+INSERT。
+      //
+      // 为什么不能让每个 worker 各自去建：getOrCreatePart 是「先 SELECT 再 INSERT」，
+      // 两个并发 worker 撞上同一个新声部会双双查空、双双插入 → **重复声部行**
+      // （表上还没有唯一约束）。这里用 Map 存**同一张票（promise）**，后到的 await 同一张，
+      // 竞态就没了 —— 靠的是一张票，而不是靠「先把全批串行建完」。
+      //
+      // 也**不能**先串行把全批声部建出来：取消（或中途失败）会留下一批**没有任何文件
+      // 指向的空声部**，而曲谱详情页会把它们逐个列出来、只能手工删。按需建才是
+      // 「用到了才留下」，且建失败天然只影响用到它的行（保持逐行语义）。
+      const partTickets = new Map<string, Promise<string | null>>();
+      const ensurePart = (section: string): Promise<string | null> => {
+        let ticket = partTickets.get(section);
+        if (!ticket) {
+          // get → 调用 → set 之间没有 await，两个 worker 不会各拿到一张票
+          ticket = getOrCreatePart(section);
+          partTickets.set(section, ticket);
+        }
+        return ticket;
+      };
 
-        const uploadFile = files[i];
-        // 只跳过已成功的：失败的行要允许重试，否则真实网络失败（storage/PG 返回 {error}
-        // 而非抛错，是断网的默认路径）会把该文件在同一会话内永久钉死
-        if (uploadFile.status === "done") continue;
+      // 并发上传 + 落库。结果乱序返回没关系：列表是按行状态驱动的，
+      // updateFile(i, …) 按索引更新，互不干扰。
+      await runWithConcurrency(files, PIPELINE_CONCURRENCY, async (uploadFile, i) => {
+        // 取消时最多再做已在飞的那几个（其余 worker 领到下标会立刻返回）
+        if (cancelledRef.current) return;
+        if (uploadFile.status === "done") return;
 
         // 声部与乐器名分开取：声部是闭集（写进 parts.section，也是存储目录名），
         // 乐器名是开集（写进 files.instrument，也是文件名主干）
-        const section = (uploadFile.sectionEdit ?? uploadFile.sectionGuess ?? "").trim();
-        const instrument = (uploadFile.instrumentEdit ?? uploadFile.instrumentGuess ?? "").trim();
-        // 用 undefined 判断而不是 ??：用户把分声部清空时 subPartEdit 是 null，
-        // 用 ?? 会被 subPartGuess 悄悄捡回来，导致「清不掉」
-        const subPart =
-          uploadFile.subPartEdit !== undefined
-            ? uploadFile.subPartEdit
-            : (uploadFile.subPartGuess ?? null);
+        const { section, instrument, subPart } = editsOf(uploadFile);
 
-        // 这里也把 `?? ` 而不是 `||` 用在 instrument 上：用户主动清空输入框时
-        // 不该被 instrumentGuess 悄悄捡回来 —— 空乐器名必须**拦下**（后端的
-        // 「未识别」正是空串），否则会建出一个没有名字的声部/文件。
         // 拦下，但**不改状态**。这两行缺的是用户补填，而编辑器只在有识别结果的行上
         // 渲染 —— 置成 error 会让输入框消失，界面变成「让你填却没有字段可填」，
         // 用户只能关掉弹窗、连带丢掉整批已经烧掉 OCR 配额的分析结果。
-        //
-        // 空判据必须**连不可见字符一起算空**：`"​".trim()` 还是它自己，
-        // 放过去会建出一个肉眼看着是空、实际叫 "​" 的声部与文件。
-        if (isBlankName(instrument) || isBlankName(section)) {
-          updateFile(i, {
-            error: isBlankName(instrument)
-              ? "未识别的乐器名，请先填写再上传"
-              : "未指定声部，请先填写再上传",
-          });
-          continue;
-        }
-        // 后端只管得住它自己返回的值，用户手输的这一层得前端自己把关
-        if (UNSAFE_IN_PATH.test(instrument) || UNSAFE_IN_PATH.test(section)) {
-          updateFile(i, { error: "声部或乐器名里不能有「..」或控制字符" });
-          continue;
+        const blocker = uploadBlocker({ section, instrument });
+        if (blocker) {
+          updateFile(i, { error: blocker });
+          return;
         }
         // 这一行能往下走了，把上一次的拦截/失败提示清掉，免得文案留在界面上说谎
-        updateFile(i, { error: undefined });
+        updateFile(i, { error: undefined, status: "uploading" });
 
-        updateFile(i, { status: "uploading" });
-
-        const partId = await getOrCreatePart(section);
+        // 用到才建。建失败时这张票就是 null，用到同一张票的行各报各的错。
+        const partId = await ensurePart(section);
         if (!partId) {
           updateFile(i, { status: "error", error: "创建声部失败" });
-          continue;
+          return;
         }
 
         const generatedFileName = generateFileName(instrument, subPart);
@@ -901,7 +976,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
         if (uploadError) {
           updateFile(i, { status: "error", error: uploadError.message });
-          continue;
+          return;
         }
 
         const { error: dbError } = await supabase.from("sheet_music_files").insert({
@@ -917,12 +992,12 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
         if (dbError) {
           updateFile(i, { status: "error", error: dbError.message });
-          continue;
+          return;
         }
 
         updateFile(i, { status: "done", instrumentGuess: instrument });
         hasSuccess = true;
-      }
+      });
     } catch (err) {
       // 任何一步意外 reject（例如 supabase-js 的 navigator.locks 以非 AbortError 拒绝时
       // getUser() 会抛）都不能让弹窗卡死在「上传中」——那会锁死 uploadingRef，

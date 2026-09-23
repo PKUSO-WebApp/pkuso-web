@@ -22,6 +22,19 @@ export type Instrument = (typeof INSTRUMENT_ORDER)[number];
 
 export const OTHER_INSTRUMENT_GROUP = "其他";
 
+/**
+ * 「总谱」——**它不是声部**，而是「整份谱（所有声部都在里面）」的标记。
+ *
+ * ⚠️ 与 `OTHER_INSTRUMENT_GROUP` 并列做**特殊值**，**刻意不进 `INSTRUMENT_ORDER`**：
+ * 那张表是给成员分声部用的（成员只会属于其中某一个），总谱不属于任何一个。
+ * 谱务里它可以作为 `sheet_music_parts.section` 的值存在，所以凡是校验 section
+ * 合法性的地方（如 `isKnownSection`）都要与「其他」一起认它。
+ *
+ * 详情页排序把它放**最前**（见 `sort-parts.ts`）—— 总谱是「整份」，排在分谱之前
+ * 符合阅读顺序。
+ */
+export const FULL_SCORE_SECTION = "总谱";
+
 /** 声部组：用于分排创建时的联想列表分组、小程序端显示声部组名 */
 export const SECTION_GROUPS = {
   弦乐: ["第一小提琴", "第二小提琴", "中提琴", "大提琴", "低音提琴"],

@@ -6,6 +6,7 @@ import { Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
 import { UploadModal } from "../upload-modal";
+import { sortPartsForDisplay } from "../sort-parts";
 
 interface SheetMusicFile {
   id: string;
@@ -13,6 +14,13 @@ interface SheetMusicFile {
   file_name: string;
   file_size: number | null;
   created_at: string;
+  /** 中文乐器名。同一份谱子里不同乐器要按拼音排（见 sort-parts.ts） */
+  instrument: string | null;
+  /**
+   * 分声部号。**历史行是 NULL**（该列是后加的，见 pkuso-backend#15），
+   * 读取侧两种都要兜 —— `sort-parts.ts` 已把 NULL 与 `[]` 一视同仁。
+   */
+  sub_parts: number[] | null;
 }
 
 interface SheetMusicPart {
@@ -75,7 +83,11 @@ export default function ScoreDetailPage() {
           .from("sheet_music_parts")
           .select("*")
           .eq("sheet_music_id", scoreId)
-          .order("sort_order");
+          // ⚠️ 必须带 `id` 兜底：`sort_order` 实际全是 0，而 Postgres 对并列行
+          // **不保证顺序**。展示顺序由 sortPartsForDisplay 决定，但「同档时谁在前」
+          // 要靠这个基准序 —— 没有它，同一个页面刷新两次可能不一样。
+          .order("sort_order")
+          .order("id");
 
         if (partsError) throw partsError;
 
@@ -90,7 +102,10 @@ export default function ScoreDetailPage() {
           partsWithFiles.push({ ...part, files: filesData || [] });
         }
 
-        setParts(partsWithFiles);
+        // 展示顺序在这里算，不用查询里的 order —— `sort_order` 实际全是 0、
+        // 文件的 `created_at` 是并发 worker 的完成顺序，两者都不表达业务顺序。
+        // 查询里那两个 order 保留：它们给「恰好同档」的行一个确定的基准顺序。
+        setParts(sortPartsForDisplay(partsWithFiles));
       } catch (error) {
         console.error("Error fetching data:", error);
       } finally {
@@ -121,7 +136,9 @@ export default function ScoreDetailPage() {
         .from("sheet_music_parts")
         .select("*")
         .eq("sheet_music_id", scoreId)
-        .order("sort_order");
+        // 同首屏那处：`sort_order` 全是 0，并列行要有确定性的兜底序
+        .order("sort_order")
+        .order("id");
 
       if (partsError) throw partsError;
 
@@ -136,7 +153,8 @@ export default function ScoreDetailPage() {
         partsWithFiles.push({ ...part, files: filesData || [] });
       }
 
-      setParts(partsWithFiles);
+      // 与首屏那条一样的排序 —— 两处必须同时改，改一处会让「刷新后顺序变了」
+      setParts(sortPartsForDisplay(partsWithFiles));
     } catch (error) {
       console.error("Error fetching data:", error);
     }

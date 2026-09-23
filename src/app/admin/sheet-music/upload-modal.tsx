@@ -1545,9 +1545,15 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     if (!snap) return;
     splitSnapshots.current.delete(groupId);
     setFiles((prev) => {
+      // ⚠️ 位置**现算**，不能用拆分时记下的绝对下标：拆 A 再拆 B、先还原 A 再还原 B 时，
+      // 那个下标已经过期（B 的 `at` 是它被拆那一刻的位置，A 还原后整条列表都挪过了），
+      // 于是 B 会被插到末尾 —— 静默重排用户的导入列表。
+      // 一组行是**连续**的（拆分就是把一个下标换成 N 个连续行），所以「这一组的当前位置」
+      // 就是它第一个行的下标，插回那里即可，且同样经得起别的组先还原。
+      const at = prev.findIndex((f) => f.splitOf?.groupId === groupId);
       const rest = prev.filter((f) => f.splitOf?.groupId !== groupId);
-      const at = Math.min(snap.at, rest.length);
-      return [...rest.slice(0, at), snap.row, ...rest.slice(at)];
+      const pos = Math.min(at < 0 ? snap.at : at, rest.length);
+      return [...rest.slice(0, pos), snap.row, ...rest.slice(pos)];
     });
   };
 
@@ -1794,6 +1800,16 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
         await serializeSplit(async () => {
           let source: Awaited<ReturnType<typeof openForSplit>> | null = null;
+          /**
+           * 这一段里**已经传成功**的行下标。
+           *
+           * ⚠️ 不能用 `f.status !== "done"` 判断：`pending` 与 `f` 都是**点击那一刻的
+           * 闭包快照**，那一整个表达式恒为真 —— 于是「第 1 段传成功、第 2 段上传时断网」
+           * 会把 4 段全标成失败，用户重试后第 1 段**又插一行** `sheet_music_files`
+           * （同一个 storage 对象挂两行，详情页出现两份同名文件）。
+           * 实测过：重试后 `圆号_1.pdf` 确实出现两行。
+           */
+          const uploaded = new Set<number>();
           try {
             source = await openForSplit(src.file);
             for (const { f, i } of pending) {
@@ -1802,7 +1818,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
               // 切一份 —— 只搬 PDF 对象、不解码图像流
               const bytes = await source.extract(seg.from, seg.to);
               const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
-              if (await uploadOne(f, i, blob)) hasSuccess = true;
+              if (await uploadOne(f, i, blob)) {
+                uploaded.add(i);
+                hasSuccess = true;
+              }
               // 传完立刻丢引用：峰值 ≈ 源 + 最大一段（而不是「源 + 全部段」）
             }
           } catch (err) {
@@ -1813,9 +1832,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             const encrypted = err instanceof Error && /EncryptedPDF/i.test(err.name + message);
             const hint = encrypted
               ? "这份 PDF 有加密，无法切分 —— 请点「还原为一份」后整份上传"
-              : `切分失败：${message}`;
-            for (const { f, i } of pending) {
-              if (f.status !== "done") updateFile(i, { status: "error", error: hint });
+              : `切分/上传失败：${message}`;
+            // 只标**没成功过**的那些行（见上面 `uploaded` 的说明）
+            for (const { i } of pending) {
+              if (!uploaded.has(i)) updateFile(i, { status: "error", error: hint });
             }
           } finally {
             source = null;

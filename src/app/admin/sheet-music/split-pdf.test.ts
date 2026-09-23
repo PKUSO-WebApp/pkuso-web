@@ -18,6 +18,20 @@ describe("切分的拒绝线（病理输入宁可不切）", () => {
     expect(splitRefusal({ byteSize: 12 * 1048576, pageCount: 82, segTotal: 4 })).toBeNull();
   });
 
+  it("**三条线就是用户定的那三个数**（写成字面量，别从常量自己算）", () => {
+    // 变异实测：用例若用 `SPLIT_MAX_PAGES + 1` 这种写法，就只钉住了「比较符是 >」，
+    // 而**没有钉住那个数字** —— 把常量改成 4000/800MB/160 全都静默过关。
+    expect(SPLIT_MAX_BYTES).toBe(80 * 1024 * 1024);
+    expect(SPLIT_MAX_PAGES).toBe(400);
+    expect(SPLIT_MAX_SEGMENTS).toBe(16);
+    expect(splitRefusal({ ...ok, pageCount: 400 })).toBeNull();
+    expect(splitRefusal({ ...ok, pageCount: 401 })).toContain("页数太多");
+    expect(splitRefusal({ ...ok, byteSize: 80 * 1024 * 1024 })).toBeNull();
+    expect(splitRefusal({ ...ok, byteSize: 80 * 1024 * 1024 + 1 })).toContain("文件太大");
+    expect(splitRefusal({ ...ok, segTotal: 16 })).toBeNull();
+    expect(splitRefusal({ ...ok, segTotal: 17 })).toContain("段数太多");
+  });
+
   it("每条线各自能拦住，且文案说清「怎么办」", () => {
     for (const [input, keyword] of [
       [{ ...ok, segTotal: SPLIT_MAX_SEGMENTS + 1 }, "段数太多"],

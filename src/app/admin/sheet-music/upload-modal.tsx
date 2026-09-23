@@ -38,6 +38,7 @@ import {
   parseSubPartsInput,
   sanitizeSubParts,
 } from "./sub-parts";
+import { duplicateNames, openForSplit, splitRefusal } from "./split-pdf";
 
 /**
  * 乐器名现在是**开放集**：后端 llm-analyze 直接返回中文（`木琴` / `英国管` /
@@ -193,6 +194,23 @@ interface UploadFile {
    * 提交（失焦/回车）时才解析，且**非法值一律不提交**（`parseBoundaryText` 返回 null）。
    */
   segmentStartText?: string[];
+  /**
+   * 这一行是**合订谱切出来的一段**（#290 Step 2）。有它 = 上传时只取这几页。
+   *
+   * 同一份源文件切出来的若干行共享一个 `groupId`：界面上它们各占一行、各有各的
+   * 乐器/号/声部，而上传时**源文件只 load 一次**（见 `confirmUpload` 的单元划分）——
+   * 逐行各 load 一次会让峰值变成 N 倍源文件，正是探针要防的形状。
+   */
+  splitOf?: {
+    groupId: string;
+    /** 源文件里的页区间（1-based 闭区间） */
+    from: number;
+    to: number;
+    segIndex: number;
+    segTotal: number;
+    /** 拆分时发现的问题（如「段数与号数不一致」），显示在这一行上 */
+    note?: string;
+  };
   ocrText?: string;
   llmResult?: string;
   preview?: string; // 实际送去 OCR 的那张图的缩略图（排查用）
@@ -1018,6 +1036,13 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   const segRunningRef = useRef(false);
   // 分段的 state 半（ref 挡重复点击，state 让**别的按钮**知道分段在跑）
   const [segBusy, setSegBusy] = useState(false);
+  /**
+   * 切分前的原行快照（`groupId` → 原行 + 它当时的位置），供「还原为一份」。
+   *
+   * 用 ref 不用 state：它只是一份**撤销用的底稿**，不参与渲染；放进 state 会让
+   * 每次拆分多一次重渲染，而内容一模一样。
+   */
+  const splitSnapshots = useRef(new Map<string, { row: UploadFile; at: number }>());
   const uploadingRef = useRef(false);
   useEffect(() => {
     cancelledRef.current = false;
@@ -1246,6 +1271,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     // 份数与真实调用都会白烧：实测 2 份文件、第 1 份已上传、第 2 份被 uploadBlocker
     // 拦下时，按钮按 2 份计费，点下去真的烧掉两份的配额，而第 1 份的段一个都看不到。
     f.status !== "done" &&
+    // **已经切出来的段不算**：它们是产物不是源，对一段再跑分段没有意义
+    !f.splitOf &&
     needsSegmentation(
       f.pageCount ?? null,
       (f.sectionEdit ?? f.sectionGuess ?? "").trim() === FULL_SCORE_SECTION,
@@ -1431,6 +1458,110 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     });
 
   /**
+   * **按段拆成多行**（#290 Step 2 的入口）。
+   *
+   * 拆完之后每一段各占一行、各有各的声部/乐器/号，文件名各自生成（`圆号_1.pdf`），
+   * 上传时源文件只读一次、逐段切出来各传各的。
+   *
+   * 号按**位置**预填（第 k 段 ↔ 第 k 个号）—— 这是文件名给的最强信号，
+   * 但**只在两边的个数相等时才敢填**：`Horn_1,2,3,4` 切成 3 段时谁也不知道缺的是哪个，
+   * 那时留空让用户逐段填，比塞一个错的号好（错的号会写进 DB 与文件名）。
+   */
+  const splitIntoSegments = (index: number) => {
+    const f = files[index];
+    const segments = segmentsOf(f);
+    if (segments.length < 2) return;
+    const refusal = splitRefusal({
+      byteSize: f.file.size,
+      pageCount: f.pageCount ?? 0,
+      segTotal: segments.length,
+    });
+    if (refusal) {
+      // 拦在这里而不是等到上传：切分是**显式动作**，用户点之前就该知道它不成立
+      updateFile(index, { error: refusal });
+      return;
+    }
+
+    const groupId = crypto.randomUUID();
+    const subParts = editsOf(f).subParts;
+    const aligned = subParts.length === segments.length;
+    // **对得上也给提示**：位置对应是个**猜**（依据是「合订顺序 = 页序」，通常成立但不是
+    // 契约），而猜错的号会写进 DB 与文件名。用户本来就要逐段确认，说一句不花什么。
+    const note = aligned
+      ? "号按位置预填（第 1 段 ↔ 第 1 个号…）—— 请逐段确认乐器与号"
+      : `共 ${segments.length} 段，但文件名里是 ${subParts.length} 个号${
+          subParts.length ? `（${formatSubParts(subParts)}）` : ""
+        } —— 请逐段确认乐器与号`;
+
+    const rows: UploadFile[] = segments.map((seg, k) => ({
+      // 源文件**共用同一个 File 对象**（不可变）：上传时按 groupId 只 load 一次
+      file: f.file,
+      originalName: f.originalName,
+      status: "analyzed",
+      sectionGuess: f.sectionGuess,
+      sectionEdit: f.sectionEdit,
+      instrumentGuess: f.instrumentGuess,
+      instrumentEdit: f.instrumentEdit,
+      // 号按位置预填，仅在个数相等时
+      subPartsGuess: aligned ? [subParts[k]] : [],
+      subPartsRaw: f.subPartsRaw,
+      pageCount: seg.to - seg.from + 1,
+      // 每段一个存储键：重试覆盖的是**这一段自己**，不会串到别的段
+      storageId: crypto.randomUUID(),
+      splitOf: {
+        groupId,
+        from: seg.from,
+        to: seg.to,
+        segIndex: k,
+        segTotal: segments.length,
+        note,
+      },
+      // 分析阶段的调试信息只挂在第 1 段上：4 份重复的 OCR 文本/预览图没有意义
+      ...(k === 0
+        ? { ocrText: f.ocrText, preview: f.preview, cropNote: f.cropNote, warning: f.warning }
+        : {}),
+    }));
+
+    // 快照留给「还原为一份」：拆错了要能退回来，否则用户只能关掉弹窗重来
+    splitSnapshots.current.set(groupId, { row: f, at: index });
+    setFiles((prev) => [...prev.slice(0, index), ...rows, ...prev.slice(index + 1)]);
+  };
+
+  /**
+   * 把一组切分出来的行还原成原来那一行（用拆分时的快照，连位置一起还原）。
+   *
+   * ⚠️ **组内只要有一段已经上传成功（`done`），就不许还原**。还原是「从界面上删掉这一组
+   * 再放回原来那一行」，而**已经传上去的段不会跟着消失** —— `sheet_music_files` 的行与
+   * storage 对象都还在（`onUploaded` 也早跑过了），界面却不再记得它们。接着用户把还原出来
+   * 的整本行再传一次，库里就有两份内容：切出来的段 + 整本，而先前那几个对象**再没有任何
+   * 界面入口能删**。所以这条不是「体验问题」，是数据一致性问题。
+   */
+  const canUnsplit = (groupId: string) =>
+    !files.some((f) => f.splitOf?.groupId === groupId && f.status === "done");
+
+  const unsplitGroup = (groupId: string) => {
+    if (!canUnsplit(groupId)) return;
+    const snap = splitSnapshots.current.get(groupId);
+    if (!snap) return;
+    splitSnapshots.current.delete(groupId);
+    setFiles((prev) => {
+      const rest = prev.filter((f) => f.splitOf?.groupId !== groupId);
+      const at = Math.min(snap.at, rest.length);
+      return [...rest.slice(0, at), snap.row, ...rest.slice(at)];
+    });
+  };
+
+  /** 同一组里与别人**重名**的行下标（切出来的每一份必须靠文件名能区分） */
+  const duplicatedInGroup = (groupId: string): Set<number> => {
+    const idx = files.map((f, i) => ({ f, i })).filter(({ f }) => f.splitOf?.groupId === groupId);
+    const names = idx.map(({ f }) => {
+      const e = editsOf(f);
+      return generateFileName(e.instrument, e.subParts);
+    });
+    return new Set(duplicateNames(names).map((k) => idx[k].i));
+  };
+
+  /**
    * 声部现在是**闭集**，分组靠 `section` 而不是乐器名 —— 木琴与马林巴都归打击乐，
    * 低音大管归大管。乐器名只进文件名与展示。
    */
@@ -1529,68 +1660,167 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         return ticket;
       };
 
+      /**
+       * 上传的**单元**：普通行各自一个单元；合订谱切出来的 N 段合成**一个**单元 ——
+       * 因为它们的源文件是同一份，而「一份文件只 load 一次」是切分的硬约束。
+       * 单元内部逐段串行：切一份 → 传一份 → 丢掉引用，峰值 ≈ 源 + 最大一段。
+       */
+      const units: Array<Array<{ f: UploadFile; i: number }>> = [];
+      const groupAt = new Map<string, number>();
+      files.forEach((f, i) => {
+        const gid = f.splitOf?.groupId;
+        if (!gid) {
+          units.push([{ f, i }]);
+          return;
+        }
+        const at = groupAt.get(gid);
+        if (at === undefined) {
+          groupAt.set(gid, units.length);
+          units.push([{ f, i }]);
+        } else {
+          units[at].push({ f, i });
+        }
+      });
+      // 组内按段序（而不是列表顺序），这样切出来传给 storage 的顺序与页序一致
+      for (const unit of units) {
+        unit.sort((a, b) => (a.f.splitOf?.segIndex ?? 0) - (b.f.splitOf?.segIndex ?? 0));
+      }
+
+      /**
+       * 切分单元的**串行闸**：issue 明确「切分阶段串行、并发 1」，`split-pdf.ts` 的
+       * 峰值分析也是按这个写的（峰值 ≈ 源 + 最大一段）。与普通行共用并发池的话，
+       * 最多可以有 `PIPELINE_CONCURRENCY` 个源文件同时驻留 —— 峰值直接乘以并发数。
+       *
+       * 串行**不损失什么**：切分是 CPU 密集（`copyPages` + `save` 都在主线程），
+       * 本仓早就量过「并发不会让纯 CPU 的工作变快」，而普通行（网络等待）照旧并发。
+       */
+      let splitChain: Promise<unknown> = Promise.resolve();
+      const serializeSplit = <T,>(fn: () => Promise<T>): Promise<T> => {
+        const run = splitChain.then(fn, fn);
+        splitChain = run.catch(() => {});
+        return run;
+      };
+
       // 并发上传 + 落库。结果乱序返回没关系：列表是按行状态驱动的，
       // updateFile(i, …) 按索引更新，互不干扰。
-      await runWithConcurrency(files, PIPELINE_CONCURRENCY, async (uploadFile, i) => {
-        // 取消时最多再做已在飞的那几个（其余 worker 领到下标会立刻返回）
+      await runWithConcurrency(units, PIPELINE_CONCURRENCY, async (unit) => {
+        // 取消时最多再做已在飞的那几个（其余 worker 领到单元会立刻返回）
         if (cancelledRef.current) return;
-        if (uploadFile.status === "done") return;
 
-        // 声部与乐器名分开取：声部是闭集（写进 parts.section），
-        // 乐器名是开集（写进 files.instrument，也是文件名主干）
-        const { section, instrument, subParts, subPartsInvalid, subPartsUnread } =
-          editsOf(uploadFile);
+        /** 一个单元里的一行：Blob 由调用方给（普通行就是它自己，切分行是切出来的那一段） */
+        const uploadOne = async (
+          uploadFile: UploadFile,
+          i: number,
+          blob: Blob,
+        ): Promise<boolean> => {
+          // 声部与乐器名分开取：声部是闭集（写进 parts.section），
+          // 乐器名是开集（写进 files.instrument，也是文件名主干）
+          const { section, instrument, subParts, subPartsInvalid, subPartsUnread } =
+            editsOf(uploadFile);
 
-        // 拦下，但**不改状态**。这两行缺的是用户补填，而编辑器只在有识别结果的行上
-        // 渲染 —— 置成 error 会让输入框消失，界面变成「让你填却没有字段可填」，
-        // 用户只能关掉弹窗、连带丢掉整批已经烧掉 OCR 配额的分析结果。
-        const blocker = uploadBlocker({ section, instrument, subPartsInvalid, subPartsUnread });
-        if (blocker) {
-          updateFile(i, { error: blocker });
+          // 拦下，但**不改状态**。这两行缺的是用户补填，而编辑器只在有识别结果的行上
+          // 渲染 —— 置成 error 会让输入框消失，界面变成「让你填却没有字段可填」，
+          // 用户只能关掉弹窗、连带丢掉整批已经烧掉 OCR 配额的分析结果。
+          const blocker = uploadBlocker({ section, instrument, subPartsInvalid, subPartsUnread });
+          if (blocker) {
+            updateFile(i, { error: blocker });
+            return false;
+          }
+          // 这一行能往下走了，把上一次的拦截/失败提示清掉，免得文案留在界面上说谎
+          updateFile(i, { error: undefined, status: "uploading" });
+
+          // 用到才建。建失败时这张票就是 null，用到同一张票的行各报各的错。
+          const partId = await ensurePart(section);
+          if (!partId) {
+            updateFile(i, { status: "error", error: "创建声部失败" });
+            return false;
+          }
+
+          const generatedFileName = generateFileName(instrument, subParts);
+          const filePath = pathOf(scoreId, uploadFile.storageId ?? crypto.randomUUID());
+          const { error: uploadError } = await supabase.storage
+            .from("sheet-music")
+            .upload(filePath, blob, { contentType: "application/pdf", upsert: true });
+
+          if (uploadError) {
+            updateFile(i, { status: "error", error: uploadError.message });
+            return false;
+          }
+
+          const { error: dbError } = await supabase.from("sheet_music_files").insert({
+            part_id: partId,
+            storage_path: filePath,
+            file_name: generatedFileName,
+            // 乐器名单独存一列，与派生出的文件名分开 —— 便于区分
+            // 「LLM 答错」与「文件名生成错」
+            instrument,
+            // 分声部号同样单独存一列。**它此前只活在 file_name 字符串里** ——
+            // 详情页刷新后拿不到分声部，排序与显示都无从谈起；文件名不是数据。
+            sub_parts: subParts,
+            file_size: blob.size,
+            uploaded_by: user.id,
+          });
+
+          if (dbError) {
+            updateFile(i, { status: "error", error: dbError.message });
+            return false;
+          }
+
+          updateFile(i, { status: "done", instrumentGuess: instrument });
+          return true;
+        };
+
+        // —— 普通行：字节就是它自己，完全不碰 pdf-lib ——
+        if (unit.length === 1 && !unit[0].f.splitOf) {
+          const { f, i } = unit[0];
+          if (f.status === "done") return;
+          if (await uploadOne(f, i, f.file)) hasSuccess = true;
           return;
         }
-        // 这一行能往下走了，把上一次的拦截/失败提示清掉，免得文案留在界面上说谎
-        updateFile(i, { error: undefined, status: "uploading" });
 
-        // 用到才建。建失败时这张票就是 null，用到同一张票的行各报各的错。
-        const partId = await ensurePart(section);
-        if (!partId) {
-          updateFile(i, { status: "error", error: "创建声部失败" });
+        // —— 切分行：源文件 load 一次，逐段切、逐段传、逐段丢 ——
+        const pending = unit.filter(({ f }) => f.status !== "done");
+        if (pending.length === 0) return;
+        const src = pending[0].f;
+        const range = src.splitOf!;
+        // 组内重名会让详情页出现几份分不清的文件 —— 与逐行拦截同一个理由，先拦再说
+        const dup = duplicatedInGroup(range.groupId);
+        if (pending.some(({ i }) => dup.has(i))) {
+          for (const { i } of pending) {
+            if (dup.has(i)) updateFile(i, { error: "与同组的其他段重名，请改乐器名或号" });
+          }
           return;
         }
 
-        const generatedFileName = generateFileName(instrument, subParts);
-        const filePath = pathOf(scoreId, uploadFile.storageId ?? crypto.randomUUID());
-        const { error: uploadError } = await supabase.storage
-          .from("sheet-music")
-          .upload(filePath, uploadFile.file, { contentType: "application/pdf", upsert: true });
-
-        if (uploadError) {
-          updateFile(i, { status: "error", error: uploadError.message });
-          return;
-        }
-
-        const { error: dbError } = await supabase.from("sheet_music_files").insert({
-          part_id: partId,
-          storage_path: filePath,
-          file_name: generatedFileName,
-          // 乐器名单独存一列，与派生出的文件名分开 —— 便于区分
-          // 「LLM 答错」与「文件名生成错」
-          instrument,
-          // 分声部号同样单独存一列。**它此前只活在 file_name 字符串里** ——
-          // 详情页刷新后拿不到分声部，排序与显示都无从谈起；文件名不是数据。
-          sub_parts: subParts,
-          file_size: uploadFile.file.size,
-          uploaded_by: user.id,
+        await serializeSplit(async () => {
+          let source: Awaited<ReturnType<typeof openForSplit>> | null = null;
+          try {
+            source = await openForSplit(src.file);
+            for (const { f, i } of pending) {
+              if (cancelledRef.current) return;
+              const seg = f.splitOf!;
+              // 切一份 —— 只搬 PDF 对象、不解码图像流
+              const bytes = await source.extract(seg.from, seg.to);
+              const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
+              if (await uploadOne(f, i, blob)) hasSuccess = true;
+              // 传完立刻丢引用：峰值 ≈ 源 + 最大一段（而不是「源 + 全部段」）
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            // 加密的 PDF 会在这里抛 `EncryptedPDFError`（见 `openForSplit` 的说明）。
+            // 原文是英文、而且只在「确认上传」时才出现 —— 那时用户已经逐段填完乐器与号，
+            // 给一句「怎么退回去」的中文，比抛一个类名有用得多。
+            const encrypted = err instanceof Error && /EncryptedPDF/i.test(err.name + message);
+            const hint = encrypted
+              ? "这份 PDF 有加密，无法切分 —— 请点「还原为一份」后整份上传"
+              : `切分失败：${message}`;
+            for (const { f, i } of pending) {
+              if (f.status !== "done") updateFile(i, { status: "error", error: hint });
+            }
+          } finally {
+            source = null;
+          }
         });
-
-        if (dbError) {
-          updateFile(i, { status: "error", error: dbError.message });
-          return;
-        }
-
-        updateFile(i, { status: "done", instrumentGuess: instrument });
-        hasSuccess = true;
       });
     } catch (err) {
       // 任何一步意外 reject（例如 supabase-js 的 navigator.locks 以非 AbortError 拒绝时
@@ -1837,6 +2067,42 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                     {(f.status === "analyzed" || f.status === "error") &&
                       f.instrumentGuess !== undefined && (
                         <div className="space-y-1.5 pl-5 border-l border-border">
+                          {/* 切分出来的行：说清它是**哪几页**（否则几行长得一模一样，
+                              用户没法把屏幕上的行和谱子上的段对上），并给一条退回的路 */}
+                          {f.splitOf && (
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs text-primary shrink-0">
+                                第 {f.splitOf.segIndex + 1}/{f.splitOf.segTotal} 段 · 源文件第{" "}
+                                {f.splitOf.from}–{f.splitOf.to} 页
+                              </span>
+                              <button
+                                onClick={() => unsplitGroup(f.splitOf!.groupId)}
+                                disabled={
+                                  phase === "uploading" || segBusy || !canUnsplit(f.splitOf.groupId)
+                                }
+                                // 已上传的段不能撤销（否则库里会留下界面管不到的孤儿），
+                                // 用 title 说清为什么灰着 —— 只灰不给理由，用户会以为坏了
+                                title={
+                                  canUnsplit(f.splitOf.groupId)
+                                    ? "撤销拆分，把这几段还原成原来那一行"
+                                    : "这一组已有段上传成功，无法还原（已传的文件不会跟着撤销）"
+                                }
+                                className="px-1.5 py-0.5 text-xs text-text-muted border border-border rounded shrink-0 hover:text-primary disabled:opacity-50"
+                              >
+                                还原为一份
+                              </button>
+                            </div>
+                          )}
+                          {f.splitOf?.note && (
+                            <p className="text-xs text-warning">{f.splitOf.note}</p>
+                          )}
+                          {/* 同组重名：详情页会出现几份分不清的文件，上传也会被拦下。
+                              （这个块本身就只在 analyzed/error 上渲染，所以不用再判 done） */}
+                          {f.splitOf && duplicatedInGroup(f.splitOf.groupId).has(i) && (
+                            <p className="text-xs text-danger">
+                              与同组的其他段重名 —— 请改乐器名或分声部号
+                            </p>
+                          )}
                           {/* ⚠️ `flex-wrap` 是必需的：这一行 7 个元素**全部 `shrink-0`**，
                               而卡片是 `overflow-hidden` —— 不换行时窄屏上右边的控件会被裁掉
                               且**滚不到**（实测 448px 下输入框与「重置」按钮就在卡片外）。
@@ -2073,12 +2339,24 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                                   })}
                                 </ul>
                               )}
-                              {/* Step 1 的产物只活在组件里（切分是 Step 2）—— 不说的话，
-                                  用户会以为上传时就按段切了 */}
+                              {/* 边界确认完了就拆成多行（#290 Step 2）：拆完每段各占一行、
+                                  各有各的乐器/号，上传时源文件只读一次、逐段切出来各传各的。
+                                  放在这里（而不是上传时才切）是因为**每一段都要人工确认乐器
+                                  与号** —— 那是拆完之后才看得见的东西。 */}
                               {f.segState === "done" && segmentsOf(f).length > 1 && (
-                                <p className="text-xs text-text-muted">
-                                  上传时暂不按段切分（物理切分是下一步）
-                                </p>
+                                <button
+                                  onClick={() => splitIntoSegments(i)}
+                                  // ⚠️ `segBusy` 不能漏：拆分**会改变 files 的长度**，而分段
+                                  // 的 worker 手里攥着点击那一刻的下标 —— 两份合订谱一起跑时，
+                                  // 先跑完的那份被拆开，另一份的结果就会写进**它的某一段**，
+                                  // 而那份自己永远停在「识别中」。同一文件里「确认上传」与
+                                  // 「识别分段」都带了 `segBusy`，这里必须一致。
+                                  disabled={phase === "uploading" || segBusy}
+                                  className="px-2 py-0.5 text-xs border border-border rounded shrink-0 hover:text-primary disabled:opacity-50"
+                                  title="按这些边界把文件拆成多行，逐段确认乐器与分声部号；上传时自动切开，不会重复 OCR"
+                                >
+                                  按这 {segmentsOf(f).length} 段拆分
+                                </button>
                               )}
                             </div>
                           )}

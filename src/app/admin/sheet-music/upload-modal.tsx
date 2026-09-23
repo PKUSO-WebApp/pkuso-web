@@ -18,7 +18,18 @@ import {
   rowLongestRun,
   type CropDecision,
 } from "./staff-line";
-import { needsSegmentation, normalizeSegments } from "./segmentation";
+import {
+  boundarySpan,
+  estimateOcrCalls,
+  estimateTotalOcrCalls,
+  mergeSegmentIntoPrev,
+  moveSegmentStart,
+  needsSegmentation,
+  normalizeSegments,
+  parseBoundaryText,
+  splitSegment,
+  startsFromResponse,
+} from "./segmentation";
 import {
   formatSubParts,
   generateFileName,
@@ -86,10 +97,16 @@ const UNSAFE_IN_PATH = /\.\.|\p{Cc}|\p{Cf}/u;
  * **只校验，不映射** —— 后端 prompt 的词表与 `INSTRUMENT_ORDER` 是两份手抄副本，
  * 这里是把「词表漂移」变成界面上的可见告警，而不是再引入一张跨仓同步的映射表。
  * 「其他」是契约里的合法弃权声部，不算漂移。
+ *
+ * ⚠️ **「总谱」同样要认**：它不是声部（见 `instruments.ts` 的说明），但可以是
+ * `sheet_music_parts.section` 的合法值。漏掉它会让用户选了总谱之后被标成
+ * 「非标准」——而它是「总谱不参与切分检测」那条唯一的人工标记入口。
  */
 function isKnownSection(section: string): boolean {
   return (
-    section === OTHER_INSTRUMENT_GROUP || (INSTRUMENT_ORDER as readonly string[]).includes(section)
+    section === OTHER_INSTRUMENT_GROUP ||
+    section === FULL_SCORE_SECTION ||
+    (INSTRUMENT_ORDER as readonly string[]).includes(section)
   );
 }
 
@@ -149,12 +166,33 @@ interface UploadFile {
    */
   segState?: "running" | "done" | "error";
   segError?: string;
-  pageTexts?: PageText[];
   /**
-   * 各段的**起始页**（恒含第 1 页）。用户拖动边界 = 改这个数组。
+   * 逐页窄带 OCR 的**成功**结果。失败的页不在这里（见 `segFailedPages`）。
+   *
+   * 失败重试与「改边界」都复用它 —— 有它就不再重烧那几页的 OCR（验收标准点名的
+   * 「改正后不重复 OCR」靠这个；`runSegmentation` 的重试也靠它）。
+   */
+  pageTexts?: PageText[];
+  /** 窄带 OCR 失败的页号（1-based）。全失败时 `segState` 直接是 `error`，不会走到这里 */
+  segFailedPages?: number[];
+  /**
+   * 各段的**起始页**（恒含第 1 页，严格升序）。用户拖动边界 = 改这个数组。
    * `undefined` = 还没跑过分段；`[1]` = 明确不切（整份一段）。
+   *
+   * ⚠️ 它与渲染出来的段**逐位对应**，所以下标绝不能被过滤打乱 —— 否则用户改的是
+   * 第 3 段、落到的却是第 2 段（见 `segmentStartText` 的说明）。
    */
   segmentStarts?: number[];
+  /**
+   * 边界输入框里的**原文**，与 `segmentStarts` 逐位对应（第 0 位恒为 "1"，没有输入框）。
+   *
+   * ⚠️ **存原文而不是解析结果**，理由与 `subPartsEditText` 逐字相同：受控输入取派生值
+   * 的话，打字过程中的中间态会被当成完整值提交。段起点这里更凶 —— 中间态一旦落进
+   * `normalizeSegments`（语义是 filter），那个边界会被**当成重复值合并掉**，一段就此
+   * 消失，而恢复只能重跑整个分段 = 再烧 N 次 OCR。所以：中间态只停在框里，
+   * 提交（失焦/回车）时才解析，且**非法值一律不提交**（`parseBoundaryText` 返回 null）。
+   */
+  segmentStartText?: string[];
   ocrText?: string;
   llmResult?: string;
   preview?: string; // 实际送去 OCR 的那张图的缩略图（排查用）
@@ -570,9 +608,13 @@ async function renderFirstContentPage(file: File): Promise<RenderedPage> {
     wasmUrl: `${PDFJS_ASSET_BASE}wasm/`,
     iccUrl: `${PDFJS_ASSET_BASE}iccs/`,
   });
-  const pdf = await task.promise;
-
   try {
+    // ⚠️ `await task.promise` 必须在 try **里面**（这里）：加载失败（坏 PDF / 加密 /
+    // 资源缺失）时它会抛，抛在 try 外面就永远走不到 finally 的 `destroy()` ——
+    // 真 worker 模式下每导入一个坏文件漏一个 worker 线程。实测：坏 PDF 时
+    // `getDocument` 被调 1 次、`destroy` 被调 0 次。`renderNarrowBands` 里同一句
+    // 早先也是这个形态，已经改过；两处一致才不会漏。
+    const pdf = await task.promise;
     const pagesToTry = Math.min(MAX_BLANK_PAGES_TRIED, pdf.numPages);
     let warning = "";
     let preview = "";
@@ -709,10 +751,21 @@ async function runOcr(imageBase64: string): Promise<string> {
  *
  * ⚠️ **必须是固定值，不能用 `decideTitleCrop`**：续页在裁切逻辑下会因「顶部过薄」
  * 退化成整页，那就把「续页只有页眉」这个判据本身毁掉了（#290 正文里写明了这条）。
- * 12% 是 issue 里给的例子，实测在 Egmont（Breitkopf）与德五（Dover 系）两批语料上
- * 都够装下首页的标题块。
+ *
+ * 12% 的来历：issue 正文给的例子是 12%；另一处提到的 33% 是 `decideTitleCrop` 的
+ * `MAX_CROP_PCT`（**裁切上限**，另一件事），不是窄带高度。12% 在真实语料上验过
+ * （语料、轮次与结论见 #290 的评论）—— **别在这里写份数/页数**：那是会腐烂的计数，
+ * 每加一份语料就错一次。
  */
 const BAND_PCT = 0.12;
+
+/** 用户关掉弹窗后中断 —— **不是失败**，不要落到 `segState: "error"` */
+class SegmentationCancelled extends Error {
+  constructor() {
+    super("已取消");
+    this.name = "SegmentationCancelled";
+  }
+}
 
 /**
  * 逐页渲染顶部等高窄带（#290 Step 1 的输入）。
@@ -726,7 +779,10 @@ const BAND_PCT = 0.12;
  * 量到过 ~282MB（大头是 pdf.js 解码扫描图的**内部**画布），19 页串行跑不会叠加，
  * 但**不能**把这里改成并发。
  */
-async function renderNarrowBands(file: File): Promise<{ pageCount: number; bands: string[] }> {
+async function renderNarrowBands(
+  file: File,
+  opts: { needed: (pageNo: number) => boolean; isCancelled: () => boolean },
+): Promise<{ pageCount: number; bands: string[] }> {
   const pdfjs = await loadPdfJs();
   const data = new Uint8Array(await file.arrayBuffer());
   const task = pdfjs.getDocument({
@@ -735,10 +791,20 @@ async function renderNarrowBands(file: File): Promise<{ pageCount: number; bands
     wasmUrl: `${PDFJS_ASSET_BASE}wasm/`,
     iccUrl: `${PDFJS_ASSET_BASE}iccs/`,
   });
-  const pdf = await task.promise;
   try {
+    const pdf = await task.promise;
     const bands: string[] = [];
     for (let pageNo = 1; pageNo <= pdf.numPages; pageNo++) {
+      // ⚠️ 关掉弹窗之后不能继续往下跑：一份 19 页的谱还有最多 19×65s 的 OCR 在排队，
+      // 而配额是照烧的。**每个文件开头检查一次是不够的** —— 分段路径的粒度是
+      // 「1 个文件 = N 次 OCR」，不是「1 个文件 = 1 次请求」。
+      if (opts.isCancelled()) throw new SegmentationCancelled();
+      // 已经在手里的页不重渲染（失败重试只补缺的页）。占位空串保住
+      // `bands.length === pageCount` 这个对应关系，调用方按页号取。
+      if (!opts.needed(pageNo)) {
+        bands.push("");
+        continue;
+      }
       const page = await pdf.getPage(pageNo);
       try {
         const unscaled = page.getViewport({ scale: 1 });
@@ -749,42 +815,58 @@ async function renderNarrowBands(file: File): Promise<{ pageCount: number; bands
         const canvas = document.createElement("canvas");
         canvas.width = Math.ceil(viewport.width);
         canvas.height = Math.ceil(viewport.height);
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("无法创建 canvas 上下文");
-        // 透明像素编码成 JPEG 会合成到黑底，先铺白（与 renderPageToJpeg 同一条理由）
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        await page.render({ canvas, canvasContext: ctx, viewport }).promise;
-
         const bandH = Math.max(1, Math.round(canvas.height * BAND_PCT));
         const band = document.createElement("canvas");
         band.width = canvas.width;
         band.height = bandH;
-        const bctx = band.getContext("2d");
-        if (!bctx) throw new Error("无法创建 canvas 上下文");
-        bctx.fillStyle = "#ffffff";
-        bctx.fillRect(0, 0, band.width, band.height);
-        bctx.drawImage(canvas, 0, 0, canvas.width, bandH, 0, 0, band.width, band.height);
+        try {
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("无法创建 canvas 上下文");
+          // 透明像素编码成 JPEG 会合成到黑底，先铺白（与 renderPageToJpeg 同一条理由）
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          await page.render({ canvas, canvasContext: ctx, viewport }).promise;
 
-        const blob = await new Promise<Blob | null>((r) =>
-          band.toBlob(r, "image/jpeg", OCR_JPEG_QUALITY),
-        );
-        if (!blob) throw new Error(`第 ${pageNo} 页窄带编码失败`);
-        const buf = new Uint8Array(await blob.arrayBuffer());
-        // 分段转成字符串再 btoa：一次 `String.fromCharCode(...buf)` 在大图上会撞
-        // 「参数过多」的栈上限，所以按 32KB 切
-        let bin = "";
-        for (let i = 0; i < buf.length; i += 0x8000) {
-          bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+          const bctx = band.getContext("2d");
+          if (!bctx) throw new Error("无法创建 canvas 上下文");
+          bctx.fillStyle = "#ffffff";
+          bctx.fillRect(0, 0, band.width, band.height);
+          bctx.drawImage(canvas, 0, 0, canvas.width, bandH, 0, 0, band.width, band.height);
+
+          const blob = await new Promise<Blob | null>((r) =>
+            band.toBlob(r, "image/jpeg", OCR_JPEG_QUALITY),
+          );
+          if (!blob) throw new Error(`第 ${pageNo} 页窄带编码失败`);
+          const buf = new Uint8Array(await blob.arrayBuffer());
+          // 分段转成字符串再 btoa：一次 `String.fromCharCode(...buf)` 在大图上会撞
+          // 「参数过多」的栈上限，所以按 32KB 切
+          let bin = "";
+          for (let i = 0; i < buf.length; i += 0x8000) {
+            bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+          }
+          bands.push(btoa(bin));
+        } finally {
+          // 释放 canvas 后备存储（与 renderPageToJpeg 同一条规矩：scale 3 的一页约 20MB）。
+          // 串行跑不会叠加，但「自己立的规矩自己不守」是最容易长出真泄漏的地方。
+          canvas.width = 0;
+          canvas.height = 0;
+          band.width = 0;
+          band.height = 0;
         }
-        bands.push(btoa(bin));
       } finally {
         page.cleanup();
       }
     }
     return { pageCount: pdf.numPages, bands };
   } finally {
-    void task.destroy?.();
+    // ⚠️ `await task.promise` 必须在 try 里（上面）：加载失败（坏 PDF / 加密 /
+    // 资源缺失）时它会抛，抛在 try 外面就**永远走不到销毁** —— 真 worker 模式下
+    // 漏的是一个线程。这里也不吞异常：finally 里的 destroy 失败不该盖住真错误。
+    try {
+      await task.destroy();
+    } catch {
+      // 销毁本身失败没有下游依赖（fake worker 下泄漏的是可被 GC 的对象图）
+    }
   }
 }
 
@@ -795,31 +877,75 @@ interface PageText {
 }
 
 /**
- * 跑一份合订谱的分段：**逐页**窄带 OCR → `segment-parts` → 切点。
+ * 分段第一步：**逐页**窄带 OCR。产物（`pageTexts` / `failedPages`）由调用方**先落状态**。
  *
- * 页文本一起返回：用户改边界时**不需要重跑 OCR**（验收标准里点名的「改正后不重复
- * OCR」就是靠这个 —— 文本留在手里，改边界只是重新算段）。
+ * 拆成两步的理由：第二步（`segment-parts`）失败或用户中途再来一次时，这 N 次 OCR 的
+ * 产物必须留下来 —— 否则重试 = 整份重烧（19 页 = 19 次配额，而免费档是 500 次/天）。
+ * `existing` 就是上一次留下来的东西，有它则那几页连渲染都不做。
  *
  * ⚠️ 串行跑。一份 N 页 = N 次 OCR，**不能**与别的文件并发更多 —— 整个分析阶段已经
  * 有 `PIPELINE_CONCURRENCY` 个文件在飞，这里再并发会把 OCR.space 的瞬时压力翻几倍。
  */
-async function runSegmentation(
+async function ocrBandsForSegmentation(
   file: File,
-): Promise<{ pageCount: number; pageTexts: PageText[]; cuts: number[] }> {
-  const { pageCount, bands } = await renderNarrowBands(file);
+  opts: { existing?: PageText[]; isCancelled: () => boolean },
+): Promise<{ pageCount: number; pageTexts: PageText[]; failedPages: number[] }> {
+  const have = new Map((opts.existing ?? []).map((p) => [p.page, p.text]));
+  const { pageCount, bands } = await renderNarrowBands(file, {
+    needed: (pageNo) => !have.has(pageNo),
+    isCancelled: opts.isCancelled,
+  });
+
   const pageTexts: PageText[] = [];
-  for (let i = 0; i < bands.length; i++) {
-    // 单页 OCR 失败不该让整份分段失败：那一页的文本留空，模型会看到「（空白）」，
-    // 而 handler 也允许页与页之间有缺（页号是显式的，不会错位）。
-    let text = "";
-    try {
-      text = await runOcr(bands[i]);
-    } catch {
-      text = "";
+  const failedPages: number[] = [];
+  for (let i = 0; i < pageCount; i++) {
+    const page = i + 1;
+    const known = have.get(page);
+    if (known !== undefined) {
+      pageTexts.push({ page, text: known });
+      continue;
     }
-    pageTexts.push({ page: i + 1, text });
+    if (opts.isCancelled()) throw new SegmentationCancelled();
+    // 单页 OCR 失败**不塞空串**：空串在后端等价于「这一页是空白的」，而这里的意思是
+    // 「这一页没取到」—— 两者完全不同。页面从 `pages` 里缺席时后端会明确告诉模型
+    // 「第 X 页没取到文本，不要在那几页上给切点」，那才是对的降级。
+    // （实测：空文本页承载不住任何切点，所以少发一页只会**少切**，方向安全。）
+    try {
+      pageTexts.push({ page, text: await runOcr(bands[i]) });
+    } catch {
+      failedPages.push(page);
+    }
   }
 
+  // 一页都没成功 = 没有任何可判断的内容。**必须报错**，不能退化成「不切」：
+  // 界面上「这份谱只有一份」与「OCR 全挂」长得一样的话，用户会照着错结论往下走
+  // （这正是本仓记过的「降级逻辑掩盖失败」）。
+  if (pageTexts.length === 0) {
+    throw new Error(
+      `全部 ${pageCount} 页的窄带 OCR 都失败了（配额用尽或会话过期？）—— 没有可判断的内容`,
+    );
+  }
+  // 第二种形态：OCR 每页都**回报成功**、但一个字都没读到。实测可达 —— 上游在配额/
+  // 限流状态下会回一个不带任何错误标志的空结果集（见 pkuso-backend#25），那时
+  // `runOcr` 拿到的是空串而不是异常，于是每一页都被当成「空白页」发下去，模型只能
+  // 返回「不切」，界面上显示「共 1 段」—— 与「这份谱确实只有一份」不可区分。
+  // 判据是**全部页都空**：单片空白页是正常的（真空白页），全空则是没读到东西。
+  //
+  // ⚠️ 这里**故意不把 `pageTexts` 交给调用方落状态**（与上面「OCR 产物先落」的
+  // 原则相反）：这条路留下的产物是 N 个空串，一旦落状态，重试会因为「所有页都已在
+  // 手里」而跳过 OCR、立刻撞回这条守卫 —— 于是「配额恢复后再试一次」永远走不通，
+  // 变成一个不可自救的死路。宁可让重试重烧 N 次，也不要一个点了没反应的按钮。
+  if (pageTexts.every((p) => !p.text.trim())) {
+    throw new Error(
+      `${pageCount} 页的窄带都没读到文字（OCR 配额/限流，或窄带不可识别）` +
+        `—— 没有可判断的内容。可以直接上传（分段是可选的），或稍后重试`,
+    );
+  }
+  return { pageCount, pageTexts, failedPages };
+}
+
+/** 分段第二步：把页文本交给 `segment-parts`，拿回原始 `cuts`（校验交给 `startsFromResponse`） */
+async function requestSegmentation(pageCount: number, pageTexts: PageText[]): Promise<unknown> {
   const { data, error } = await supabase.functions.invoke("segment-parts", {
     body: { pageCount, pages: pageTexts },
     timeout: LLM_TIMEOUT_MS,
@@ -828,10 +954,7 @@ async function runSegmentation(
   if (!data?.success) {
     throw new Error(`分段失败: ${data?.error || data?.message || "未知错误"}`);
   }
-  const cuts = Array.isArray(data.cuts)
-    ? data.cuts.filter((c: unknown): c is number => typeof c === "number")
-    : [];
-  return { pageCount, pageTexts, cuts };
+  return data.cuts;
 }
 
 /**
@@ -893,6 +1016,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   // 防重复提交：ref 同步阻断竞态窗口（setState 是异步的，两次快速点击之间 phase 仍是旧值）
   const analyzingRef = useRef(false);
   const segRunningRef = useRef(false);
+  // 分段的 state 半（ref 挡重复点击，state 让**别的按钮**知道分段在跑）
+  const [segBusy, setSegBusy] = useState(false);
   const uploadingRef = useRef(false);
   useEffect(() => {
     cancelledRef.current = false;
@@ -1116,14 +1241,40 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    */
   const segEligible = (f: UploadFile) =>
     f.status !== "error" &&
+    // **已上传成功的不算**（`status === "done"`）：分段的结果只写进组件 state，
+    // 而 `done` 的行**不再渲染编辑器块**（那道门是 `analyzed || error`）—— 于是
+    // 份数与真实调用都会白烧：实测 2 份文件、第 1 份已上传、第 2 份被 uploadBlocker
+    // 拦下时，按钮按 2 份计费，点下去真的烧掉两份的配额，而第 1 份的段一个都看不到。
+    f.status !== "done" &&
     needsSegmentation(
       f.pageCount ?? null,
       (f.sectionEdit ?? f.sectionGuess ?? "").trim() === FULL_SCORE_SECTION,
     );
 
-  /** 跑一遍分段要烧多少次 OCR —— **点火前必须让用户看到**（#290 验收标准之一） */
-  const segCost = files.reduce((n, f) => (segEligible(f) ? n + (f.pageCount ?? 0) : n), 0);
-  const segTargets = files.filter(segEligible);
+  /**
+   * 真正会跑的判据：合格、**且还没跑过**。
+   *
+   * 按钮文案与执行**必须共用这一个** —— 分开写的话，已跑完的份数会被重复计入文案，
+   * 而再点一次其实一个调用都不发（用户看到的数与真实会烧的数不是同一个判据）。
+   */
+  const segPending = (f: UploadFile) => segEligible(f) && f.segState !== "done";
+  const segTargets = files.map((f, i) => ({ f, i })).filter(({ f }) => segPending(f));
+
+  /**
+   * 这一份文件还要烧几次 OCR（下界，见 `estimateOcrCalls` 的说明）。
+   *
+   * 按**缺的页**算：已经在手里的页不重烧（`pageTexts` 只装成功的页，所以失败重试时
+   * 这个数正好等于要补的页数）。**按钮文案与「识别中…」那行共用这一个函数** ——
+   * 各算一次的话，两个数会在同屏里互相矛盾（一个按整份页数、一个按缺的页数）。
+   */
+  const costOf = (f: UploadFile) => estimateOcrCalls(f.pageCount ?? 0, f.pageTexts?.length ?? 0);
+  const segCost = estimateTotalOcrCalls(
+    segTargets.map(({ f }) => ({
+      pageCount: f.pageCount ?? null,
+      eligible: true,
+      donePages: f.pageTexts?.length ?? 0,
+    })),
+  );
 
   /**
    * 跑分段（#290 Step 1）。**不自动跑** —— 一份 N 页的合订谱要烧 N 次 OCR，
@@ -1132,23 +1283,37 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   const startSegmentation = async () => {
     if (segRunningRef.current) return;
     segRunningRef.current = true;
+    // state 半（与 ref 同步置位）：ref 挡重复点击，state 让**别的按钮**知道分段在跑 ——
+    // 分段一次要烧 N 次 OCR、界面要等几十秒，这期间「确认上传」必须禁用，
+    // 否则两个长任务重叠，而分段的结果会落到刚上传完、编辑器已隐藏的那一行上。
+    setSegBusy(true);
     cancelledRef.current = false;
     try {
-      const targets = files
-        .map((f, i) => ({ f, i }))
-        .filter(({ f }) => segEligible(f) && f.segState !== "done");
+      const targets = files.map((f, i) => ({ f, i })).filter(({ f }) => segPending(f));
       await runWithConcurrency(targets, PIPELINE_CONCURRENCY, async ({ f, i }) => {
         if (cancelledRef.current) return;
         updateFile(i, { segState: "running", segError: undefined });
         try {
-          const { pageTexts, cuts } = await runSegmentation(f.file);
+          const { pageCount, pageTexts, failedPages } = await ocrBandsForSegmentation(f.file, {
+            existing: f.pageTexts,
+            isCancelled: () => cancelledRef.current,
+          });
+          // OCR 的产物**先落状态**：下一步（LLM）失败时它还在，重试只补缺的页
+          updateFile(i, { pageTexts, segFailedPages: failedPages });
+          const cuts = await requestSegmentation(pageCount, pageTexts);
+          // 起点的推导走 segmentation.ts 里那份（校验 cuts 是它存在的理由）。
+          // 别在这里内联重写 —— 否则上线跑的是没被测试覆盖的第三份实现。
+          const starts = startsFromResponse(cuts, pageCount);
           updateFile(i, {
             segState: "done",
-            pageTexts,
-            // 段的**起点**（恒含第 1 页）：用户拖动边界就是改这个数组
-            segmentStarts: [...new Set([1, ...cuts])].sort((a, b) => a - b),
+            // 段的**起点**（恒含第 1 页）与输入框原文一起写：两者逐位对应，
+            // 编辑时下标才不会错位（见 UploadFile.segmentStartText）
+            segmentStarts: starts,
+            segmentStartText: starts.map(String),
           });
         } catch (err) {
+          // 关窗导致的取消不是失败：状态留在那儿就行（重开弹窗本来就是全新状态）
+          if (err instanceof SegmentationCancelled) return;
           updateFile(i, {
             segState: "error",
             segError: err instanceof Error ? err.message : String(err),
@@ -1157,19 +1322,113 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       });
     } finally {
       segRunningRef.current = false;
+      setSegBusy(false);
     }
   };
 
   /** 界面上显示的段（由起点页推出闭区间）。用户改过起点就按改过的算 */
   const segmentsOf = (f: UploadFile) => normalizeSegments(f.segmentStarts ?? [1], f.pageCount ?? 1);
 
-  /** 改某一段的起点页。会立刻收敛（不留空洞/重叠），并把结果写回状态 */
-  const setSegmentStart = (index: number, segIndex: number, startPage: number) => {
-    const f = files[index];
-    const starts = [...(f.segmentStarts ?? [1])].sort((a, b) => a - b);
-    starts[segIndex] = startPage;
-    updateFile(index, { segmentStarts: [...new Set(starts)].sort((a, b) => a - b) });
+  /** 段的起点数组（界面上编辑的那个），带兜底 */
+  const startsOf = (f: UploadFile) => f.segmentStarts ?? [1];
+
+  /** 输入框原文数组。老状态没有这个字段时按起点回填，保证与 `segmentStarts` 等长 */
+  const startTextOf = (f: UploadFile) => f.segmentStartText ?? startsOf(f).map(String);
+
+  /**
+   * 三个只改一段的编辑操作（改起点 / 拆分 / 合并）都走这里。
+   *
+   * 用**函数式 setState**：这些操作是「读当前状态 → 改一个数组 → 写回」的
+   * read-modify-write，用闭包里的 `files[index]` 拼 patch 会在同一 tick 的两次
+   * 调用之间丢更新（打字是逐字符触发的，最容易撞上）。
+   *
+   * `mutate` 返回新数组（或**原引用**表示拒绝修改），`text` 由调用方同步给出：
+   * 原文数组必须与起点数组**同一次**更新里改，否则两者长度一旦错开，下标就错位，
+   * 用户改的会是**别的段**（而且再也对不回来）。
+   */
+  const editSegments = (
+    index: number,
+    mutate: (f: UploadFile) => { starts: number[]; text: string[] } | null,
+  ) => {
+    setFiles((prev) =>
+      prev.map((f, idx) => {
+        if (idx !== index) return f;
+        const next = mutate(f);
+        if (!next) return f;
+        return { ...f, segmentStarts: next.starts, segmentStartText: next.text };
+      }),
+    );
   };
+
+  /**
+   * 改输入框原文 —— **只改原文，不提交**。打字过程中的中间态停在这里。
+   *
+   * ⚠️ 按 `startsOf(f)` 的**长度重建**，而不是 `text[segIndex] = raw` 直接写：
+   * 后者在下标越界时会把数组**撑长**（稀疏数组），于是「原文数组与起点数组等长」
+   * 这条不变量会从「当场暴露」退化成「静默错位」—— 而错位的后果是用户改的是**别的段**。
+   * 重建之后长度由构造保证。
+   */
+  const setSegmentStartRaw = (index: number, segIndex: number, raw: string) =>
+    editSegments(index, (f) => {
+      const starts = startsOf(f);
+      const text = startTextOf(f);
+      return { starts, text: starts.map((_, k) => (k === segIndex ? raw : (text[k] ?? ""))) };
+    });
+
+  /**
+   * 提交输入框原文（失焦 / 回车）。
+   *
+   * **非法原文一律不提交**：留在框里（用户看得见自己敲了什么）+ 标红提示范围，
+   * 段本身一动不动。绝不走「非法 → 把它过滤掉」那条路 —— 那等于用户敲一个字符
+   * 就静默删掉一个边界，而恢复要重跑整个分段。
+   *
+   * ⚠️ 「失焦/回车才提交」与「`moveSegmentStart` 的区间守卫」是**两道独立的保险**，
+   * 都要留着：变异测试实测，把前者改回「每次按键都提交」，全部用例**仍然绿**
+   *（中间态 `1` 落在可动区间外，被守卫当场拒绝）—— 也就是说守卫独立挡住了旧 bug。
+   * 但反过来不成立：守卫的区间是靠 `boundarySpan` 算的，谁放松了它，
+   * 第一道保险就是唯一还站着的那道。
+   */
+  const commitSegmentStart = (index: number, segIndex: number) =>
+    editSegments(index, (f) => {
+      const starts = startsOf(f);
+      const text = startTextOf(f);
+      const span = boundarySpan(starts, segIndex, f.pageCount ?? 1);
+      if (!span) return null;
+      const v = parseBoundaryText(text[segIndex] ?? "", span.lo, span.hi);
+      if (v === null) return null; // 非法：原文留着，段不动
+      const moved = moveSegmentStart(starts, segIndex, v, f.pageCount ?? 1);
+      if (moved === starts) return null;
+      const nextText = [...text];
+      nextText[segIndex] = String(moved[segIndex]); // 回写成规范形式（"015" → "15"）
+      return { starts: moved, text: nextText };
+    });
+
+  /** 删掉这条边界（这一段并进上一段）—— 唯一会让段数变少的操作，必须是显式点击 */
+  const mergeSegmentAt = (index: number, segIndex: number) =>
+    editSegments(index, (f) => {
+      const starts = startsOf(f);
+      const next = mergeSegmentIntoPrev(starts, segIndex);
+      if (next === starts) return null;
+      const text = [...startTextOf(f)];
+      text.splice(segIndex, 1);
+      return { starts: next, text };
+    });
+
+  /**
+   * 在这一段里加一条边界（拆成两段）。
+   *
+   * 后端刻意「宁可少切，不可多切」，所以**模型漏切是常态** —— 没有这个按钮，
+   * 用户唯一的出路就是重跑分段（再烧 N 次 OCR），而那还不一定能切得更好。
+   */
+  const splitSegmentAt = (index: number, segIndex: number) =>
+    editSegments(index, (f) => {
+      const starts = startsOf(f);
+      const next = splitSegment(starts, segIndex, f.pageCount ?? 1);
+      if (next === starts) return null;
+      const text = [...startTextOf(f)];
+      text.splice(segIndex + 1, 0, String(next[segIndex + 1]));
+      return { starts: next, text };
+    });
 
   /**
    * 声部现在是**闭集**，分组靠 `section` 而不是乐器名 —— 木琴与马林巴都归打击乐，
@@ -1608,6 +1867,12 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                               <option value={OTHER_INSTRUMENT_GROUP}>
                                 {OTHER_INSTRUMENT_GROUP}
                               </option>
+                              {/* 总谱**必须能选**：它不是声部（见 instruments.ts），
+                                  但「总谱不参与切分检测」是用户定的、也是省 OCR 最大的一笔，
+                                  而总谱认不出来（三个本地判据都被实测否掉）——人工标记是
+                                  唯一入口。选不到它 = 那条分支永远走不到，还不是死代码
+                                  那么轻：用户会以为总谱已经被排除了。 */}
+                              <option value={FULL_SCORE_SECTION}>{FULL_SCORE_SECTION}</option>
                             </select>
                             <label className="text-xs text-text-muted w-12 shrink-0 ml-1">
                               乐器
@@ -1691,14 +1956,19 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                               边界用「段的起始页」表达 —— 用户改这个数就等于拖动边界，
                               而**不重跑 OCR**（逐页窄带文本留在 pageTexts 里）。
                               段内的乐器/分声部**不在这里编辑**：切分之后每一段会各自成为
-                              一行，用的还是上面那套编辑器（同一件事不造两套界面）。 */}
+                              一行，用的还是上面那套编辑器（同一件事不造两套界面）。
+
+                              ⚠️ 起点输入框存的是**原文**，失焦/回车才提交（见
+                              `UploadFile.segmentStartText`）：受控输入直接存派生值的话，
+                              打字过程中的中间态会被当成完整值提交，而那会**静默删掉一个
+                              边界**（敲 `15` 的第一个字符 `1` 就把上一段并掉了）。 */}
                           {segEligible(f) && (
                             <div className="space-y-1">
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <span className="text-xs text-text-muted">分段：</span>
                                 {f.segState === "running" && (
                                   <span className="text-xs text-text-muted">
-                                    识别中…（{f.pageCount} 页，消耗 {f.pageCount} 次 OCR）
+                                    识别中…（至少 {costOf(f)} 次 OCR）
                                   </span>
                                 )}
                                 {f.segState === "error" && (
@@ -1706,43 +1976,109 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                                 )}
                                 {f.segState === undefined && (
                                   <span className="text-xs text-text-muted">
-                                    未识别（{f.pageCount} 页）—— 点左下角「识别分段」
+                                    未识别（{f.pageCount} 页）—— 点右下角「识别分段」
                                   </span>
                                 )}
                                 {f.segState === "done" && (
                                   <span className="text-xs text-text-muted">
                                     共 {segmentsOf(f).length} 段 —— 段的起始页可改
+                                    {f.segFailedPages?.length
+                                      ? `（其中 ${f.segFailedPages.length} 页 OCR 失败，边界可能不全）`
+                                      : ""}
                                   </span>
                                 )}
                               </div>
+                              {/* 部分页 OCR 失败时必须说出来：只说「共 4 段」的话，
+                                  「模型没找到边界」与「有一半页没看」在界面上长得一样 */}
+                              {f.segState === "done" && (f.segFailedPages?.length ?? 0) > 0 && (
+                                <p className="text-xs text-warning">
+                                  {/* 拼成一个字符串再渲染：JSX 的折行会被折成一个空格，
+                                      中文里就变成「文本 （OCR 失败）」这种多一个空格的排版 */}
+                                  {`第 ${f.segFailedPages!.slice(0, 10).join("、")}${
+                                    f.segFailedPages!.length > 10 ? "…" : ""
+                                  } 页没取到文本（OCR 失败）—— 这几页上不会有边界`}
+                                </p>
+                              )}
                               {f.segState === "done" && (
                                 <ul className="space-y-0.5">
-                                  {segmentsOf(f).map((seg, si) => (
-                                    <li key={si} className="flex items-center gap-1.5 text-xs">
-                                      <span className="text-text-muted shrink-0 w-14">
-                                        第 {si + 1} 段
-                                      </span>
-                                      {si === 0 ? (
-                                        <span className="text-text-muted w-16 shrink-0">
-                                          第 1 页起
+                                  {segmentsOf(f).map((seg, si) => {
+                                    const starts = startsOf(f);
+                                    const span = boundarySpan(starts, si, f.pageCount ?? 1);
+                                    const raw = startTextOf(f)[si] ?? String(seg.from);
+                                    const bad =
+                                      span !== null &&
+                                      parseBoundaryText(raw, span.lo, span.hi) === null;
+                                    return (
+                                      <li
+                                        key={si}
+                                        className="flex flex-wrap items-center gap-1.5 text-xs"
+                                      >
+                                        <span className="text-text-muted shrink-0 w-14">
+                                          第 {si + 1} 段
                                         </span>
-                                      ) : (
-                                        <input
-                                          type="number"
-                                          min={2}
-                                          max={f.pageCount}
-                                          value={seg.from}
-                                          onChange={(e) =>
-                                            setSegmentStart(i, si, Number(e.target.value))
-                                          }
-                                          className="w-16 px-1.5 py-0.5 text-xs bg-muted border border-border rounded shrink-0"
-                                          disabled={phase === "uploading"}
-                                        />
-                                      )}
-                                      <span className="text-text-muted">– 第 {seg.to} 页</span>
-                                    </li>
-                                  ))}
+                                        {si === 0 ? (
+                                          <span className="text-text-muted w-16 shrink-0">
+                                            第 1 页起
+                                          </span>
+                                        ) : (
+                                          <input
+                                            type="text"
+                                            inputMode="numeric"
+                                            value={raw}
+                                            onChange={(e) =>
+                                              setSegmentStartRaw(i, si, e.target.value)
+                                            }
+                                            onBlur={() => commitSegmentStart(i, si)}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter") commitSegmentStart(i, si);
+                                            }}
+                                            disabled={phase === "uploading"}
+                                            className={`w-14 px-1.5 py-0.5 text-xs bg-muted border rounded shrink-0 disabled:opacity-50 ${
+                                              bad ? "border-danger text-danger" : "border-border"
+                                            }`}
+                                          />
+                                        )}
+                                        {/* 原文非法时**不显示**这一段当前的区间：那会让
+                                            「框里是 1、右边写着 – 第 12 页」看起来像一条
+                                            合法的段。改成只给可填范围，用户一眼知道该怎么改。 */}
+                                        {bad && span ? (
+                                          <span className="text-danger">
+                                            起点要填 {span.lo}–{span.hi}
+                                          </span>
+                                        ) : (
+                                          <span className="text-text-muted">– 第 {seg.to} 页</span>
+                                        )}
+                                        {si > 0 && (
+                                          <button
+                                            onClick={() => mergeSegmentAt(i, si)}
+                                            disabled={phase === "uploading"}
+                                            className="px-1.5 py-0.5 text-text-muted border border-border rounded shrink-0 hover:text-primary disabled:opacity-50"
+                                            title="删掉这条边界，把这一段并进上一段"
+                                          >
+                                            合并
+                                          </button>
+                                        )}
+                                        {/* 后端刻意「宁可少切，不可多切」，所以**漏切是常态**：
+                                            没有这个按钮，用户遇到漏切只能重跑分段（再烧 N 次 OCR） */}
+                                        <button
+                                          onClick={() => splitSegmentAt(i, si)}
+                                          disabled={phase === "uploading" || seg.to - seg.from < 1}
+                                          className="px-1.5 py-0.5 text-text-muted border border-border rounded shrink-0 hover:text-primary disabled:opacity-50"
+                                          title="在这一段中间加一条边界（模型漏切时用）——不重跑 OCR"
+                                        >
+                                          拆分
+                                        </button>
+                                      </li>
+                                    );
+                                  })}
                                 </ul>
+                              )}
+                              {/* Step 1 的产物只活在组件里（切分是 Step 2）—— 不说的话，
+                                  用户会以为上传时就按段切了 */}
+                              {f.segState === "done" && segmentsOf(f).length > 1 && (
+                                <p className="text-xs text-text-muted">
+                                  上传时暂不按段切分（物理切分是下一步）
+                                </p>
                               )}
                             </div>
                           )}
@@ -1794,17 +2130,18 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
             <div className="flex justify-end gap-3 pt-2 border-t border-border">
               {/* 分段**不自动跑**：一份 N 页的合订谱要烧 N 次 OCR，而免费档是 500 次/天/IP。
-                  所以这个按钮把代价写在脸上（#290 验收标准：调用次数在导入前可见）。 */}
+                  所以这个按钮把代价写在脸上（#290 验收标准：调用次数在导入前可见）。
+                  ⚠️ 不打 `mr-auto`：操作行按 #182 一律靠右下角，不许左右两端分布。 */}
               {segTargets.length > 0 && !allDone && (
                 <button
                   onClick={startSegmentation}
-                  disabled={phase === "analyzing" || phase === "uploading"}
-                  className="mr-auto px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted disabled:opacity-50"
+                  disabled={phase === "analyzing" || phase === "uploading" || segBusy}
+                  className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted disabled:opacity-50"
                   title="合订谱里可能装着好几份分谱。识别出边界后可以逐段确认、再切分上传。"
                 >
-                  {segTargets.some((f) => f.segState === "running")
+                  {segTargets.some(({ f }) => f.segState === "running")
                     ? "识别分段中..."
-                    : `识别分段（${segTargets.length} 份，消耗 ${segCost} 次 OCR）`}
+                    : `识别分段（${segTargets.length} 份，至少 ${segCost} 次 OCR）`}
                 </button>
               )}
               <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">
@@ -1831,7 +2168,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
               ) : (
                 <button
                   onClick={confirmUpload}
-                  disabled={phase === "analyzing" || uploadableCount === 0 || hasAnalyzingFiles}
+                  disabled={
+                    phase === "analyzing" || uploadableCount === 0 || hasAnalyzingFiles || segBusy
+                  }
                   className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
                 >
                   确认上传（{uploadableCount}/{files.length}）

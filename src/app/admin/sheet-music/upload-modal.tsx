@@ -5,6 +5,7 @@ import JSZip from "jszip";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { supabase } from "@/lib/supabase";
+import { INSTRUMENT_ORDER, OTHER_INSTRUMENT_GROUP } from "@/constants/instruments";
 import type { PDFPageProxy } from "pdfjs-dist";
 import {
   decideTitleCrop,
@@ -13,53 +14,54 @@ import {
   type CropDecision,
 } from "./staff-line";
 
-// 英文乐器名 -> 中文映射（用于显示和文件名）
-const INSTRUMENT_CN_MAP: Record<string, string> = {
-  Violin: "小提琴",
-  Viola: "中提琴",
-  Cello: "大提琴",
-  Contrabass: "低音提琴",
-  Flute: "长笛",
-  Piccolo: "短笛",
-  Oboe: "双簧管",
-  Clarinet: "单簧管",
-  Bassoon: "巴松管",
-  Contrabassoon: "倍巴松管",
-  Horn: "圆号",
-  Trumpet: "小号",
-  Trombone: "长号",
-  Tuba: "大号",
-  Percussion: "打击乐",
-  Timpani: "定音鼓",
-  Drums: "鼓",
-  Triangle: "三角铁",
-  Cymbals: "钹",
-  Piano: "钢琴",
-  Celesta: "钢片琴",
-  Harp: "竖琴",
-  Guitar: "吉他",
-};
+/**
+ * 乐器名现在是**开放集**：后端 llm-analyze 直接返回中文（`木琴` / `英国管` /
+ * `低音单簧管`…），不再走「英文字典 → 中文」的映射。
+ *
+ * 原先那张 `INSTRUMENT_CN_MAP` 已删除 —— 它是开放集合的映射，每来一个新乐器就要
+ * 加一行，而新乐器是无限的，注定追不上（它把 Bassoon 译成「巴松管」，与项目标准
+ * 的「大管」冲突，就是这个割裂的产物）。
+ */
 
-// 小提琴特殊处理：1声部=第一小提琴，2声部=第二小提琴
-const VIOLIN_PART_CN: Record<number, string> = {
-  1: "第一小提琴",
-  2: "第二小提琴",
-};
-
-function toCn(inst: string): string {
-  return INSTRUMENT_CN_MAP[inst] || inst;
+/**
+ * 文件名：`{乐器名}[_{subPart}].pdf`。**声部不进文件名，它是目录**（见 pathOf）。
+ * 例：`打击乐/木琴.pdf`、`圆号/圆号_1.pdf`、`第一小提琴/小提琴_1.pdf`。
+ * 同名冲突由 subPart 后缀解决，重传靠 upsert 覆盖。
+ */
+function generateFileName(instrument: string, subPart: number | null): string {
+  const base = instrument.trim();
+  if (subPart !== null && subPart > 0) return `${base}_${subPart}.pdf`;
+  return `${base}.pdf`;
 }
 
-function generateFileName(instrument: string, subPart: number | null): string {
-  // 小提琴特殊处理
-  if (instrument === "Violin" && subPart !== null && subPart > 0) {
-    return `${VIOLIN_PART_CN[subPart] || `小提琴_${subPart}`}.pdf`;
-  }
-  const base = toCn(instrument).trim();
-  if (subPart !== null && subPart > 0) {
-    return `${base}_${subPart}.pdf`;
-  }
-  return `${base}.pdf`;
+/** 存储路径：声部做目录，文件名干净。 */
+function pathOf(
+  scoreId: string,
+  section: string,
+  instrument: string,
+  subPart: number | null,
+): string {
+  return `${scoreId}/${section}/${generateFileName(instrument, subPart)}`;
+}
+
+/**
+ * 后端返回的 `section` 是否落在项目标准的 16 声部内。
+ *
+ * **只校验，不映射** —— 后端 prompt 的词表与 `INSTRUMENT_ORDER` 是两份手抄副本，
+ * 这里是把「词表漂移」变成界面上的可见告警，而不是再引入一张跨仓同步的映射表。
+ * 「其他」是契约里的合法弃权声部，不算漂移。
+ */
+function isKnownSection(section: string): boolean {
+  return (
+    section === OTHER_INSTRUMENT_GROUP || (INSTRUMENT_ORDER as readonly string[]).includes(section)
+  );
+}
+
+/** 行内文案：识别出了什么 / 需人工确认（未识别时输入框留空、不预填） */
+function analysisSummary(section: string, instrument: string, subPart: number | null): string {
+  if (!instrument) return "需人工确认（未识别出乐器）";
+  const sub = subPart !== null && subPart > 0 ? ` ${subPart}` : "";
+  return `识别结果: ${section} / ${instrument}${sub}`;
 }
 
 interface UploadFile {
@@ -67,6 +69,10 @@ interface UploadFile {
   originalName: string; // 原始文件名，展示用；上传文件名由 generateFileName 生成
   status: "pending" | "analyzing" | "analyzed" | "uploading" | "done" | "error";
   error?: string;
+  /** 声部（闭集，写进 sheet_music_parts.section，也是存储路径的目录） */
+  sectionGuess?: string;
+  sectionEdit?: string;
+  /** 中文乐器名（开集，写进 sheet_music_files.instrument，也是文件名主干的来源） */
   instrumentGuess?: string;
   instrumentEdit?: string;
   subPartGuess?: number | null;
@@ -497,10 +503,13 @@ async function runOcr(imageBase64: string): Promise<string> {
  * 而它们的页面常是扫描乐谱、OCR 读出来是乱的 —— 这种情况下文件名比 OCR 可靠得多。
  * 后端 llm-analyze 只接受 text/ocr_text 字段，因此这里合并成一段文本发送。
  */
-async function runLlmAnalysis(
-  fileName: string,
-  ocrText: string,
-): Promise<{ instrument: string; subPart: number | null }> {
+interface LlmAnalysis {
+  section: string;
+  instrument: string;
+  subPart: number | null;
+}
+
+async function runLlmAnalysis(fileName: string, ocrText: string): Promise<LlmAnalysis> {
   const input = [`文件名: ${fileName}`];
   if (ocrText) input.push(`OCR 文本: ${ocrText}`);
 
@@ -512,7 +521,14 @@ async function runLlmAnalysis(
     throw new Error(`LLM 请求失败: ${await invokeErrorDetail(error)}`);
   }
   if (data?.success) {
-    return { instrument: String(data.instrument), subPart: data.subPart ?? null };
+    // 响应字段平铺在顶层。`instrument` 为空串即「未识别」—— 后端把
+    // 「证据不足 / 答不出来（unknown、无法判断…）」都收敛成了空串，
+    // 所以这里**不预填**，见 startAnalysis 里的处理。
+    return {
+      section: String(data.section ?? OTHER_INSTRUMENT_GROUP),
+      instrument: String(data.instrument ?? ""),
+      subPart: data.subPart ?? null,
+    };
   }
   throw new Error(`LLM 分析失败: ${data?.error || data?.message || "未知错误"}`);
 }
@@ -660,27 +676,23 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
       updateFile(i, { llmResult: "等待 LLM 分析..." });
       try {
-        let { instrument, subPart } = await runLlmAnalysis(files[i].originalName, ocrText);
+        let analysis = await runLlmAnalysis(files[i].originalName, ocrText);
 
-        // LLM 判不出乐器时，回退整页 OCR 再判一次。
-        //
-        // ⚠️ 这条分支目前不会触发，属预期而非 bug：后端 llm-analyze 的 prompt 自相矛盾 ——
-        // 规则 2「instrument 必须完全匹配列表」与规则 4「无法识别返回 unknown」冲突，
-        // temperature 为 0 时 LLM 会硬选列表里最接近的一个（Campanelli e Silofono 被判成
-        // Percussion 就是这么来的），于是 unknown 几乎不出现。后端修复在 pkuso-backend
-        // 单独进行；修好之前这里保持原样，不要当成死代码删掉。
-        if (instrument === "unknown" && rendered?.cropped && !usedFullPage) {
+        // 识别不出时回退整页 OCR 再判一次：裁切条只含首页标题区，
+        // 乐器名未必落在那里。空串是后端约定的「未识别」——
+        // 它把「证据不足」和模型答「unknown / 无法判断」都收敛成了空串。
+        if (!analysis.instrument && rendered?.cropped && !usedFullPage) {
           const { fullBase64, fullPreview, preview, cropNote } = rendered;
           usedFullPage = true;
           try {
-            updateFile(i, { llmResult: "LLM 无法判断，回退整页 OCR 重试..." });
+            updateFile(i, { llmResult: "未能识别，回退整页 OCR 重试..." });
             ocrText = await runOcr(fullBase64);
-            ({ instrument, subPart } = await runLlmAnalysis(files[i].originalName, ocrText));
+            analysis = await runLlmAnalysis(files[i].originalName, ocrText);
             // 两步都成功了才改缩略图与裁切说明，否则界面会说「已改用整页」而结果其实来自裁切条
             updateFile(i, {
               ocrText,
               preview: fullPreview || preview || undefined,
-              cropNote: `${cropNote}｜回退项：LLM 判为 unknown，已改用整页`,
+              cropNote: `${cropNote}｜回退项：未能识别，已改用整页`,
             });
           } catch (err) {
             // 回退失败就保留第一次的结果，不要让整行失败
@@ -689,10 +701,14 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           }
         }
 
-        const display = subPart !== null ? `${instrument} ${subPart}` : instrument;
+        const { section, instrument, subPart } = analysis;
+        // 未识别时**不预填** instrumentEdit（留空串）：预填一个猜测值会被用户直接
+        // 接受，等于把错误洗成「已确认」。空的输入框会逼用户做一次真实判断。
         updateFile(i, {
           status: "analyzed",
-          llmResult: `识别结果: ${display}`,
+          llmResult: analysisSummary(section, instrument, subPart),
+          sectionGuess: section,
+          sectionEdit: section,
           instrumentGuess: instrument,
           instrumentEdit: instrument,
           subPartGuess: subPart,
@@ -714,19 +730,23 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     setPhase("confirm");
   };
 
-  const getOrCreatePart = async (instrument: string): Promise<string | null> => {
+  /**
+   * 声部现在是**闭集**，分组靠 `section` 而不是乐器名 —— 木琴与马林巴都归打击乐，
+   * 低音大管归大管。乐器名只进文件名与展示。
+   */
+  const getOrCreatePart = async (section: string): Promise<string | null> => {
     const { data: existing } = await supabase
       .from("sheet_music_parts")
       .select("id")
       .eq("sheet_music_id", scoreId)
-      .eq("instrument", instrument)
+      .eq("section", section)
       .maybeSingle();
 
     if (existing) return existing.id;
 
     const { data: newPart, error } = await supabase
       .from("sheet_music_parts")
-      .insert({ sheet_music_id: scoreId, instrument })
+      .insert({ sheet_music_id: scoreId, section })
       .select("id")
       .single();
 
@@ -739,6 +759,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
   const handleInstrumentChange = (index: number, value: string) => {
     updateFile(index, { instrumentEdit: value });
+  };
+
+  const handleSectionChange = (index: number, value: string) => {
+    updateFile(index, { sectionEdit: value });
   };
 
   const handleSubPartChange = (index: number, value: string) => {
@@ -771,7 +795,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         // 而非抛错，是断网的默认路径）会把该文件在同一会话内永久钉死
         if (uploadFile.status === "done") continue;
 
-        const instrument = uploadFile.instrumentEdit || uploadFile.instrumentGuess;
+        // 声部与乐器名分开取：声部是闭集（写进 parts.section，也是存储目录名），
+        // 乐器名是开集（写进 files.instrument，也是文件名主干）
+        const section = (uploadFile.sectionEdit ?? uploadFile.sectionGuess ?? "").trim();
+        const instrument = (uploadFile.instrumentEdit ?? uploadFile.instrumentGuess ?? "").trim();
         // 用 undefined 判断而不是 ??：用户把分声部清空时 subPartEdit 是 null，
         // 用 ?? 会被 subPartGuess 悄悄捡回来，导致「清不掉」
         const subPart =
@@ -779,21 +806,27 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             ? uploadFile.subPartEdit
             : (uploadFile.subPartGuess ?? null);
 
-        if (!instrument) {
-          updateFile(i, { status: "error", error: "未指定声部" });
+        // 这里也把 `?? ` 而不是 `||` 用在 instrument 上：用户主动清空输入框时
+        // 不该被 instrumentGuess 悄悄捡回来 —— 空乐器名必须**拦下**（后端的
+        // 「未识别」正是空串），否则会建出一个没有名字的声部/文件。
+        if (!instrument || !section) {
+          updateFile(i, {
+            status: "error",
+            error: !instrument ? "未识别的乐器名，请先填写再上传" : "未指定声部，请先填写再上传",
+          });
           continue;
         }
 
         updateFile(i, { status: "uploading" });
 
-        const partId = await getOrCreatePart(instrument);
+        const partId = await getOrCreatePart(section);
         if (!partId) {
           updateFile(i, { status: "error", error: "创建声部失败" });
           continue;
         }
 
         const generatedFileName = generateFileName(instrument, subPart);
-        const filePath = `${scoreId}/${instrument}/${generatedFileName}`;
+        const filePath = pathOf(scoreId, section, instrument, subPart);
         const { error: uploadError } = await supabase.storage
           .from("sheet-music")
           .upload(filePath, uploadFile.file, { contentType: "application/pdf", upsert: true });
@@ -807,6 +840,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           part_id: partId,
           storage_path: filePath,
           file_name: generatedFileName,
+          // 乐器名单独存一列，与派生出的文件名分开 —— 便于区分
+          // 「LLM 答错」与「文件名生成错」
+          instrument,
           file_size: uploadFile.file.size,
           uploaded_by: user.id,
         });
@@ -840,24 +876,37 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
   const statusText = (f: UploadFile) => {
     // 取 Edit 优先的值：用户清空分声部后，行文案必须与文件名预览、落库结果一致，
-    // 否则用户会以为「清空没生效」
-    const inst = toCn(f.instrumentEdit || f.instrumentGuess || "");
+    // 否则用户会以为「清空没生效」。用 `??` 而不是 `||` —— 主动清空乐器名时
+    // 不该被 Guess 悄悄捡回来。
+    const section = f.sectionEdit ?? f.sectionGuess ?? "";
+    const instrument = f.instrumentEdit ?? f.instrumentGuess ?? "";
     const subPart = f.subPartEdit !== undefined ? f.subPartEdit : f.subPartGuess;
-    const sub = subPart !== null && subPart !== undefined ? ` ${subPart}` : "";
+    const sub = subPart !== null && subPart !== undefined && subPart > 0 ? ` ${subPart}` : "";
     switch (f.status) {
       case "pending":
         return "待分析";
       case "analyzing":
         return "分析中...";
       case "analyzed":
-        return inst ? `已识别 → ${inst}${sub}` : "识别失败";
+        // 空乐器名 = 后端弃权（证据不足 / 答不出来），必须与「已识别」区分开：
+        // 输入框是空的、等用户填，不能显示成识别成功
+        return instrument ? `已识别 → ${section} / ${instrument}${sub}` : "需人工确认";
       case "uploading":
         return "上传中...";
       case "done":
-        return inst ? `已上传 → ${inst}${sub}` : "已上传";
+        return instrument ? `已上传 → ${section} / ${instrument}${sub}` : "已上传";
       case "error":
         return `失败: ${f.error}`;
     }
+  };
+
+  /**
+   * 声部词表漂移告警。后端 prompt 里的 16 个声部名与前端 `INSTRUMENT_ORDER`
+   * 是两份手抄副本，没有跨仓同步机制 —— 这条告警就是那个机制缺席时的可见信号。
+   */
+  const sectionWarning = (f: UploadFile) => {
+    const s = (f.sectionEdit ?? f.sectionGuess ?? "").trim();
+    return s && !isKnownSection(s) ? `声部「${s}」不在标准列表内` : "";
   };
 
   const statusColor = (status: UploadFile["status"]) => {
@@ -1044,10 +1093,18 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                     {f.status === "analyzed" && (
                       <div className="space-y-1.5 pl-5 border-l border-border">
                         <div className="flex items-center gap-0.5">
-                          <label className="text-xs text-text-muted w-12 shrink-0">乐器</label>
+                          <label className="text-xs text-text-muted w-12 shrink-0">声部</label>
                           <input
                             type="text"
-                            value={f.instrumentEdit || ""}
+                            value={f.sectionEdit ?? f.sectionGuess ?? ""}
+                            onChange={(e) => handleSectionChange(i, e.target.value)}
+                            placeholder="声部名"
+                            className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-26 shrink-0"
+                          />
+                          <label className="text-xs text-text-muted w-12 shrink-0 ml-1">乐器</label>
+                          <input
+                            type="text"
+                            value={f.instrumentEdit ?? f.instrumentGuess ?? ""}
                             onChange={(e) => handleInstrumentChange(i, e.target.value)}
                             placeholder="乐器名"
                             className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-26 shrink-0"
@@ -1063,7 +1120,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                                 : ""
                             }
                             onChange={(e) => handleSubPartChange(i, e.target.value)}
-                            placeholder="分声部号"
+                            placeholder="号"
                             className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-8 shrink-0"
                             inputMode="numeric"
                             pattern="[0-9]*"
@@ -1071,7 +1128,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                           <button
                             onClick={() =>
                               updateFile(i, {
-                                instrumentEdit: f.instrumentGuess || "",
+                                sectionEdit: f.sectionGuess ?? OTHER_INSTRUMENT_GROUP,
+                                instrumentEdit: f.instrumentGuess ?? "",
                                 subPartEdit: f.subPartGuess,
                               })
                             }
@@ -1081,17 +1139,25 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                             <X className="w-4 h-4" />
                           </button>
                         </div>
+                        {sectionWarning(f) && (
+                          <p className="text-xs text-warning">{sectionWarning(f)}</p>
+                        )}
                         <div className="flex items-center gap-1">
-                          <span className="text-xs text-text-muted">预览：</span>
-                          <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
-                            {generateFileName(
-                              f.instrumentEdit || f.instrumentGuess || "",
+                          <span className="text-xs text-text-muted">路径：</span>
+                          <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono break-all">
+                            {pathOf(
+                              scoreId,
+                              (f.sectionEdit ?? f.sectionGuess ?? "").trim(),
+                              (f.instrumentEdit ?? f.instrumentGuess ?? "").trim(),
                               f.subPartEdit !== undefined
                                 ? f.subPartEdit
                                 : (f.subPartGuess ?? null),
                             )}
                           </code>
                         </div>
+                        {!(f.instrumentEdit ?? f.instrumentGuess ?? "").trim() && (
+                          <p className="text-xs text-warning">未识别出乐器，请先填写再上传</p>
+                        )}
                       </div>
                     )}
                   </div>

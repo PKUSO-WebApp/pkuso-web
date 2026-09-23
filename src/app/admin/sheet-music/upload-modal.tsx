@@ -809,13 +809,17 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         // 这里也把 `?? ` 而不是 `||` 用在 instrument 上：用户主动清空输入框时
         // 不该被 instrumentGuess 悄悄捡回来 —— 空乐器名必须**拦下**（后端的
         // 「未识别」正是空串），否则会建出一个没有名字的声部/文件。
+        // 拦下，但**不改状态**。这两行缺的是用户补填，而编辑器只在有识别结果的行上
+        // 渲染 —— 置成 error 会让输入框消失，界面变成「让你填却没有字段可填」，
+        // 用户只能关掉弹窗、连带丢掉整批已经烧掉 OCR 配额的分析结果。
         if (!instrument || !section) {
           updateFile(i, {
-            status: "error",
             error: !instrument ? "未识别的乐器名，请先填写再上传" : "未指定声部，请先填写再上传",
           });
           continue;
         }
+        // 这一行能往下走了，把上一次的拦截/失败提示清掉，免得文案留在界面上说谎
+        updateFile(i, { error: undefined });
 
         updateFile(i, { status: "uploading" });
 
@@ -1038,76 +1042,85 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                       )}
                     </div>
 
-                    {f.status === "analyzed" && (
-                      <div className="space-y-1.5 pl-5 border-l border-border">
-                        <div className="flex items-center gap-0.5">
-                          <label className="text-xs text-text-muted w-12 shrink-0">声部</label>
-                          <input
-                            type="text"
-                            value={f.sectionEdit ?? f.sectionGuess ?? ""}
-                            onChange={(e) => handleSectionChange(i, e.target.value)}
-                            placeholder="声部名"
-                            className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-26 shrink-0"
-                          />
-                          <label className="text-xs text-text-muted w-12 shrink-0 ml-1">乐器</label>
-                          <input
-                            type="text"
-                            value={f.instrumentEdit ?? f.instrumentGuess ?? ""}
-                            onChange={(e) => handleInstrumentChange(i, e.target.value)}
-                            placeholder="乐器名"
-                            className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-26 shrink-0"
-                          />
-                          <label className="text-xs text-text-muted w-12 shrink-0 ml-1">
-                            分声部
-                          </label>
-                          <input
-                            type="text"
-                            value={
-                              f.subPartEdit !== null && f.subPartEdit !== undefined
-                                ? String(f.subPartEdit)
-                                : ""
-                            }
-                            onChange={(e) => handleSubPartChange(i, e.target.value)}
-                            placeholder="号"
-                            className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-8 shrink-0"
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                          />
-                          <button
-                            onClick={() =>
-                              updateFile(i, {
-                                sectionEdit: f.sectionGuess ?? OTHER_INSTRUMENT_GROUP,
-                                instrumentEdit: f.instrumentGuess ?? "",
-                                subPartEdit: f.subPartGuess,
-                              })
-                            }
-                            className="p-1 text-text-muted hover:text-primary shrink-0"
-                            title="重置为识别结果"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
+                    {/* 只要这一行**有识别结果**就渲染编辑器，不只是 analyzed：
+                        上传失败的行同样需要能改（否则名字打错一次就把该行钉死，
+                        只能关掉弹窗重来）。用 `instrumentGuess !== undefined` 区分
+                        「分析过」与「分析本身就失败了」——后者没有可编辑的内容。 */}
+                    {(f.status === "analyzed" || f.status === "error") &&
+                      f.instrumentGuess !== undefined && (
+                        <div className="space-y-1.5 pl-5 border-l border-border">
+                          <div className="flex items-center gap-0.5">
+                            <label className="text-xs text-text-muted w-12 shrink-0">声部</label>
+                            <input
+                              type="text"
+                              value={f.sectionEdit ?? f.sectionGuess ?? ""}
+                              onChange={(e) => handleSectionChange(i, e.target.value)}
+                              placeholder="声部名"
+                              className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-26 shrink-0"
+                            />
+                            <label className="text-xs text-text-muted w-12 shrink-0 ml-1">
+                              乐器
+                            </label>
+                            <input
+                              type="text"
+                              value={f.instrumentEdit ?? f.instrumentGuess ?? ""}
+                              onChange={(e) => handleInstrumentChange(i, e.target.value)}
+                              placeholder="乐器名"
+                              className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-26 shrink-0"
+                            />
+                            <label className="text-xs text-text-muted w-12 shrink-0 ml-1">
+                              分声部
+                            </label>
+                            <input
+                              type="text"
+                              value={
+                                f.subPartEdit !== null && f.subPartEdit !== undefined
+                                  ? String(f.subPartEdit)
+                                  : ""
+                              }
+                              onChange={(e) => handleSubPartChange(i, e.target.value)}
+                              placeholder="号"
+                              className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-8 shrink-0"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                            />
+                            <button
+                              onClick={() =>
+                                updateFile(i, {
+                                  sectionEdit: f.sectionGuess ?? OTHER_INSTRUMENT_GROUP,
+                                  instrumentEdit: f.instrumentGuess ?? "",
+                                  subPartEdit: f.subPartGuess,
+                                })
+                              }
+                              className="p-1 text-text-muted hover:text-primary shrink-0"
+                              title="重置为识别结果"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                          {sectionWarning(f) && (
+                            <p className="text-xs text-warning">{sectionWarning(f)}</p>
+                          )}
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-text-muted">路径：</span>
+                            <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono break-all">
+                              {pathOf(
+                                scoreId,
+                                (f.sectionEdit ?? f.sectionGuess ?? "").trim(),
+                                (f.instrumentEdit ?? f.instrumentGuess ?? "").trim(),
+                                f.subPartEdit !== undefined
+                                  ? f.subPartEdit
+                                  : (f.subPartGuess ?? null),
+                              )}
+                            </code>
+                          </div>
+                          {!(f.instrumentEdit ?? f.instrumentGuess ?? "").trim() && (
+                            <p className="text-xs text-warning">未识别出乐器，请先填写再上传</p>
+                          )}
+                          {/* 拦截提示与上传失败原因都落在这里 —— 行状态可能仍是 analyzed */}
+                          {f.error && <p className="text-xs text-danger">{f.error}</p>}
                         </div>
-                        {sectionWarning(f) && (
-                          <p className="text-xs text-warning">{sectionWarning(f)}</p>
-                        )}
-                        <div className="flex items-center gap-1">
-                          <span className="text-xs text-text-muted">路径：</span>
-                          <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono break-all">
-                            {pathOf(
-                              scoreId,
-                              (f.sectionEdit ?? f.sectionGuess ?? "").trim(),
-                              (f.instrumentEdit ?? f.instrumentGuess ?? "").trim(),
-                              f.subPartEdit !== undefined
-                                ? f.subPartEdit
-                                : (f.subPartGuess ?? null),
-                            )}
-                          </code>
-                        </div>
-                        {!(f.instrumentEdit ?? f.instrumentGuess ?? "").trim() && (
-                          <p className="text-xs text-warning">未识别出乐器，请先填写再上传</p>
-                        )}
-                      </div>
-                    )}
+                      )}
                   </div>
 
                   {expandedIdx === i && hasDetails(f) && (

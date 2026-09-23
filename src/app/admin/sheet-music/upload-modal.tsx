@@ -14,6 +14,14 @@ import {
   rowLongestRun,
   type CropDecision,
 } from "./staff-line";
+import {
+  formatSubParts,
+  generateFileName,
+  MAX_SUB_PARTS,
+  overSubPartsCap,
+  parseSubPartsInput,
+  sanitizeSubParts,
+} from "./sub-parts";
 
 /**
  * 乐器名现在是**开放集**：后端 llm-analyze 直接返回中文（`木琴` / `英国管` /
@@ -23,17 +31,6 @@ import {
  * 加一行，而新乐器是无限的，注定追不上（它把 Bassoon 译成「巴松管」，与项目标准
  * 的「大管」冲突，就是这个割裂的产物）。
  */
-
-/**
- * 文件名：`{乐器名}[_{subPart}].pdf`。**声部不进文件名，它是目录**（见 pathOf）。
- * 例：`打击乐/木琴.pdf`、`圆号/圆号_1.pdf`、`第一小提琴/小提琴_1.pdf`。
- * 同名冲突由 subPart 后缀解决，重传靠 upsert 覆盖。
- */
-function generateFileName(instrument: string, subPart: number | null): string {
-  const base = instrument.trim();
-  if (subPart !== null && subPart > 0) return `${base}_${subPart}.pdf`;
-  return `${base}.pdf`;
-}
 
 /**
  * 存储键：`{scoreId}/{行 id}.pdf`。
@@ -61,12 +58,17 @@ function isBlankName(s: string): boolean {
 }
 
 /**
- * 会被当成路径段的字段里不允许出现的东西。
+ * 会被当成**文件名 / DB 值**的字段里不允许出现的东西。
  *
- * `..` 构成路径穿越；控制字符与零宽字符会造出「肉眼同名」的目录。
- * **`/` 刻意不在此列** —— #12 明确允许「木琴/钟琴」这种合称，代价只是多一层目录；
- * 后端对**它自己返回的**值用的是同一条判据（见 `llm-analyze/analyze.ts`），
- * 这里补的是后端管不到的**用户手输**。
+ * ⚠️ 这条 guard 的**理由换过一次**：原写「会被当成路径段的字段」（`..` 构成路径穿越、
+ * 控制字符造出「肉眼同名」的目录），那个前提**早已不成立** —— 存储键是
+ * `{scoreId}/{行 id}.pdf`（见 `pathOf`），声部与乐器名都进不去。
+ * 现在它守的是另外两处：`file_name`（用户下载时落到自己文件系统上的名字）
+ * 与 `sheet_music_files` 的列值。后端为同一件事已经改过理由
+ * （`pkuso-backend` 的 `analyze.ts`：`MAX_INSTRUMENT_CHARS` / `ILLEGAL_IN_INSTRUMENT`），
+ * 前端这一份当时没跟上。
+ *
+ * **`/` 刻意不在此列** —— #12 明确允许「木琴/钟琴」这种合称，代价只是多一层目录。
  */
 const UNSAFE_IN_PATH = /\.\.|\p{Cc}|\p{Cf}/u;
 
@@ -84,9 +86,9 @@ function isKnownSection(section: string): boolean {
 }
 
 /** 行内文案：识别出了什么 / 需人工确认（未识别时输入框留空、不预填） */
-function analysisSummary(section: string, instrument: string, subPart: number | null): string {
+function analysisSummary(section: string, instrument: string, subParts: number[]): string {
   if (!instrument) return "需人工确认（未识别出乐器）";
-  const sub = subPart !== null && subPart > 0 ? ` ${subPart}` : "";
+  const sub = subParts.length > 0 ? ` ${formatSubParts(subParts)}` : "";
   return `识别结果: ${section} / ${instrument}${sub}`;
 }
 
@@ -95,14 +97,35 @@ interface UploadFile {
   originalName: string; // 原始文件名，展示用；上传文件名由 generateFileName 生成
   status: "pending" | "analyzing" | "analyzed" | "uploading" | "done" | "error";
   error?: string;
-  /** 声部（闭集，写进 sheet_music_parts.section，也是存储路径的目录） */
+  /** 声部（闭集，写进 `sheet_music_parts.section`，详情页按它分组、也按它排序） */
   sectionGuess?: string;
   sectionEdit?: string;
   /** 中文乐器名（开集，写进 sheet_music_files.instrument，也是文件名主干的来源） */
   instrumentGuess?: string;
   instrumentEdit?: string;
-  subPartGuess?: number | null;
-  subPartEdit?: number | null;
+  subPartsGuess?: number[];
+  /**
+   * 输入框里的**原文**（而不是解析后的数组）—— 存这个是因为受控输入不能存解析结果：
+   * 用户敲 `1,` 的瞬间解析结果是 `[1]`，回填成 `"1"` 会把刚敲的逗号吃掉，
+   * `1,2` 永远敲不出来。原文为 `undefined` = 没编辑过（用 Guess）。
+   */
+  subPartsEditText?: string;
+  /**
+   * 模型**给了**号但后端一个都没解析出来时，模型用的那个写法（`Analysis.subPartsRaw`）。
+   *
+   * ⚠️ 叫「写法」不是「原文」：后端 `describeRaw` 拿到的值已经过了 `JSON.parse`，
+   * 超长整数会丢精度、非有限数只剩一个名字（后端注释里明说过「前端别拿它当原文用」）。
+   * 它是**给用户看的线索**，不是模型的原话 —— 文案里也别承诺「原文」。
+   *
+   * 这一行**会被拦下**（见 `uploadBlocker` 的 `subPartsUnread`）：光提示不够，
+   * 用户不填就点上传的话，号会连着文件名一起静默丢掉。
+   */
+  subPartsRaw?: string;
+  /**
+   * 后端返回的号**超过前端上界**的个数（`overSubPartsCap`）。仅用于给一句提示 ——
+   * 这种情况今天不可达，它防的是两个仓库的 `MAX_SUB_PARTS` 漂移。
+   */
+  subPartsOverCap?: number;
   /**
    * 存储键里那一段 id。**每行生成一次、重试复用**，这样失败重传走 `upsert`
    * 覆盖同一个对象，不会留下一堆孤儿文件。
@@ -119,16 +142,50 @@ interface UploadFile {
 /**
  * 一行这次要落库的值（Edit 优先，用户清空后**不回退**到 Guess）。
  *
- * 分声部用 `!== undefined` 而不是 `??`：用户清空时 subPartEdit 是 null，
- * 用 `??` 会被 subPartGuess 悄悄捡回来，导致「清不掉」。
+ * 判断「用户编辑过没有」用 `!== undefined`：空串是**用户主动清空**（合法值，
+ * 表示这一行没有分声部），不能与「没编辑过」混为一谈 —— 用真值判断会把清空
+ * 当成没填，然后把 subPartsGuess 捡回来，用户就会看到「清不掉」。
  */
-function editsOf(f: UploadFile): { section: string; instrument: string; subPart: number | null } {
+function editsOf(f: UploadFile): {
+  section: string;
+  instrument: string;
+  subParts: number[];
+  subPartsInvalid?: string;
+  subPartsUnread?: string;
+  subPartsOverCap?: number;
+} {
+  const parsed =
+    f.subPartsEditText !== undefined
+      ? parseSubPartsInput(f.subPartsEditText)
+      : { value: f.subPartsGuess ?? [] };
   return {
     section: (f.sectionEdit ?? f.sectionGuess ?? "").trim(),
     instrument: (f.instrumentEdit ?? f.instrumentGuess ?? "").trim(),
-    subPart: f.subPartEdit !== undefined ? f.subPartEdit : (f.subPartGuess ?? null),
+    subParts: parsed.value,
+    subPartsInvalid: parsed.invalid,
+    // 「模型给了号、后端没读懂、用户还没表态」—— 见 uploadBlocker 里为什么必须拦。
+    // ⚠️ 条件里的 `guess 为空` 不能省：小提琴那类声部会在模型给不出号时用声部推导
+    // 补出 [1]/[2]（**同时**带着 subPartsRaw），那种行**有号**，拦下就是误伤。
+    subPartsUnread:
+      f.subPartsEditText === undefined && (f.subPartsGuess ?? []).length === 0 && f.subPartsRaw
+        ? f.subPartsRaw
+        : undefined,
+    subPartsOverCap: f.subPartsOverCap,
   };
 }
+
+/**
+ * 「模型给了号但没读懂」的**统一文案**。
+ *
+ * ⚠️ 必须只有一份：`uploadBlocker` 用它做**拦截原因**，`subPartsNotice` 用它做**行内提示**
+ * —— 两处各写一句、措辞稍有不同的后果，是去重守卫（`f.error === 提示文案`）永远匹配不上，
+ * 于是用户点一次上传会看到**同一件事的黄红两行**（审查实测过）。
+ *
+ * 按钮名写「没有号」而不是「本谱没有分声部」：用户要在屏幕上**照着找那个按钮**，
+ * 文案必须与按钮上的字一致（按钮的 title 才是解释性文字）。
+ */
+const unreadMessage = (raw: string) =>
+  `识别到分声部号但没读懂（模型给的是「${raw}」）：请填上号，或点「没有号」`;
 
 /**
  * 这一行为什么不能上传；空串 = 可以传。
@@ -137,7 +194,17 @@ function editsOf(f: UploadFile): { section: string; instrument: string; subPart:
  * 两处必须共用同一条判据」；声部改成按需建之后预建段没了，但规矩不变 —— 任何地方要判
  * 「这一行能不能上传」，都调它，别就地再写一套。）
  */
-function uploadBlocker({ section, instrument }: { section: string; instrument: string }): string {
+function uploadBlocker({
+  section,
+  instrument,
+  subPartsInvalid,
+  subPartsUnread,
+}: {
+  section: string;
+  instrument: string;
+  subPartsInvalid?: string;
+  subPartsUnread?: string;
+}): string {
   // editsOf 用 `??` 而不是 `||` 取值，用户主动清空输入框时这里拿到的就是空串 ——
   // 空乐器名必须**拦下**（后端的「未识别」正是空串），否则会建出一个没有名字的声部/文件。
   // 空判据还必须**连不可见字符一起算空**：`"​".trim()` 还是它自己，
@@ -147,6 +214,21 @@ function uploadBlocker({ section, instrument }: { section: string; instrument: s
   // 后端只管得住它自己返回的值，用户手输的这一层得前端自己把关
   if (UNSAFE_IN_PATH.test(instrument) || UNSAFE_IN_PATH.test(section))
     return "声部或乐器名里不能有「..」或控制字符";
+  // 分声部号非法就**别传**：文件名是前端生成的，非法输入会被原样写进文件名与库
+  if (subPartsInvalid) return subPartsInvalid;
+  // **模型给了号却谁都没读懂，就必须拦住。**
+  //
+  // 只给一句黄色提示是不够的：默认动作（直接点「确认上传」）仍然会落一个没有号的
+  // 文件名与 `sub_parts = {}`，而且行一旦变成 done，那句提示就消失了 —— 界面事后
+  // 只剩「已上传 → 圆号 / 圆号」，看不出丢过东西。把「静默」降级成「提示」并没有
+  // 解决这条路径，它仍然是本 issue 要消灭的那种丢号。
+  //
+  // ⚠️ **但不能裸拦**：此时「确实没有分声部」只能靠清空输入框表达，而用户根本没动过
+  // 那个框（`subPartsEditText === undefined`），裸拦会把人锁死在无法通过的状态里。
+  // 所以界面上配了一个显式的「本谱没有分声部」按钮（把 EditText 置成空串，即用户表态）。
+  if (subPartsUnread) {
+    return unreadMessage(subPartsUnread);
+  }
   return "";
 }
 
@@ -603,7 +685,11 @@ async function runOcr(imageBase64: string): Promise<string> {
 interface LlmAnalysis {
   section: string;
   instrument: string;
-  subPart: number | null;
+  subParts: number[];
+  /** 模型给了号但后端没解析出来时，模型用的那个写法，见 UploadFile.subPartsRaw */
+  subPartsRaw?: string;
+  /** 后端给的号超过前端上界时的个数，见 UploadFile.subPartsOverCap */
+  subPartsOverCap?: number;
 }
 
 async function runLlmAnalysis(fileName: string, ocrText: string): Promise<LlmAnalysis> {
@@ -624,7 +710,12 @@ async function runLlmAnalysis(fileName: string, ocrText: string): Promise<LlmAna
     return {
       section: String(data.section ?? OTHER_INSTRUMENT_GROUP),
       instrument: String(data.instrument ?? ""),
-      subPart: data.subPart ?? null,
+      subParts: sanitizeSubParts(data.subParts),
+      // 「模型给了号但没读懂」的信号，原样带过来给界面提示用户手填
+      subPartsRaw: typeof data.subPartsRaw === "string" ? data.subPartsRaw : undefined,
+      // 超上界时 sanitize 会把号整个丢掉，而这条路径**不带任何其他信号** ——
+      // 不单独报的话它就是一条完全静默的丢号路径（见 overSubPartsCap）
+      subPartsOverCap: overSubPartsCap(data.subParts) ?? undefined,
     };
   }
   throw new Error(`LLM 分析失败: ${data?.error || data?.message || "未知错误"}`);
@@ -793,18 +884,25 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         }
       }
 
-      const { section, instrument, subPart } = analysis;
+      const { section, instrument, subParts, subPartsRaw, subPartsOverCap } = analysis;
       // 未识别时**不预填** instrumentEdit（留空串）：预填一个猜测值会被用户直接
       // 接受，等于把错误洗成「已确认」。空的输入框会逼用户做一次真实判断。
       updateFile(i, {
         status: "analyzed",
-        llmResult: analysisSummary(section, instrument, subPart),
+        llmResult: analysisSummary(section, instrument, subParts),
         sectionGuess: section,
         sectionEdit: section,
         instrumentGuess: instrument,
         instrumentEdit: instrument,
-        subPartGuess: subPart,
-        subPartEdit: subPart,
+        subPartsGuess: subParts,
+        // 不设 subPartsEditText：`undefined` = 没编辑过 → 输入框显示 Guess。
+        // 「模型给了号但没读懂」时 subParts 是空数组，输入框自然留空，
+        // 配合下面的 subPartsRaw 提示，用户知道这一格需要他填。
+        subPartsRaw,
+        // ⚠️ 这一行曾经漏掉：`runLlmAnalysis` 算出了 overCap、`subPartsNotice` 也写了那一支，
+        // 但**中间没人把它写进行状态**，于是那条提示是死代码 —— 上界漂移时号被静默吞掉，
+        // 一个字都不显示（审查靠「提示可达性」的探针抓出来的）。三个环节缺一不可。
+        subPartsOverCap,
         // 存储键要在**分析完成时**就定下来（每行一次、重试复用），
         // 而不是每次点上传现生成 —— 否则失败重传会不断产生新对象。
         storageId: crypto.randomUUID(),
@@ -875,12 +973,16 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     return newPart.id;
   };
 
+  // 三个输入 handler 都顺手清 `error`：那是**上一次**拦截留下的红字，而它只在
+  // 「下一次点确认上传且通过判据」时才被清掉 —— 用户明明改好了，红字还挂着，
+  // 读起来像「改完还是不行」。（清 error 不会让漏填的行失去提示：
+  // 那种行本来就由 `uploadBlocker` 在点上传时重新写一遍。）
   const handleInstrumentChange = (index: number, value: string) => {
-    updateFile(index, { instrumentEdit: value });
+    updateFile(index, { instrumentEdit: value, error: undefined });
   };
 
   const handleSectionChange = (index: number, value: string) => {
-    updateFile(index, { sectionEdit: value });
+    updateFile(index, { sectionEdit: value, error: undefined });
   };
 
   /**
@@ -891,16 +993,20 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    * 可读名落 `sheet_music_files.file_name`，下载时会用它还原文件名。
    */
   const previewPath = (f: UploadFile) => {
-    const instrument = (f.instrumentEdit ?? f.instrumentGuess ?? "").trim();
+    // 取值**只走 editsOf**（与落库、与 uploadBlocker 是同一条判据）。
+    // 早先这里自己抄了一份推导式，于是非法输入时预览会显示成一个**看着完全正常**的
+    // `圆号.pdf`（非法时 parse 的 value 恒为 `[]`）—— 而那一行其实传不上去。
+    const { section, instrument, subParts, subPartsInvalid, subPartsUnread } = editsOf(f);
     if (!instrument) return "";
-    const section = (f.sectionEdit ?? f.sectionGuess ?? "").trim();
-    const subPart = f.subPartEdit !== undefined ? f.subPartEdit : (f.subPartGuess ?? null);
-    return `${section} / ${generateFileName(instrument, subPart)}`;
+    // 有硬伤时不报一个像样的名字：宁可显示「待确认」，也别让用户以为存的就是它
+    if (subPartsInvalid || subPartsUnread) return `${section} / （分声部号待确认）`;
+    return `${section} / ${generateFileName(instrument, subParts)}`;
   };
 
-  const handleSubPartChange = (index: number, value: string) => {
-    const num = value === "" ? null : parseInt(value, 10);
-    updateFile(index, { subPartEdit: isNaN(num as number) ? null : num });
+  const handleSubPartsChange = (index: number, value: string) => {
+    // 存**原文**而不是解析结果：解析结果会把用户正在敲的 `1,` 归一成 `1`，
+    // 逗号在受控输入里当场消失，`1,2` 永远敲不出来。解析发生在读取时（editsOf）。
+    updateFile(index, { subPartsEditText: value, error: undefined });
   };
 
   const confirmUpload = async () => {
@@ -946,14 +1052,15 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         if (cancelledRef.current) return;
         if (uploadFile.status === "done") return;
 
-        // 声部与乐器名分开取：声部是闭集（写进 parts.section，也是存储目录名），
+        // 声部与乐器名分开取：声部是闭集（写进 parts.section），
         // 乐器名是开集（写进 files.instrument，也是文件名主干）
-        const { section, instrument, subPart } = editsOf(uploadFile);
+        const { section, instrument, subParts, subPartsInvalid, subPartsUnread } =
+          editsOf(uploadFile);
 
         // 拦下，但**不改状态**。这两行缺的是用户补填，而编辑器只在有识别结果的行上
         // 渲染 —— 置成 error 会让输入框消失，界面变成「让你填却没有字段可填」，
         // 用户只能关掉弹窗、连带丢掉整批已经烧掉 OCR 配额的分析结果。
-        const blocker = uploadBlocker({ section, instrument });
+        const blocker = uploadBlocker({ section, instrument, subPartsInvalid, subPartsUnread });
         if (blocker) {
           updateFile(i, { error: blocker });
           return;
@@ -968,7 +1075,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           return;
         }
 
-        const generatedFileName = generateFileName(instrument, subPart);
+        const generatedFileName = generateFileName(instrument, subParts);
         const filePath = pathOf(scoreId, uploadFile.storageId ?? crypto.randomUUID());
         const { error: uploadError } = await supabase.storage
           .from("sheet-music")
@@ -986,6 +1093,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           // 乐器名单独存一列，与派生出的文件名分开 —— 便于区分
           // 「LLM 答错」与「文件名生成错」
           instrument,
+          // 分声部号同样单独存一列。**它此前只活在 file_name 字符串里** ——
+          // 详情页刷新后拿不到分声部，排序与显示都无从谈起；文件名不是数据。
+          sub_parts: subParts,
           file_size: uploadFile.file.size,
           uploaded_by: user.id,
         });
@@ -1018,13 +1128,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   };
 
   const statusText = (f: UploadFile) => {
-    // 取 Edit 优先的值：用户清空分声部后，行文案必须与文件名预览、落库结果一致，
-    // 否则用户会以为「清空没生效」。用 `??` 而不是 `||` —— 主动清空乐器名时
-    // 不该被 Guess 悄悄捡回来。
-    const section = f.sectionEdit ?? f.sectionGuess ?? "";
-    const instrument = f.instrumentEdit ?? f.instrumentGuess ?? "";
-    const subPart = f.subPartEdit !== undefined ? f.subPartEdit : f.subPartGuess;
-    const sub = subPart !== null && subPart !== undefined && subPart > 0 ? ` ${subPart}` : "";
+    // 取值**只走 editsOf**：行文案必须与文件名预览、落库结果一致，否则用户会以为
+    // 「清空没生效」。三处各抄一份推导式就迟早会漂（这个文件里已经栽过一次）。
+    const { section, instrument, subParts } = editsOf(f);
+    const sub = subParts.length > 0 ? ` ${formatSubParts(subParts)}` : "";
     switch (f.status) {
       case "pending":
         return "待分析";
@@ -1050,6 +1157,39 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   const sectionWarning = (f: UploadFile) => {
     const s = (f.sectionEdit ?? f.sectionGuess ?? "").trim();
     return s && !isKnownSection(s) ? `声部「${s}」不在标准列表内` : "";
+  };
+
+  /**
+   * 分声部这一格要不要给用户一句话。三种情形都返回文案（空串 = 不用提示）：
+   *
+   * 1. **输入非法** —— 优先显示，因为它是用户当下能改的；
+   * 2. **模型给了号但没读懂**（`subPartsRaw`）—— 这一行看起来是「已识别成功」，
+   *    但号是空的，不提示就没人会去填，号就静默丢了；
+   * 3. 都不适用 → 空串。
+   *
+   * ⚠️ 第 2 条只在**用户还没动手**时提示（`subPartsEditText === undefined`）——
+   * 否则用户填完之后那句「没读懂」会一直挂着，变成一条永远消不掉的假告警。
+   */
+  const subPartsNotice = (f: UploadFile) => {
+    if (f.subPartsEditText !== undefined) {
+      const invalid = parseSubPartsInput(f.subPartsEditText).invalid;
+      // ⚠️ 与 uploadBlocker 返回的是同一句话时**让位** —— 否则点一次「确认上传」
+      // 会在行里出现两行一模一样的提示（一行黄、一行红），看着像两个不同的问题。
+      if (!invalid || f.error === invalid) return "";
+      return invalid;
+    }
+    // 上界漂移：用户解决不了这件事，这句其实是给维护者看的
+    if (f.subPartsOverCap) {
+      return `后端返回了 ${f.subPartsOverCap} 个分声部号，超过前端上界 ${MAX_SUB_PARTS}，未填入 —— 请核对前后端上限是否一致`;
+    }
+    if (f.subPartsRaw && (f.subPartsGuess ?? []).length === 0) {
+      // 让位判据必须与 uploadBlocker **同源**（同一个 `unreadMessage`）。
+      // 早先两处各写一句、措辞差一个字（「模型给的是」vs「模型给的写法是」），
+      // 于是这个守卫**结构上永远匹配不上**，用户照样看到黄红两行。
+      const msg = unreadMessage(f.subPartsRaw);
+      return f.error === msg ? "" : msg;
+    }
+    return "";
   };
 
   const statusColor = (status: UploadFile["status"]) => {
@@ -1213,13 +1353,17 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                     {(f.status === "analyzed" || f.status === "error") &&
                       f.instrumentGuess !== undefined && (
                         <div className="space-y-1.5 pl-5 border-l border-border">
-                          <div className="flex items-center gap-0.5">
+                          {/* ⚠️ `flex-wrap` 是必需的：这一行 7 个元素**全部 `shrink-0`**，
+                              而卡片是 `overflow-hidden` —— 不换行时窄屏上右边的控件会被裁掉
+                              且**滚不到**（实测 448px 下输入框与「重置」按钮就在卡片外）。
+                              允许换行后窄屏会折成两行，内容始终可达。 */}
+                          <div className="flex flex-wrap items-center gap-0.5">
                             <label className="text-xs text-text-muted w-12 shrink-0">声部</label>
                             {/* 声部按契约是**闭集**，所以用 select 而不是自由文本 ——
-                                否则用户能凭空造出一个声部名写进 parts.section、还会变成
-                                storage 的目录（`/` 与 `..` 一并进路径）。后端返回的值若
-                                不在闭集里，临时补一个选项把它显示出来：词表漂移依然
-                                看得见、也依然改得掉。 */}
+                                否则用户能凭空造出一个声部名写进 `parts.section`
+                                （那是详情页分组与排序的依据），而后端的闭集校验对
+                                用户手输这一层管不着。后端返回的值若不在闭集里，临时补一个
+                                选项把它显示出来：词表漂移依然看得见、也依然改得掉。 */}
                             <select
                               value={f.sectionEdit ?? f.sectionGuess ?? OTHER_INSTRUMENT_GROUP}
                               onChange={(e) => handleSectionChange(i, e.target.value)}
@@ -1256,24 +1400,42 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                             </label>
                             <input
                               type="text"
-                              value={
-                                f.subPartEdit !== null && f.subPartEdit !== undefined
-                                  ? String(f.subPartEdit)
-                                  : ""
-                              }
-                              onChange={(e) => handleSubPartChange(i, e.target.value)}
-                              placeholder="号"
+                              value={f.subPartsEditText ?? formatSubParts(f.subPartsGuess ?? [])}
+                              onChange={(e) => handleSubPartsChange(i, e.target.value)}
+                              placeholder="号，如 1,2"
                               disabled={phase === "uploading"}
-                              className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-8 shrink-0 disabled:opacity-50"
-                              inputMode="numeric"
-                              pattern="[0-9]*"
+                              className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-16 shrink-0 disabled:opacity-50"
                             />
+                            {/* 「没有号」——**逃生口**，只在模型给了号却没读懂时出现。
+                                没有它的话 uploadBlocker 那道拦截会把人锁死：那种状态下
+                                「确实没有分声部」只能靠清空输入框表达，而框本来就空着、
+                                用户没有任何操作能表达这个意思。点它 = 显式表态（置成空串）。
+                                ⚠️ 三个条件缺一不可，且必须与 `uploadBlocker` 的 `subPartsUnread`
+                                **完全同源**。漏掉 `guess 为空` 会让按钮出现在**有号**的行上
+                                （小提琴声部推导补出 [1]/[2] 时就是这样，且旁边没有任何提示），
+                                点一下就把那个号静默抹掉 —— 与「消灭静默丢号」正好相反。 */}
+                            {f.subPartsRaw &&
+                              f.subPartsEditText === undefined &&
+                              (f.subPartsGuess ?? []).length === 0 && (
+                                <button
+                                  onClick={() => updateFile(i, { subPartsEditText: "" })}
+                                  disabled={phase === "uploading"}
+                                  className="px-1.5 py-0.5 text-xs text-text-muted border border-border rounded shrink-0 hover:text-primary disabled:opacity-50"
+                                  title="这份谱子确实没有分声部"
+                                >
+                                  没有号
+                                </button>
+                              )}
                             <button
                               onClick={() =>
                                 updateFile(i, {
                                   sectionEdit: f.sectionGuess ?? OTHER_INSTRUMENT_GROUP,
                                   instrumentEdit: f.instrumentGuess ?? "",
-                                  subPartEdit: f.subPartGuess,
+                                  // 清掉**编辑痕迹**（`undefined` = 回到识别结果）。
+                                  // 与上面两个字段写法不同是有意的：它们存的是值，
+                                  // 分声部存的是「原文 + 有没有被编辑过」这个二元状态，
+                                  // 置成 Guess 的值会把「没编辑过」这个信息抹掉。
+                                  subPartsEditText: undefined,
                                 })
                               }
                               disabled={phase === "uploading"}
@@ -1285,6 +1447,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                           </div>
                           {sectionWarning(f) && (
                             <p className="text-xs text-warning">{sectionWarning(f)}</p>
+                          )}
+                          {subPartsNotice(f) && (
+                            <p className="text-xs text-warning">{subPartsNotice(f)}</p>
                           )}
                           <div className="flex items-center gap-1">
                             <span className="text-xs text-text-muted">路径：</span>

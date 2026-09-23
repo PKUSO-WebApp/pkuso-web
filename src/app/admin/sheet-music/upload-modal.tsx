@@ -937,8 +937,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   const analyzedCount = files.filter((f) => f.status === "analyzed").length;
 
   return (
-    <Modal open={open} onClose={onClose} title="上传乐谱文件">
-      <div className="space-y-4">
+    // 用全屏层而不是默认的底部弹窗：20 个文件的结果 + 每行的三个输入框，
+    // 底部弹窗装不下（原先列表只有 max-h-80，剩下的全靠页面自己滚）。
+    <Modal open={open} onClose={onClose} title="上传乐谱文件" position="fullscreen">
+      <div className="flex flex-1 min-h-0 flex-col gap-4">
         {phase === "select" && (
           <>
             <div
@@ -959,7 +961,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
             {files.length > 0 && (
               <>
-                <div className="space-y-2 max-h-60 overflow-y-auto">
+                <div className="flex-1 min-h-0 overflow-y-auto space-y-2">
                   {files.map((f, i) => (
                     <div
                       key={i}
@@ -1007,7 +1009,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
          */}
         {phase !== "select" && (
           <>
-            <div className="space-y-2 max-h-80 overflow-y-auto">
+            {/* flex-1 min-h-0：全屏层里列表吃掉剩余高度、自己滚；页脚固定在底部 */}
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-2">
               {files.map((f, i) => (
                 <div key={i} className="bg-card border border-border rounded-lg overflow-hidden">
                   <div className="px-3 py-2 space-y-2">

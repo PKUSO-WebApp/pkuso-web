@@ -9,8 +9,8 @@ type ModalProps = {
   children?: React.ReactNode;
   /** 标题行右侧附加内容（位于标题与「关闭」按钮之间）；不传时行为与现状一致 */
   headerExtra?: React.ReactNode;
-  /** 底部弹出(默认)｜居中 */
-  position?: "bottom" | "center";
+  /** 底部弹出(默认)｜居中｜全屏铺满 */
+  position?: "bottom" | "center" | "fullscreen";
   /** 点击遮罩关闭,默认 true */
   closeOnOverlay?: boolean;
 };
@@ -95,12 +95,26 @@ function ModalDialog({
     }
   };
 
-  const align = position === "center" ? "items-center" : "items-end";
-  const radius = position === "center" ? "rounded-2xl" : "rounded-t-3xl sm:rounded-2xl";
+  // 全屏变体：面板铺满视口，去掉圆角/边框与横向留白（只留底部安全区），
+  // 并改成 flex column 让内容自己用 flex-1 min-h-0 划滚动区。
+  // **焦点机制一行没动** —— 这正是复用原语而不是另写全屏组件的原因。
+  const isFullscreen = position === "fullscreen";
+  const align = isFullscreen
+    ? "items-stretch"
+    : position === "center"
+      ? "items-center"
+      : "items-end";
+  const radius = isFullscreen
+    ? "rounded-none"
+    : position === "center"
+      ? "rounded-2xl"
+      : "rounded-t-3xl sm:rounded-2xl";
 
   return (
     <div
-      className={`fixed inset-0 flex ${align} justify-center bg-black/40 px-4 pb-safe`}
+      className={`fixed inset-0 flex ${align} justify-center bg-black/40 ${
+        isFullscreen ? "pb-safe" : "px-4 pb-safe"
+      }`}
       style={{ zIndex: "var(--z-modal)" } as React.CSSProperties}
       role="dialog"
       aria-modal="true"
@@ -119,7 +133,11 @@ function ModalDialog({
         ref={panelRef}
         // 面板根可编程聚焦（焦点移入目标）；outline-none 避免容器出现焦点框
         tabIndex={-1}
-        className={`relative w-full max-w-md ${radius} border border-border bg-surface p-4 shadow-xl outline-none`}
+        className={`relative bg-surface p-4 shadow-xl outline-none ${
+          isFullscreen
+            ? "flex h-full w-full max-w-none flex-col border-0"
+            : `w-full max-w-md border border-border ${radius}`
+        }`}
       >
         {title && (
           <div className="mb-2 flex items-center justify-between">

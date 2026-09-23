@@ -6,7 +6,11 @@ import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { supabase } from "@/lib/supabase";
 import { runWithConcurrency } from "@/lib/concurrency";
-import { INSTRUMENT_ORDER, OTHER_INSTRUMENT_GROUP } from "@/constants/instruments";
+import {
+  FULL_SCORE_SECTION,
+  INSTRUMENT_ORDER,
+  OTHER_INSTRUMENT_GROUP,
+} from "@/constants/instruments";
 import type { PDFPageProxy } from "pdfjs-dist";
 import {
   decideTitleCrop,
@@ -14,6 +18,7 @@ import {
   rowLongestRun,
   type CropDecision,
 } from "./staff-line";
+import { needsSegmentation, normalizeSegments } from "./segmentation";
 import {
   formatSubParts,
   generateFileName,
@@ -134,6 +139,22 @@ interface UploadFile {
    * 覆盖同一个对象，不会留下一堆孤儿文件。
    */
   storageId?: string;
+  /** 这一份 PDF 的总页数。分析时顺手记下 —— 成本估算与「要不要分段」都看它 */
+  pageCount?: number;
+  /**
+   * 分段（#290 Step 1）。只有多页、且非总谱的文件才走这条路。
+   *
+   * `pageTexts` 与 `segmentStarts` 都要留着：用户改边界时**不重跑 OCR**
+   *（验收标准点名的「改正后不重复 OCR」就是靠这两个字段）。
+   */
+  segState?: "running" | "done" | "error";
+  segError?: string;
+  pageTexts?: PageText[];
+  /**
+   * 各段的**起始页**（恒含第 1 页）。用户拖动边界 = 改这个数组。
+   * `undefined` = 还没跑过分段；`[1]` = 明确不切（整份一段）。
+   */
+  segmentStarts?: number[];
   ocrText?: string;
   llmResult?: string;
   preview?: string; // 实际送去 OCR 的那张图的缩略图（排查用）
@@ -509,6 +530,8 @@ interface RenderedPage {
   preview: string;
   fullPreview: string; // 整页缩略图，回退整页时顶替 preview
   pageNo: number;
+  /** 这一份 PDF 的总页数 —— 成本估算与「要不要分段」都看它，顺手带出来省一次解析 */
+  pageCount: number;
   warning: string;
   cropNote: string; // 裁切决策回显，便于排查「切错位置」
   cropped: boolean; // base64 是否真的是裁切条
@@ -563,6 +586,7 @@ async function renderFirstContentPage(file: File): Promise<RenderedPage> {
           preview: result.preview,
           fullPreview: result.fullPreview,
           pageNo,
+          pageCount: pdf.numPages,
           warning,
           cropNote: cropNoteOf(result.crop, result.cropped),
           cropped: result.cropped,
@@ -581,6 +605,7 @@ async function renderFirstContentPage(file: File): Promise<RenderedPage> {
       preview,
       fullPreview: preview,
       pageNo: 0,
+      pageCount: pdf.numPages,
       warning,
       cropNote: "",
       cropped: false,
@@ -680,6 +705,136 @@ async function runOcr(imageBase64: string): Promise<string> {
 }
 
 /**
+ * 顶部窄带的固定高度（页高比例）。
+ *
+ * ⚠️ **必须是固定值，不能用 `decideTitleCrop`**：续页在裁切逻辑下会因「顶部过薄」
+ * 退化成整页，那就把「续页只有页眉」这个判据本身毁掉了（#290 正文里写明了这条）。
+ * 12% 是 issue 里给的例子，实测在 Egmont（Breitkopf）与德五（Dover 系）两批语料上
+ * 都够装下首页的标题块。
+ */
+const BAND_PCT = 0.12;
+
+/**
+ * 逐页渲染顶部等高窄带（#290 Step 1 的输入）。
+ *
+ * 与 `renderFirstContentPage` **刻意分开**：那个的职责是「取首页、决定裁到哪」，
+ * 这个的职责是「每一页都取一条等高的窄带」—— 两者的裁切逻辑必须不同（见 BAND_PCT）。
+ * 代价是第 1 页被渲染两次（每份文件多一次渲染，与 N 次 OCR 相比可忽略），
+ * 换来的是两条路径互不牵制。
+ *
+ * ⚠️ 内存：每页渲染后会 `page.cleanup()`。渲染一整页的 canvas 峰值在本项目的语料上
+ * 量到过 ~282MB（大头是 pdf.js 解码扫描图的**内部**画布），19 页串行跑不会叠加，
+ * 但**不能**把这里改成并发。
+ */
+async function renderNarrowBands(file: File): Promise<{ pageCount: number; bands: string[] }> {
+  const pdfjs = await loadPdfJs();
+  const data = new Uint8Array(await file.arrayBuffer());
+  const task = pdfjs.getDocument({
+    data,
+    standardFontDataUrl: `${PDFJS_ASSET_BASE}standard_fonts/`,
+    wasmUrl: `${PDFJS_ASSET_BASE}wasm/`,
+    iccUrl: `${PDFJS_ASSET_BASE}iccs/`,
+  });
+  const pdf = await task.promise;
+  try {
+    const bands: string[] = [];
+    for (let pageNo = 1; pageNo <= pdf.numPages; pageNo++) {
+      const page = await pdf.getPage(pageNo);
+      try {
+        const unscaled = page.getViewport({ scale: 1 });
+        const longestSide = Math.max(unscaled.width, unscaled.height);
+        const fitScale = longestSide > 0 ? OCR_TARGET_LONGEST_SIDE / longestSide : OCR_MAX_SCALE;
+        const viewport = page.getViewport({ scale: Math.min(OCR_MAX_SCALE, fitScale) });
+
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("无法创建 canvas 上下文");
+        // 透明像素编码成 JPEG 会合成到黑底，先铺白（与 renderPageToJpeg 同一条理由）
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        await page.render({ canvas, canvasContext: ctx, viewport }).promise;
+
+        const bandH = Math.max(1, Math.round(canvas.height * BAND_PCT));
+        const band = document.createElement("canvas");
+        band.width = canvas.width;
+        band.height = bandH;
+        const bctx = band.getContext("2d");
+        if (!bctx) throw new Error("无法创建 canvas 上下文");
+        bctx.fillStyle = "#ffffff";
+        bctx.fillRect(0, 0, band.width, band.height);
+        bctx.drawImage(canvas, 0, 0, canvas.width, bandH, 0, 0, band.width, band.height);
+
+        const blob = await new Promise<Blob | null>((r) =>
+          band.toBlob(r, "image/jpeg", OCR_JPEG_QUALITY),
+        );
+        if (!blob) throw new Error(`第 ${pageNo} 页窄带编码失败`);
+        const buf = new Uint8Array(await blob.arrayBuffer());
+        // 分段转成字符串再 btoa：一次 `String.fromCharCode(...buf)` 在大图上会撞
+        // 「参数过多」的栈上限，所以按 32KB 切
+        let bin = "";
+        for (let i = 0; i < buf.length; i += 0x8000) {
+          bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+        }
+        bands.push(btoa(bin));
+      } finally {
+        page.cleanup();
+      }
+    }
+    return { pageCount: pdf.numPages, bands };
+  } finally {
+    void task.destroy?.();
+  }
+}
+
+/** 一页的窄带文本（分段用）。页码 1-based，与 PDF 页序一致。 */
+interface PageText {
+  page: number;
+  text: string;
+}
+
+/**
+ * 跑一份合订谱的分段：**逐页**窄带 OCR → `segment-parts` → 切点。
+ *
+ * 页文本一起返回：用户改边界时**不需要重跑 OCR**（验收标准里点名的「改正后不重复
+ * OCR」就是靠这个 —— 文本留在手里，改边界只是重新算段）。
+ *
+ * ⚠️ 串行跑。一份 N 页 = N 次 OCR，**不能**与别的文件并发更多 —— 整个分析阶段已经
+ * 有 `PIPELINE_CONCURRENCY` 个文件在飞，这里再并发会把 OCR.space 的瞬时压力翻几倍。
+ */
+async function runSegmentation(
+  file: File,
+): Promise<{ pageCount: number; pageTexts: PageText[]; cuts: number[] }> {
+  const { pageCount, bands } = await renderNarrowBands(file);
+  const pageTexts: PageText[] = [];
+  for (let i = 0; i < bands.length; i++) {
+    // 单页 OCR 失败不该让整份分段失败：那一页的文本留空，模型会看到「（空白）」，
+    // 而 handler 也允许页与页之间有缺（页号是显式的，不会错位）。
+    let text = "";
+    try {
+      text = await runOcr(bands[i]);
+    } catch {
+      text = "";
+    }
+    pageTexts.push({ page: i + 1, text });
+  }
+
+  const { data, error } = await supabase.functions.invoke("segment-parts", {
+    body: { pageCount, pages: pageTexts },
+    timeout: LLM_TIMEOUT_MS,
+  });
+  if (error) throw new Error(`分段请求失败: ${await invokeErrorDetail(error)}`);
+  if (!data?.success) {
+    throw new Error(`分段失败: ${data?.error || data?.message || "未知错误"}`);
+  }
+  const cuts = Array.isArray(data.cuts)
+    ? data.cuts.filter((c: unknown): c is number => typeof c === "number")
+    : [];
+  return { pageCount, pageTexts, cuts };
+}
+
+/**
  * 乐器识别：文件名作为一行证据，和 OCR 文本一起交给 LLM。
  * 出版社扫描分谱的乐器名往往就写在文件名里（PMLASIA01165-13-Horn_2.pdf），
  * 而它们的页面常是扫描乐谱、OCR 读出来是乱的 —— 这种情况下文件名比 OCR 可靠得多。
@@ -737,6 +892,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   const cancelledRef = useRef(false);
   // 防重复提交：ref 同步阻断竞态窗口（setState 是异步的，两次快速点击之间 phase 仍是旧值）
   const analyzingRef = useRef(false);
+  const segRunningRef = useRef(false);
   const uploadingRef = useRef(false);
   useEffect(() => {
     cancelledRef.current = false;
@@ -906,6 +1062,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         // 但**中间没人把它写进行状态**，于是那条提示是死代码 —— 上界漂移时号被静默吞掉，
         // 一个字都不显示（审查靠「提示可达性」的探针抓出来的）。三个环节缺一不可。
         subPartsOverCap,
+        // 记下页数：成本估算与「这份要不要分段」都看它（多页且非总谱才走分段）
+        pageCount: rendered?.pageCount,
         // 存储键要在**分析完成时**就定下来（每行一次、重试复用），
         // 而不是每次点上传现生成 —— 否则失败重传会不断产生新对象。
         storageId: crypto.randomUUID(),
@@ -947,6 +1105,70 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
     if (cancelledRef.current) return;
     setPhase("confirm");
+  };
+
+  /**
+   * 这份文件要不要跑分段：**多页、非总谱**。
+   *
+   * 总谱的排除是用户定的（省掉最大的一笔 OCR）；而「总谱认不出来」这件事有实测支撑
+   * （三个本地判据都被否掉，见 #290 的评论），所以只能靠 `section === 总谱` 人工标记兜底。
+   * 页数未知（分析失败）时不跑 —— 连成本都算不出来。
+   */
+  const segEligible = (f: UploadFile) =>
+    f.status !== "error" &&
+    needsSegmentation(
+      f.pageCount ?? null,
+      (f.sectionEdit ?? f.sectionGuess ?? "").trim() === FULL_SCORE_SECTION,
+    );
+
+  /** 跑一遍分段要烧多少次 OCR —— **点火前必须让用户看到**（#290 验收标准之一） */
+  const segCost = files.reduce((n, f) => (segEligible(f) ? n + (f.pageCount ?? 0) : n), 0);
+  const segTargets = files.filter(segEligible);
+
+  /**
+   * 跑分段（#290 Step 1）。**不自动跑** —— 一份 N 页的合订谱要烧 N 次 OCR，
+   * 用户必须在点火前知道这个数（见 segCost 与界面上的按钮文案）。
+   */
+  const startSegmentation = async () => {
+    if (segRunningRef.current) return;
+    segRunningRef.current = true;
+    cancelledRef.current = false;
+    try {
+      const targets = files
+        .map((f, i) => ({ f, i }))
+        .filter(({ f }) => segEligible(f) && f.segState !== "done");
+      await runWithConcurrency(targets, PIPELINE_CONCURRENCY, async ({ f, i }) => {
+        if (cancelledRef.current) return;
+        updateFile(i, { segState: "running", segError: undefined });
+        try {
+          const { pageTexts, cuts } = await runSegmentation(f.file);
+          updateFile(i, {
+            segState: "done",
+            pageTexts,
+            // 段的**起点**（恒含第 1 页）：用户拖动边界就是改这个数组
+            segmentStarts: [...new Set([1, ...cuts])].sort((a, b) => a - b),
+          });
+        } catch (err) {
+          updateFile(i, {
+            segState: "error",
+            segError: err instanceof Error ? err.message : String(err),
+          });
+        }
+      });
+    } finally {
+      segRunningRef.current = false;
+    }
+  };
+
+  /** 界面上显示的段（由起点页推出闭区间）。用户改过起点就按改过的算 */
+  const segmentsOf = (f: UploadFile) => normalizeSegments(f.segmentStarts ?? [1], f.pageCount ?? 1);
+
+  /** 改某一段的起点页。会立刻收敛（不留空洞/重叠），并把结果写回状态 */
+  const setSegmentStart = (index: number, segIndex: number, startPage: number) => {
+    const f = files[index];
+    const starts = [...(f.segmentStarts ?? [1])].sort((a, b) => a - b);
+    starts[segIndex] = startPage;
+    updateFile(index, { segmentStarts: [...new Set(starts)].sort((a, b) => a - b) });
   };
 
   /**
@@ -1464,6 +1686,66 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                               <span className="text-xs text-text-muted">填写乐器名后显示</span>
                             )}
                           </div>
+
+                          {/* 分段（#290 Step 1）：只在**多页、非总谱**的文件上出现。
+                              边界用「段的起始页」表达 —— 用户改这个数就等于拖动边界，
+                              而**不重跑 OCR**（逐页窄带文本留在 pageTexts 里）。
+                              段内的乐器/分声部**不在这里编辑**：切分之后每一段会各自成为
+                              一行，用的还是上面那套编辑器（同一件事不造两套界面）。 */}
+                          {segEligible(f) && (
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs text-text-muted">分段：</span>
+                                {f.segState === "running" && (
+                                  <span className="text-xs text-text-muted">
+                                    识别中…（{f.pageCount} 页，消耗 {f.pageCount} 次 OCR）
+                                  </span>
+                                )}
+                                {f.segState === "error" && (
+                                  <span className="text-xs text-danger">失败：{f.segError}</span>
+                                )}
+                                {f.segState === undefined && (
+                                  <span className="text-xs text-text-muted">
+                                    未识别（{f.pageCount} 页）—— 点左下角「识别分段」
+                                  </span>
+                                )}
+                                {f.segState === "done" && (
+                                  <span className="text-xs text-text-muted">
+                                    共 {segmentsOf(f).length} 段 —— 段的起始页可改
+                                  </span>
+                                )}
+                              </div>
+                              {f.segState === "done" && (
+                                <ul className="space-y-0.5">
+                                  {segmentsOf(f).map((seg, si) => (
+                                    <li key={si} className="flex items-center gap-1.5 text-xs">
+                                      <span className="text-text-muted shrink-0 w-14">
+                                        第 {si + 1} 段
+                                      </span>
+                                      {si === 0 ? (
+                                        <span className="text-text-muted w-16 shrink-0">
+                                          第 1 页起
+                                        </span>
+                                      ) : (
+                                        <input
+                                          type="number"
+                                          min={2}
+                                          max={f.pageCount}
+                                          value={seg.from}
+                                          onChange={(e) =>
+                                            setSegmentStart(i, si, Number(e.target.value))
+                                          }
+                                          className="w-16 px-1.5 py-0.5 text-xs bg-muted border border-border rounded shrink-0"
+                                          disabled={phase === "uploading"}
+                                        />
+                                      )}
+                                      <span className="text-text-muted">– 第 {seg.to} 页</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          )}
                           {!(f.instrumentEdit ?? f.instrumentGuess ?? "").trim() && (
                             <p className="text-xs text-warning">未识别出乐器，请先填写再上传</p>
                           )}
@@ -1511,6 +1793,20 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             </div>
 
             <div className="flex justify-end gap-3 pt-2 border-t border-border">
+              {/* 分段**不自动跑**：一份 N 页的合订谱要烧 N 次 OCR，而免费档是 500 次/天/IP。
+                  所以这个按钮把代价写在脸上（#290 验收标准：调用次数在导入前可见）。 */}
+              {segTargets.length > 0 && !allDone && (
+                <button
+                  onClick={startSegmentation}
+                  disabled={phase === "analyzing" || phase === "uploading"}
+                  className="mr-auto px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted disabled:opacity-50"
+                  title="合订谱里可能装着好几份分谱。识别出边界后可以逐段确认、再切分上传。"
+                >
+                  {segTargets.some((f) => f.segState === "running")
+                    ? "识别分段中..."
+                    : `识别分段（${segTargets.length} 份，消耗 ${segCost} 次 OCR）`}
+                </button>
+              )}
               <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">
                 {phase === "analyzing" ? "取消分析" : "取消"}
               </button>

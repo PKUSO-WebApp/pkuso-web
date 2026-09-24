@@ -38,6 +38,8 @@ const h = vi.hoisted(() => ({
   llm: [] as string[],
   ocrFail: false,
   llmFail: false,
+  loadFail: false,
+  renderFailPages: [] as number[],
   pages: 3,
 }));
 
@@ -73,21 +75,30 @@ vi.mock("@/lib/supabase", () => ({
 }));
 
 vi.mock("pdfjs-dist", () => ({
-  getDocument: () => ({
-    promise: Promise.resolve({
-      numPages: h.pages,
-      getPage: async () => ({
-        getViewport: ({ scale }: { scale: number }) => ({
-          width: 100 * scale,
-          height: 100 * scale,
+  getDocument: () => {
+    if (h.loadFail) {
+      return { promise: Promise.reject(new Error("坏 PDF")), destroy: async () => {} };
+    }
+    return {
+      promise: Promise.resolve({
+        numPages: h.pages,
+        getPage: async (n: number) => ({
+          getViewport: ({ scale }: { scale: number }) => ({
+            width: 100 * scale,
+            height: 100 * scale,
+          }),
+          // 指定页渲染失败：那条「就地消化、不判死整份」的分支否则一条测试都跑不到
+          render: () =>
+            h.renderFailPages.includes(n)
+              ? { promise: Promise.reject(new Error("图像解码失败")) }
+              : { promise: Promise.resolve() },
+          cleanup: () => {},
+          getOperatorList: async () => ({ fnArray: [] }),
         }),
-        render: () => ({ promise: Promise.resolve() }),
-        cleanup: () => {},
-        getOperatorList: async () => ({ fnArray: [] }),
       }),
-    }),
-    destroy: async () => {},
-  }),
+      destroy: async () => {},
+    };
+  },
   OPS: { paintImageXObject: 1, paintImageXObjectRepeat: 2, paintInlineImageXObject: 3 },
 }));
 vi.mock("pdfjs-dist/build/pdf.worker.min.mjs", () => ({}));
@@ -113,6 +124,8 @@ beforeEach(() => {
   h.llm.length = 0;
   h.ocrFail = false;
   h.llmFail = false;
+  h.loadFail = false;
+  h.renderFailPages = [];
   h.pages = 3;
   const pixels = makePixels();
   HTMLCanvasElement.prototype.getContext = function () {
@@ -135,9 +148,17 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-async function runAnalysis({ fullScore = false, ocrFail = false, llmFail = false } = {}) {
+async function runAnalysis({
+  fullScore = false,
+  ocrFail = false,
+  llmFail = false,
+  loadFail = false,
+  renderFailPages = [] as number[],
+} = {}) {
   h.ocrFail = ocrFail;
   h.llmFail = llmFail;
+  h.loadFail = loadFail;
+  h.renderFailPages = renderFailPages;
   const { container } = render(
     <UploadModal open onClose={() => {}} scoreId="score-1" onUploaded={() => {}} />,
   );
@@ -185,5 +206,19 @@ describe("升级链的集成：哪几张图真的被送出去了", () => {
     // 没有证据的结论，且无从分辨。
     expect(h.llm).toHaveLength(1);
     expect(screen.getByText(/LLM 请求失败/)).toBeTruthy();
+  });
+
+  it("**一页渲染失败不判死整份**：换下一页继续（旧版这里整份降级成「只凭文件名」）", async () => {
+    await runAnalysis({ renderFailPages: [1] });
+    // 第 1 页渲染抛错 → 当「这一页没结论」→ 第 2 页照常送检。
+    // 异常一旦放出去，这里会是 0 次 OCR、整行落 error（而 PDF 其实还能用）。
+    expect(h.ocr).toEqual([TITLE_TAG, FULL_TAG]);
+  });
+
+  it("**PDF 加载失败不判死整份**：退化成只凭文件名，行照样出结论、不崩", async () => {
+    await runAnalysis({ loadFail: true });
+    expect(h.ocr).toEqual([]); // 打不开就没有页可送
+    expect(h.llm).toHaveLength(1); // 但 LLM 仍被问了一次（只带文件名）
+    expect(h.llm[0]).toContain("圆号1,2.pdf");
   });
 });

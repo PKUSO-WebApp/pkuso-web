@@ -745,8 +745,6 @@ async function renderPagesForAnalysis(
     escalate: boolean;
     /** 这一页能不能定论。true = 定了，不再往下看 */
     tryPage: (page: RenderedPage) => Promise<boolean>;
-    /** 一页刚渲染完就回调（**空白页也调**）—— 界面靠它回显「正在看第几页」 */
-    onPage?: (page: RenderedPage) => void;
     /** 弹窗关掉就尽快收手。粒度必须是「页」：开了升级之后一份文件最多 6 次 OCR */
     isCancelled: () => boolean;
   },
@@ -793,7 +791,8 @@ async function renderPagesForAnalysis(
     };
   }
 
-  let warning = "";
+  // 累积而不覆盖：几页都出问题时要能同时看到（见下面空白页那条）
+  const warnings: string[] = [];
   let contentPage: RenderedPage | null = null;
   try {
     const pagesToTry = Math.min(opts.maxPages, pdf.numPages);
@@ -811,7 +810,9 @@ async function renderPagesForAnalysis(
         // 而升级链存在的意义正是「这一页读不出就换下一页」。**这一层不能把异常放出去** ——
         // 放出去会让整行落 `error`（旧版这里是降级到「只凭文件名」），把用户手里
         // 其实还能用的那份 PDF 判死。
-        warning = `第 ${pageNo} 页渲染失败：${err instanceof Error ? err.message : String(err)}`;
+        warnings.push(
+          `第 ${pageNo} 页渲染失败：${err instanceof Error ? err.message : String(err)}`,
+        );
         continue;
       }
       const page: RenderedPage = {
@@ -824,13 +825,15 @@ async function renderPagesForAnalysis(
         cropNote: cropNoteOf(result.crop, result.cropped),
         cropped: result.cropped,
       };
-      opts.onPage?.(page);
 
       if (result.blank) {
-        warning =
+        // **累积**而不是覆盖：早先是 `warning = …`，于是「第 1 页渲染失败」会被后面
+        // 某一页的「第 2 页无内容」盖掉 —— 信息量更低的那条把更可行动的那条顶掉了。
+        warnings.push(
           result.imageOps > 0
             ? `第 ${pageNo} 页含图像但渲染为空 —— 图像解码失败（JBIG2/JPX 需要 /pdfjs/wasm 资源）`
-            : `第 ${pageNo} 页无内容`;
+            : `第 ${pageNo} 页无内容`,
+        );
         // 空白页**不算结论**，一律继续往下 —— 分支只有这一个，与升级链共用
         //（早先这层是「顺延」，与升级是两件事；现在它们是同一个循环的同一支）
         continue;
@@ -842,14 +845,32 @@ async function renderPagesForAnalysis(
       // 「这一行失败」，该落 `status: "error"` 让用户重试；而取页/OCR 失败 = 「这一页
       // 读不出」，该降级。旧版也是这个分工。
       if (await opts.tryPage(page)) {
-        return { pageCount: pdf.numPages, settledPageNo: pageNo, contentPage: page, warning };
+        return {
+          pageCount: pdf.numPages,
+          settledPageNo: pageNo,
+          contentPage: page,
+          warning: warnings.join("；"),
+        };
       }
       // 这一页读不出结论。**只有开了升级才往下一页走** —— 关着的时候「读完第一张有内容的
-      // 页就走」正是加总谱分析之前的行为，一个字都不变（那是绝大多数分谱的路径）。
+      // 页就走」（那是绝大多数分谱的路径）。
+      //
+      // ⚠️ 与加总谱分析**之前**的版本相比，关着开关时有两处**有意**的行为差异，都是
+      // 「把某一页读不出当成没有结论」这条更一致的规则带来的：
+      // 1. **渲染失败**（上面那支）现在会继续看下一页；旧版是整份降级成「只凭文件名」。
+      //    「第 1 页解不出来、第 2 页好好的」在扫描件里是真实存在的，旧版放弃得太早。
+      // 2. **OCR 失败**同理 —— 旧版把它抛穿成整份降级；现在只是这一页没结论
+      //    （这条见 `tryPage` 里的注释）。
+      // 其余路径（空白页顺延、裁切条 → 整页回退、OCR/LLM 次数、行状态）逐字相同。
       if (!opts.escalate) break;
     }
 
-    return { pageCount: pdf.numPages, settledPageNo: null, contentPage, warning };
+    return {
+      pageCount: pdf.numPages,
+      settledPageNo: null,
+      contentPage,
+      warning: warnings.join("；"),
+    };
   } finally {
     // 释放整个文档与 worker，每份文件的内存不跨轮次累积。
     // ⚠️ 必须自己吞掉销毁的异常：`tryPage` 的异常正在往外穿，finally 里再抛一个就会
@@ -1481,9 +1502,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       // 那正是「整行失败」的定义，落 `status: "error"` 让用户重试。旧版也是这个分工。
       walk = await renderPagesForAnalysis(file.file, {
         maxPages: MAX_PAGES_EXAMINED,
-        // 关掉时「读完第一张有内容的页就走」= 加这个之前的行为，一字不变
+        // 关掉时「读完第一张有内容的页就走」。与加这个之前相比只剩两处**有意**的差异
+        // （渲染失败 / OCR 失败不再整份降级，而是当「这一页没结论」继续）——
+        // 清单与理由在下面 `if (!opts.escalate) break` 那里。
         escalate: analyzeFullScore,
-        onPage: (page) => updateFile(i, { sourcePage: page.pageNo }),
         isCancelled: () => cancelledRef.current,
 
         // 「这一页定没定论」**只在这一个函数里判** —— 升级链走不走下一页全看它返回什么。
@@ -1496,6 +1518,14 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
               ocrText: attempt.full
                 ? `第 ${page.pageNo} 页标题区未给出结论，回退整页…`
                 : `已取第 ${page.pageNo} 页（${page.cropped ? "标题区" : "整页"}），正在 OCR...`,
+              // ⚠️ 缩略图、裁切说明、页号**在这一刻就写**，不等 OCR 成功。
+              // 这三个字段的唯一用途是排查「切错位置」，而 OCR 读不出正是切错位置的主症状 ——
+              // 等到成功才写，等于在最需要它们的时候把它们藏起来（对抗测试实测：两张图
+              // 都失败时行里连缩略图都没有，用户看不出到底送了哪张图、裁到哪）。
+              // 「与实际送检的那张图一致」这条约束仍然成立：这里写的正是**即将送出去的**那张。
+              preview: (attempt.full ? page.fullPreview : page.preview) || undefined,
+              cropNote: attempt.note,
+              sourcePage: page.pageNo,
             });
 
             // 服务端表达「没读到文字」有两种形态：200 + 空 text，以及 400 + success:false
@@ -1525,26 +1555,32 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
               continue;
             }
 
-            // 缩略图与裁切说明必须与实际送检的那张图一致：这两个字段的用途就是排查
-            // 「切错位置」，说反话正好在最需要它们的时候说。
-            updateFile(i, {
-              ocrText: text,
-              preview: (attempt.full ? page.fullPreview : page.preview) || undefined,
-              cropNote: attempt.note,
-            });
+            // ⚠️ **OCR 一成功就记下文本**（而不是等 LLM 成功）：下面的兜底那次调用要用它，
+            // 记晚了那次就退化成「只凭文件名」，用户拿到一个没有 OCR 证据的结论且无从分辨。
+            ocrText = text;
+            updateFile(i, { ocrText: text });
 
             // 标题区读到的字太少就不值得送 LLM，直接进下一次尝试（同 MIN_OCR_CHARS）
             if (!attempt.full && page.cropped && text.trim().length < MIN_OCR_CHARS) continue;
 
             updateFile(i, { llmResult: "等待 LLM 分析..." });
-            // ⚠️ 这一句**故意不 catch**：LLM 失败 = 「这一行失败」，要让整行落
-            // `status: "error"`（可见、可重试）。上面兜住的是「这一页读不出」，两件事的
-            // 处置不同。
-            const got = await runLlmAnalysis(file.originalName, text);
+            let got: LlmAnalysis;
+            try {
+              got = await runLlmAnalysis(file.originalName, text);
+            } catch (err) {
+              // ⚠️ **第一次 LLM 失败才让整行失败**（异常穿出去 → 外层 catch → `error`）。
+              // 已经拿到过结论之后，后面这一次失败**不该把已有结果丢掉** ——
+              // 旧版的规矩就是这样（回退那次失败只记 warning、保留第一次结果），
+              // 而且升级链让它更要紧：第 2 页的 LLM 抖动没道理作废第 1 页的答案。
+              // 反过来做还有个更坏的后果：`error` 行在确认阶段既不能重试也不能移除，
+              // 是一条死胡同（对抗测试实测），所以绝不能让一次抖动把行推进去。
+              if (!analysis) throw err;
+              updateFile(i, {
+                warning: `第 ${page.pageNo} 页重试失败：${err instanceof Error ? err.message : String(err)}`,
+              });
+              continue;
+            }
             analysis = got;
-            // 先记下文本：重试时若它还是空串，那次调用就退化成**只凭文件名**，
-            // 用户会拿到一个没有 OCR 证据的结论且无从分辨。
-            ocrText = text;
             // 「定了就停」这条判据只有一份，见 `analysisSettled`。
             if (analysisSettled(got)) return true;
             // ⚠️ **这里必须是「继续循环」而不是 `return`**：这一页还剩一张图（整页）没试。
@@ -1557,11 +1593,19 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       });
       warning = walk.warning;
       if (warning) updateFile(i, { warning });
+      // 一页有内容的都没取到（全空白 / 渲染失败）：把原因写进 OCR 文本框。
+      // 不写的话那里还挂着开工时那句「正在提取页面...」—— 那是进度文案不是结果，
+      // 等于在最需要看到底发生了什么时说反话。
+      if (!walk.contentPage && warning) updateFile(i, { ocrText: warning });
 
       // 一页有内容的都没读到（全空白 / 渲染失败 / OCR 读不出 / 读到的字太少）：
       // 退化成只用文件名让 LLM 判断。空串是后端约定的「未识别」——
       // 它把「证据不足」和模型答「unknown / 无法判断」都收敛成了空串。
       if (!analysis) {
+        // ⚠️ 关掉弹窗之后**不要再补这一发**：它没有取消检查，而超时是 45s ——
+        // 用户明明已经关窗走人，配额还在烧（对抗测试实测：卸载后 llm 调用 0→1，
+        // body 里只有文件名）。
+        if (cancelledRef.current) return;
         updateFile(i, { llmResult: "等待 LLM 分析..." });
         analysis = await runLlmAnalysis(file.originalName, ocrText);
       }

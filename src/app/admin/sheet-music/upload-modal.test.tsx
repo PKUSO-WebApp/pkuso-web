@@ -1,7 +1,12 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { analysisSettled, pageAttempts, UploadModal } from "./upload-modal";
+import {
+  analysisSettled,
+  estimateAnalysisOcrCalls,
+  pageAttempts,
+  UploadModal,
+} from "./upload-modal";
 
 /**
  * 渲染冒烟测试。**存在的理由是两次真实的漏网**：
@@ -9,7 +14,7 @@ import { analysisSettled, pageAttempts, UploadModal } from "./upload-modal";
  * 1. `isFullScoreRow` 曾被放进组件体、声明在使用点之后 —— `const` 的 TDZ 让
  *    **选完文件整个弹窗就崩**（`segTargets` 是渲染期立即求值的语句，会走到它）。
  *    `tsc` 报不出来（嵌套闭包里的调用序它不判），而本目录此前**只有纯模块测试**，
- *    831 条全绿也覆盖不到。
+ *    全仓测试跑绿也覆盖不到（要当前条数就跑 `pnpm test` —— 这里不写死数字）。
  * 2. 「确认这 N 段」按钮的显示条件与上传时的拦截判据不同源，造出一个死胡同 ——
  *    那也是纯模块测试看不见的（要渲染出那一行才会发现按钮不在屏幕上）。
  *
@@ -75,6 +80,22 @@ describe("select 阶段左下角的两个开关（#297）", () => {
     expect(cost()).toBe("分析最多 2 次 OCR");
     fireEvent.click(screen.getByLabelText("分析总谱"));
     expect(cost()).toBe("分析最多 6 次 OCR（多数文件 1 次）");
+  });
+});
+
+describe("点火前的成本上界", () => {
+  it("按常量算，不按语料估 —— 所以是确定的上界（分段那边才是「约」）", () => {
+    expect(estimateAnalysisOcrCalls(1, false)).toBe(2);
+    expect(estimateAnalysisOcrCalls(1, true)).toBe(6);
+    expect(estimateAnalysisOcrCalls(12, false)).toBe(24);
+    expect(estimateAnalysisOcrCalls(12, true)).toBe(72);
+  });
+
+  it("非法份数给 0 —— 免得把 NaN 渲染到界面上（NaN 会让「最多 N 次」变成「最多 NaN 次」）", () => {
+    expect(estimateAnalysisOcrCalls(0, true)).toBe(0);
+    expect(estimateAnalysisOcrCalls(NaN, true)).toBe(0);
+    expect(estimateAnalysisOcrCalls(-1, true)).toBe(0);
+    expect(estimateAnalysisOcrCalls(1.5, true)).toBe(0);
   });
 });
 

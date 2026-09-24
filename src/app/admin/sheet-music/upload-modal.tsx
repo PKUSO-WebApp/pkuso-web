@@ -437,8 +437,8 @@ const PDFJS_ASSET_BASE = "/pdfjs/";
  * 扩成了两个含义 —— 「最多跳几页空白」与「最多升几页」—— 因为两者现在是**同一个循环**
  * （见 `renderPagesForAnalysis`），一个上界同时管住它们。
  *
- * 它也是**配额上界**：每页最多 2 次 OCR（标题区 + 整页），所以一份文件最多 6 次。改大它
- * 等于改一份文件的最坏成本，界面上的估算（`estimateAnalysisOcrCalls`）跟着变。
+ * 它也是**配额上界**：每页最多 `MAX_OCR_IMAGES_PER_PAGE` 次 OCR（标题区 + 整页）。改大它
+ * 等于改一份文件的最坏成本，界面上的数字（`estimateAnalysisOcrCalls`）跟着变。
  */
 const MAX_PAGES_EXAMINED = 3;
 
@@ -453,6 +453,18 @@ const MAX_OCR_IMAGES_PER_PAGE = 2;
  */
 const MAX_ANALYSIS_OCR_PER_FILE = MAX_OCR_IMAGES_PER_PAGE;
 const MAX_ANALYSIS_OCR_PER_FILE_ESCALATED = MAX_PAGES_EXAMINED * MAX_OCR_IMAGES_PER_PAGE;
+
+/**
+ * 一批文件在**分析阶段**最多烧几次 OCR —— 点火前给用户看的那个数。
+ *
+ * ⚠️ 与 `segmentation.ts` 的 `estimateOcrCalls` / `estimateTotalOcrCalls` **不是一回事**：
+ * 那两个算的是**分段**的成本、报的是「约 N 次」（每页窄带多大要渲染完才知道，估不准）；
+ * 这个只由上面的常量相乘得出、不依赖语料，所以报的是**确定的上界**。
+ */
+export function estimateAnalysisOcrCalls(fileCount: number, escalate: boolean): number {
+  if (!Number.isSafeInteger(fileCount) || fileCount < 1) return 0;
+  return fileCount * (escalate ? MAX_ANALYSIS_OCR_PER_FILE_ESCALATED : MAX_ANALYSIS_OCR_PER_FILE);
+}
 
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -721,7 +733,7 @@ interface RenderedPage {
  * 不抛「全空白」错误：一页有内容的都没取到时调用方照样可以用文件名让 LLM 判断，
  * 原因通过 `warning` 带回界面（这类出版社扫描分谱常年踩 JBIG2 解码这一脚）。
  */
-async function renderPagesForAnalysis(
+export async function renderPagesForAnalysis(
   file: File,
   opts: {
     /** 最多看几页（**含**空白页）。到顶就停，不管有没有结论 —— 这是配额的上界 */
@@ -754,23 +766,54 @@ async function renderPagesForAnalysis(
     wasmUrl: `${PDFJS_ASSET_BASE}wasm/`,
     iccUrl: `${PDFJS_ASSET_BASE}iccs/`,
   });
+
+  let pdf: Awaited<typeof task.promise>;
   try {
     // ⚠️ `await task.promise` 必须在 try **里面**（这里）：加载失败（坏 PDF / 加密 /
-    // 资源缺失）时它会抛，抛在 try 外面就永远走不到 finally 的 `destroy()` ——
-    // 真 worker 模式下每导入一个坏文件漏一个 worker 线程。实测：坏 PDF 时
-    // `getDocument` 被调 1 次、`destroy` 被调 0 次。`renderNarrowBands` 里同一句
-    // 早先也是这个形态，已经改过；两处一致才不会漏。
-    const pdf = await task.promise;
+    // 资源缺失）时它会抛，抛在 try 外面就永远走不到 `destroy()` —— 真 worker 模式下
+    // 每导入一个坏文件漏一个 worker 线程。实测：坏 PDF 时 `getDocument` 被调 1 次、
+    // `destroy` 被调 0 次。`renderNarrowBands` 里同一句早先也是这个形态，已经改过；
+    // 两处一致才不会漏。
+    pdf = await task.promise;
+  } catch (err) {
+    try {
+      await task.destroy();
+    } catch {
+      // 销毁本身失败没有下游依赖（fake worker 下泄漏的是可被 GC 的对象图）
+    }
+    // **不抛**：加载失败时旧版就是降级到「只凭文件名让 LLM 判断」，抛出去会让整行落
+    // `error`，把一条本来就只剩文件名可用的路也堵死。`pageCount` 给 0（未知）—— 与旧版
+    // `rendered === null` 时 `pageCount: undefined` 同效（`needsSegmentation` 对两者都判假），
+    // 但类型上是确定的数，不必让 `undefined` 在链路上传。
+    return {
+      pageCount: 0,
+      settledPageNo: null,
+      contentPage: null,
+      warning: `读取 PDF 失败：${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  let warning = "";
+  let contentPage: RenderedPage | null = null;
+  try {
     const pagesToTry = Math.min(opts.maxPages, pdf.numPages);
-    let warning = "";
-    let contentPage: RenderedPage | null = null;
 
     for (let pageNo = 1; pageNo <= pagesToTry; pageNo++) {
       // ⚠️ 粒度是**页**，不是文件：开了升级之后一份文件最多 3 页 × 2 张图 = 6 次 OCR，
       // 而配额是照烧的。只在这个文件开头检查一次等于让「关掉弹窗」晚生效最多 6 次调用。
       if (opts.isCancelled()) break;
 
-      const result = await renderPageToJpeg(await pdf.getPage(pageNo));
+      let result: Awaited<ReturnType<typeof renderPageToJpeg>>;
+      try {
+        result = await renderPageToJpeg(await pdf.getPage(pageNo));
+      } catch (err) {
+        // 一页渲染失败 ≠ 整份失败：扫描件偶尔有一页解不出来（JBIG2/JPX 那一脚），
+        // 而升级链存在的意义正是「这一页读不出就换下一页」。**这一层不能把异常放出去** ——
+        // 放出去会让整行落 `error`（旧版这里是降级到「只凭文件名」），把用户手里
+        // 其实还能用的那份 PDF 判死。
+        warning = `第 ${pageNo} 页渲染失败：${err instanceof Error ? err.message : String(err)}`;
+        continue;
+      }
       const page: RenderedPage = {
         base64: result.base64,
         fullBase64: result.fullBase64,
@@ -794,6 +837,10 @@ async function renderPagesForAnalysis(
       }
 
       contentPage = page;
+      // ⚠️ **只有 `tryPage` 里 LLM 那一步的异常会穿出这个函数**（取页/OCR 的异常在
+      // `tryPage` 内部就兜住了，见那边的注释）。这不是疏漏，是刻意的分工：LLM 失败 =
+      // 「这一行失败」，该落 `status: "error"` 让用户重试；而取页/OCR 失败 = 「这一页
+      // 读不出」，该降级。旧版也是这个分工。
       if (await opts.tryPage(page)) {
         return { pageCount: pdf.numPages, settledPageNo: pageNo, contentPage: page, warning };
       }
@@ -802,15 +849,16 @@ async function renderPagesForAnalysis(
       if (!opts.escalate) break;
     }
 
-    return {
-      pageCount: pdf.numPages,
-      settledPageNo: null,
-      contentPage,
-      warning,
-    };
+    return { pageCount: pdf.numPages, settledPageNo: null, contentPage, warning };
   } finally {
-    // 释放整个文档与 worker，每份文件的内存不跨轮次累积
-    await task.destroy();
+    // 释放整个文档与 worker，每份文件的内存不跨轮次累积。
+    // ⚠️ 必须自己吞掉销毁的异常：`tryPage` 的异常正在往外穿，finally 里再抛一个就会
+    // **把它盖掉** —— 用户看到的会是「销毁失败」而不是真正的 LLM 失败原因。
+    try {
+      await task.destroy();
+    } catch {
+      // 同上
+    }
   }
 }
 
@@ -1428,70 +1476,89 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     let analysis: LlmAnalysis | null = null;
 
     try {
-      // ⚠️ 内层这一段的异常**只降级、不落到 `status: "error"`**：取页/OCR 失败时
-      // 「用文件名让 LLM 判」正是要保留的那条路（加总谱分析之前也是这个行为）。
-      // 真正该让整行失败的只有最后那次 LLM 调用。
-      try {
-        walk = await renderPagesForAnalysis(file.file, {
-          maxPages: MAX_PAGES_EXAMINED,
-          // 关掉时「读完第一张有内容的页就走」= 加这个之前的行为，一字不变
-          escalate: analyzeFullScore,
-          onPage: (page) => updateFile(i, { sourcePage: page.pageNo }),
-          isCancelled: () => cancelledRef.current,
+      // 取页 / 渲染 / OCR 的异常都在 `renderPagesForAnalysis` 与 `tryPage` **内部**兜住
+      // （那边各自说明了理由），所以这一层 catch 只会接到一种东西：**LLM 失败** ——
+      // 那正是「整行失败」的定义，落 `status: "error"` 让用户重试。旧版也是这个分工。
+      walk = await renderPagesForAnalysis(file.file, {
+        maxPages: MAX_PAGES_EXAMINED,
+        // 关掉时「读完第一张有内容的页就走」= 加这个之前的行为，一字不变
+        escalate: analyzeFullScore,
+        onPage: (page) => updateFile(i, { sourcePage: page.pageNo }),
+        isCancelled: () => cancelledRef.current,
 
-          // 「这一页定没定论」**只在这一个函数里判** —— 升级链走不走下一页全看它返回什么。
-          tryPage: async (page) => {
-            for (const attempt of pageAttempts(page)) {
-              updateFile(i, {
-                ocrText: attempt.full
-                  ? `第 ${page.pageNo} 页标题区未给出结论，回退整页…`
-                  : `已取第 ${page.pageNo} 页（${page.cropped ? "标题区" : "整页"}），正在 OCR...`,
-              });
+        // 「这一页定没定论」**只在这一个函数里判** —— 升级链走不走下一页全看它返回什么。
+        tryPage: async (page) => {
+          // 标题区那条失败原因要跨 attempt 留着：两张都失败时得一起报（见下面）
+          let titleError = "";
 
-              // 服务端表达「没读到文字」有两种形态：200 + 空 text，以及 400 + success:false
-              // （见 pkuso-backend 的 ocr-analyze：IsErroredOnProcessing 为真时回 400）——
-              // 后者会被 runOcr 抛成异常。只在返回空串时才回退，等于漏掉更常见的那一半，
-              // 而「切错位置」恰恰是最容易让裁切条读不到文字的情况。
-              let text = "";
-              try {
-                text = await runOcr(attempt.base64);
-              } catch (err) {
-                // 还有退路（标题区失败了、整页还没试）就往下走；没有退路才抛
-                if (attempt.full || !page.cropped) throw err;
+          for (const attempt of pageAttempts(page)) {
+            updateFile(i, {
+              ocrText: attempt.full
+                ? `第 ${page.pageNo} 页标题区未给出结论，回退整页…`
+                : `已取第 ${page.pageNo} 页（${page.cropped ? "标题区" : "整页"}），正在 OCR...`,
+            });
+
+            // 服务端表达「没读到文字」有两种形态：200 + 空 text，以及 400 + success:false
+            // （见 pkuso-backend 的 ocr-analyze：IsErroredOnProcessing 为真时回 400）——
+            // 后者会被 runOcr 抛成异常。只在返回空串时才回退，等于漏掉更常见的那一半，
+            // 而「切错位置」恰恰是最容易让裁切条读不到文字的情况。
+            //
+            // ⚠️ **OCR 的异常就地消化，绝不放出去**：放出去会被上层当成「整份失败」而终止
+            // 整个升级链，可「这一页读不出」恰恰是最该换下一页的输入。放出去的另一个代价是
+            // 整行落 `error` —— 而 PDF 其实还能用，只是这一页读不出。
+            let text = "";
+            try {
+              text = await runOcr(attempt.base64);
+            } catch (err) {
+              const why = err instanceof Error ? err.message : String(err);
+              if (attempt.full || !page.cropped) {
+                // 两张都试过了（或本来就只有一张）：**两条原因都带上** —— 第一条
+                // （标题区）往往更有诊断价值，只留最后一条会把「切错位置」这个最常见的
+                // 病因吞掉。
+                updateFile(i, {
+                  ocrText: titleError ? `标题区：${titleError}；整页：${why}` : why,
+                });
+              } else {
+                titleError = why;
                 updateFile(i, { ocrText: `第 ${page.pageNo} 页标题区 OCR 失败，回退整页…` });
-                continue;
               }
-
-              // 缩略图与裁切说明必须与实际送检的那张图一致：这两个字段的用途就是排查
-              // 「切错位置」，说反话正好在最需要它们的时候说。
-              updateFile(i, {
-                ocrText: text,
-                preview: (attempt.full ? page.fullPreview : page.preview) || undefined,
-                cropNote: attempt.note,
-              });
-
-              // 标题区读到的字太少就不值得送 LLM，直接进下一次尝试（同 MIN_OCR_CHARS）
-              if (!attempt.full && page.cropped && text.trim().length < MIN_OCR_CHARS) continue;
-
-              updateFile(i, { llmResult: "等待 LLM 分析..." });
-              const got = await runLlmAnalysis(file.originalName, text);
-              analysis = got;
-              ocrText = text;
-              // 「定了就停」这条判据只有一份，见 `analysisSettled` —— 它是升级链的闸门，
-              // 写在这里的第二份抄本会在改动时与它分叉，而分叉的表现是「白烧配额」。
-              return analysisSettled(got);
+              continue;
             }
-            return false;
-          },
-        });
-        warning = walk.warning;
-        if (warning) updateFile(i, { warning });
-      } catch (err) {
-        warning = err instanceof Error ? err.message : String(err);
-        updateFile(i, { ocrText: warning, warning });
-      }
 
-      // 一页有内容的都没读到（全空白 / 渲染失败 / 第一页 OCR 就抛了）：
+            // 缩略图与裁切说明必须与实际送检的那张图一致：这两个字段的用途就是排查
+            // 「切错位置」，说反话正好在最需要它们的时候说。
+            updateFile(i, {
+              ocrText: text,
+              preview: (attempt.full ? page.fullPreview : page.preview) || undefined,
+              cropNote: attempt.note,
+            });
+
+            // 标题区读到的字太少就不值得送 LLM，直接进下一次尝试（同 MIN_OCR_CHARS）
+            if (!attempt.full && page.cropped && text.trim().length < MIN_OCR_CHARS) continue;
+
+            updateFile(i, { llmResult: "等待 LLM 分析..." });
+            // ⚠️ 这一句**故意不 catch**：LLM 失败 = 「这一行失败」，要让整行落
+            // `status: "error"`（可见、可重试）。上面兜住的是「这一页读不出」，两件事的
+            // 处置不同。
+            const got = await runLlmAnalysis(file.originalName, text);
+            analysis = got;
+            // 先记下文本：重试时若它还是空串，那次调用就退化成**只凭文件名**，
+            // 用户会拿到一个没有 OCR 证据的结论且无从分辨。
+            ocrText = text;
+            // 「定了就停」这条判据只有一份，见 `analysisSettled`。
+            if (analysisSettled(got)) return true;
+            // ⚠️ **这里必须是「继续循环」而不是 `return`**：这一页还剩一张图（整页）没试。
+            // 早先写成 `return analysisSettled(got)`，直接退出了整个 attempt 循环 ——
+            // 于是「LLM 未识别 → 回退整页」那条回退成了**死代码**（只有「标题区字太少」
+            // 或「标题区抛错」才走得到它），而那正是加总谱分析**之前**就有的行为。
+          }
+          return false;
+        },
+      });
+      warning = walk.warning;
+      if (warning) updateFile(i, { warning });
+
+      // 一页有内容的都没读到（全空白 / 渲染失败 / OCR 读不出 / 读到的字太少）：
       // 退化成只用文件名让 LLM 判断。空串是后端约定的「未识别」——
       // 它把「证据不足」和模型答「unknown / 无法判断」都收敛成了空串。
       if (!analysis) {
@@ -2387,57 +2454,57 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                  * 把整批的成本从「份数」抬到「页数」量级。摆在这里而不是设置页，是因为
                  * 这两个数在导入前才算得出来（要等文件名/页数都定了）。
                  */}
-                <div className="flex items-end justify-between gap-3">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="flex items-center gap-2 text-xs text-text-muted cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={analyzeFullScore}
-                        onChange={(e) => setAnalyzeFullScore(e.target.checked)}
-                        className="accent-primary"
-                      />
-                      <span title="首页读不出乐器时继续看第 2、3 页，用来认出扉页起排的总谱。单份最坏 6 次 OCR 而不是 1 次。">
-                        分析总谱
-                      </span>
-                    </label>
-                    <label className="flex items-center gap-2 text-xs text-text-muted cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={autoSegment}
-                        onChange={(e) => setAutoSegment(e.target.checked)}
-                        className="accent-primary"
-                      />
-                      <span title="分析完对多页的合订谱跑窄带 OCR，把各声部的位置找出来。整批的成本按页数算。">
-                        乐谱分段
-                      </span>
-                    </label>
-                    {/*
-                     * 点火前的代价（#290 的验收标准之一：调用次数在导入前可见）。
-                     * **报上界而不是「约」** —— 这个数由常量相乘得出、不依赖语料，写成
-                     * 确定的数才是真的；分段那边报「约」是因为每页窄带多大要渲染完才知道。
-                     */}
-                    <p className="text-[11px] text-text-muted" data-testid="analysis-ocr-cost">
-                      分析最多{" "}
-                      {files.length *
-                        (analyzeFullScore
-                          ? MAX_ANALYSIS_OCR_PER_FILE_ESCALATED
-                          : MAX_ANALYSIS_OCR_PER_FILE)}{" "}
-                      次 OCR
-                      {analyzeFullScore ? "（多数文件 1 次）" : ""}
-                    </p>
-                  </div>
-                  <div className="flex gap-3">
-                    <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">
-                      取消
-                    </button>
-                    <button
-                      onClick={startAnalysis}
-                      disabled={files.length === 0}
-                      className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
-                    >
-                      开始分析 ({files.length} 个文件)
-                    </button>
-                  </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="flex items-center gap-2 text-xs text-text-muted cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={analyzeFullScore}
+                      onChange={(e) => setAnalyzeFullScore(e.target.checked)}
+                      className="accent-primary"
+                    />
+                    <span title="首页读不出乐器时继续往后看几页，用来认出扉页起排的总谱。单份的 OCR 成本随之上升，见下方数字。">
+                      分析总谱
+                    </span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-text-muted cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoSegment}
+                      onChange={(e) => setAutoSegment(e.target.checked)}
+                      className="accent-primary"
+                    />
+                    <span title="分析完对多页的合订谱跑窄带 OCR，把各声部的位置找出来。整批的成本按页数算。">
+                      乐谱分段
+                    </span>
+                  </label>
+                  {/*
+                   * 点火前的代价（#290 的验收标准之一：调用次数在导入前可见）。
+                   *
+                   * **报上界而不是「约」** —— 这个数由 `estimateAnalysisOcrCalls` 按常量算出、
+                   * 不依赖语料，写成确定的数才是真的；分段那边报「约」是因为每页窄带多大
+                   * 要渲染完才知道（见 segmentation.ts 的 `estimateOcrCalls`，那是另一件事）。
+                   */}
+                  <p className="text-label text-text-muted" data-testid="analysis-ocr-cost">
+                    分析最多 {estimateAnalysisOcrCalls(files.length, analyzeFullScore)} 次 OCR
+                    {analyzeFullScore ? "（多数文件 1 次）" : ""}
+                  </p>
+                </div>
+                {/*
+                 * ⚠️ 开关块**必须在操作行之外**（上面那一行），不能塞进来做左右两端分布：
+                 * CLAUDE.md #182 定的是操作行一律 `justify-end` 靠右下角、禁止左右两端分布，
+                 * 而窄屏上那么放还会让按钮组独占约 260px、把左边的成本行折成三四行。
+                 */}
+                <div className="flex justify-end gap-3">
+                  <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">
+                    取消
+                  </button>
+                  <button
+                    onClick={startAnalysis}
+                    disabled={files.length === 0}
+                    className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
+                  >
+                    开始分析 ({files.length} 个文件)
+                  </button>
                 </div>
               </>
             )}

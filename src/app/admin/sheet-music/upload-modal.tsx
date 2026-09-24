@@ -1282,10 +1282,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     f.status !== "done" &&
     // **已经切出来的段不算**：它们是产物不是源，对一段再跑分段没有意义
     !f.splitOf &&
-    needsSegmentation(
-      f.pageCount ?? null,
-      (f.sectionEdit ?? f.sectionGuess ?? "").trim() === FULL_SCORE_SECTION,
-    );
+    // 「是不是总谱」只认一个判据（`isFullScoreRow` 走 editsOf）—— 同文件里已经栽过
+    // 一次「三处各抄一份推导式」的跟头，不再抄第二份
+    needsSegmentation(f.pageCount ?? null, isFullScoreRow(f));
 
   /**
    * 真正会跑的判据：合格、**且还没跑过**。
@@ -1364,6 +1363,15 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
 
   /** 界面上显示的段（由起点页推出闭区间）。用户改过起点就按改过的算 */
   const segmentsOf = (f: UploadFile) => normalizeSegments(f.segmentStarts ?? [1], f.pageCount ?? 1);
+
+  /**
+   * **识别出多段、却还没拆** —— 界面上「确认这 N 段」按钮的显示条件，也是上传时
+   * 拦下这一行的条件。**必须是同一个函数**：分成两份写的时候，上传那侧漏掉 `segEligible`
+   * 就会造出一个死胡同 —— 跑完分段后把声部改成总谱，分段块整块不渲染（`segEligible` 为假），
+   * 而拦截还在，文案指着两个**屏幕上不存在**的按钮。实测过这条路径。
+   */
+  const unsplitSegments = (f: UploadFile) =>
+    segEligible(f) && segmentsOf(f).length > 1 && !f.splitOf;
 
   /** 段的起点数组（界面上编辑的那个），带兜底 */
   const startsOf = (f: UploadFile) => f.segmentStarts ?? [1];
@@ -1469,7 +1477,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   /**
    * **按段拆成多行**（#290 Step 2 的入口）。
    *
-   * 拆完之后每一段各占一行、各有各的声部/乐器/号，文件名各自生成（`圆号_1.pdf`），
+   * 拆完之后每一段各占一行、各有各的声部/乐器/号，文件名各自生成（`圆号1.pdf`），
    * 上传时源文件只读一次、逐段切出来各传各的。
    *
    * 号按**位置**预填（第 k 段 ↔ 第 k 个号）—— 这是文件名给的最强信号，
@@ -1764,8 +1772,13 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           // **分了段却没拆**就上传 = 悄悄只传一份出去，而屏幕上明明写着「共 N 段」——
           // 用户看到的分段结果等于白做。两条出路都写进文案里：拆开，或者合并成一段
           // （合并 = 「这本来就是一份」，那正是他不同意模型时的表达方式）。
-          const segCount = segmentsOf(uploadFile).length;
-          if (segCount > 1 && !uploadFile.splitOf) {
+          //
+          // ⚠️ 判据必须与**解除这个拦截的条件**同源：`segEligible` 为假的行（总谱、单页、
+          // 已 done）根本不渲染分段块，也就没有「确认这 N 段」「合并」可按 —— 拦下它就等于
+          // 把那一行锁死。实测过这条路径：跑完分段再把声部改成总谱 → 分段块消失、拦截还在，
+          // 唯一出路是改回声部或关窗重来（而「先跑分段、看段数再标总谱」正是人工标记的主用法）。
+          if (unsplitSegments(uploadFile)) {
+            const segCount = segmentsOf(uploadFile).length;
             updateFile(i, {
               error:
                 `这份谱识别出 ${segCount} 段 —— 请先点「确认这 ${segCount} 段」逐段确认；` +
@@ -1848,7 +1861,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
            * 闭包快照**，那一整个表达式恒为真 —— 于是「第 1 段传成功、第 2 段上传时断网」
            * 会把 4 段全标成失败，用户重试后第 1 段**又插一行** `sheet_music_files`
            * （同一个 storage 对象挂两行，详情页出现两份同名文件）。
-           * 实测过：重试后 `圆号_1.pdf` 确实出现两行。
+           * 实测过：重试后 `圆号_1.pdf`（当时的格式）确实出现两行。
            */
           const uploaded = new Set<number>();
           try {
@@ -2413,7 +2426,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                                   各有各的乐器/号，上传时源文件只读一次、逐段切出来各传各的。
                                   放在这里（而不是上传时才切）是因为**每一段都要人工确认乐器
                                   与号** —— 那是拆完之后才看得见的东西。 */}
-                              {f.segState === "done" && segmentsOf(f).length > 1 && (
+                              {unsplitSegments(f) && (
                                 <button
                                   onClick={() => splitIntoSegments(i)}
                                   // ⚠️ 这个按钮是**必经之路**，不是可选项：不点它就上传会被

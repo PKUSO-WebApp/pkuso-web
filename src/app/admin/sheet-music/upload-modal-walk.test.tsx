@@ -15,10 +15,12 @@ vi.setConfig({ testTimeout: 20000 });
  * 对抗测试用变异证明了**只钉两个纯函数不够**：把 `analyzeOne` 里那句
  * `if (analysisSettled(got)) return true;` 改回 `return analysisSettled(got)`
  * （后果是「整页」那张图变成死代码、旧版那条回退静默消失），
- * **原来的 12 条测试全绿、一条都不红** —— 因为没有任何测试执行到 `tryPage` 或那个循环。
+ * **原有那套测试全绿、一条都不红** —— 因为没有任何测试执行到 `tryPage` 或那个循环。
  * 这个文件补的就是它：断言的是「**哪几张图真的被送出去了**」，不是判据本身。
  *
- * 三个用例各钉住一条被对抗测试击破的缺陷，都做过变异验证（改回去即变红）。
+ * 下面每条用例都钉着一条被对抗测试击破的缺陷 —— 「整页也被送检」「OCR 读不出不终止
+ * 链条」「OCR 全失败保住页数」「LLM 失败 = 整行失败」—— 各自做过变异验证：
+ * 把对应的实现改回去，那一条就变红，且报错里能直接看出少送了哪张图。
  */
 
 /** 假页面 100×100pt、scale 3 → 300×300 的 canvas；`OCR_TARGET_LONGEST_SIDE=2400` 时
@@ -154,16 +156,13 @@ async function runAnalysis({ fullScore = false, ocrFail = false, llmFail = false
 }
 
 describe("升级链的集成：哪几张图真的被送出去了", () => {
-  it("标题区读出文字但 LLM 未识别 → **整页也被送检**（这是加总谱分析之前就有的回退）", async () => {
+  it("开关关着：标题区读出文字但 LLM 未识别 → **整页也送检**，且**到此为止**（第 2、3 页一张都不试）", async () => {
     await runAnalysis();
-    // 退化成 `return analysisSettled(got)` 时这里只剩 ["300x85"] —— 整页那条成了死代码
+    // 两条断言合成一条序列比对，因为这个序列同时证明两件事：
+    // - 退化成 `return analysisSettled(got)` 时只剩 ["300x85"]（整页那条成了死代码）
+    // - 多出第 2、3 页的份，就说明「开关关着 = 读完第一张有内容的页就走」被破坏了
     expect(h.ocr).toEqual([TITLE_TAG, FULL_TAG]);
     expect(h.llm).toHaveLength(2);
-  });
-
-  it("开关关着时**只读第一张有内容的页**（3 页的 PDF 也只试第 1 页）", async () => {
-    await runAnalysis();
-    expect(h.ocr).toEqual([TITLE_TAG, FULL_TAG]); // 没有第 2、3 页的份
   });
 
   it("OCR 读不出**不终止链条**：开着「分析总谱」时 3 页都会试（每页 2 张图）", async () => {

@@ -733,7 +733,7 @@ interface RenderedPage {
  * 不抛「全空白」错误：一页有内容的都没取到时调用方照样可以用文件名让 LLM 判断，
  * 原因通过 `warning` 带回界面（这类出版社扫描分谱常年踩 JBIG2 解码这一脚）。
  */
-export async function renderPagesForAnalysis(
+async function renderPagesForAnalysis(
   file: File,
   opts: {
     /** 最多看几页（**含**空白页）。到顶就停，不管有没有结论 —— 这是配额的上界 */
@@ -2492,7 +2492,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                 {/*
                  * ⚠️ 开关块**必须在操作行之外**（上面那一行），不能塞进来做左右两端分布：
                  * CLAUDE.md #182 定的是操作行一律 `justify-end` 靠右下角、禁止左右两端分布，
-                 * 而窄屏上那么放还会让按钮组独占约 260px、把左边的成本行折成三四行。
+                 * 而窄屏上那么放还会让按钮组吃掉小半行，把左边的成本行挤成好几行。
                  */}
                 <div className="flex justify-end gap-3">
                   <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">

@@ -846,7 +846,7 @@ const BAND_PCT = 0.12;
  */
 async function composeMosaic(
   bands: Blob[],
-): Promise<{ blob: Blob; width: number; height: number }> {
+): Promise<{ blob: Blob; width: number; height: number; bandHeight: number }> {
   const bitmaps: ImageBitmap[] = [];
   try {
     for (const b of bands) bitmaps.push(await createImageBitmap(b));
@@ -882,7 +882,11 @@ async function composeMosaic(
       canvas.toBlob(r, "image/jpeg", OCR_JPEG_QUALITY),
     );
     if (!blob) throw new Error("拼图编码失败");
-    return { blob, width: canvas.width, height: canvas.height };
+    // ⚠️ 把**本组自己的**窄带高一起返回：归页必须用它做除数，而不是用外面那个
+    // 文件级的 `bandHeight`（那是**最后渲染那一页**的高）。两者只在「整份文件等高」时相等，
+    // 而尺寸不同的页只要**落在组边界上**，组内断言就抓不到 —— 那时除数偏掉会把整组的文字
+    // 往后挤并夹进最后一页，而所有信号都是正常的（静默错答案）。
+    return { blob, width: canvas.width, height: canvas.height, bandHeight };
   } finally {
     bitmaps.forEach((b) => b.close());
     canvas.width = 0;
@@ -942,7 +946,7 @@ class SegmentationCancelled extends Error {
 async function renderNarrowBands(
   file: File,
   opts: { needed: (pageNo: number) => boolean; isCancelled: () => boolean },
-): Promise<{ pageCount: number; bands: Blob[]; bandHeight: number }> {
+): Promise<{ pageCount: number; bands: Blob[] }> {
   const pdfjs = await loadPdfJs();
   const data = new Uint8Array(await file.arrayBuffer());
   const task = pdfjs.getDocument({
@@ -954,8 +958,6 @@ async function renderNarrowBands(
   try {
     const pdf = await task.promise;
     const bands: Blob[] = [];
-    // 每条窄带的高度（同一份文件里恒定），拼图归页要用它把 top 换算成页号
-    let bandHeight = 0;
     for (let pageNo = 1; pageNo <= pdf.numPages; pageNo++) {
       // ⚠️ 关掉弹窗之后不能继续往下跑：一份 19 页的谱还有最多 19×65s 的 OCR 在排队，
       // 而配额是照烧的。**每个文件开头检查一次是不够的** —— 分段路径的粒度是
@@ -1002,7 +1004,6 @@ async function renderNarrowBands(
           // 存 **Blob** 而不是 base64：拼图要在 canvas 上把它们画出来（`createImageBitmap`
           // 直接吃 Blob），而 base64 还得先解回去。尺寸也现成（`blob.size`）—— 分组要靠它。
           bands.push(blob);
-          bandHeight = bandH;
         } finally {
           // 释放 canvas 后备存储（与 renderPageToJpeg 同一条规矩：scale 3 的一页约 20MB）。
           // 串行跑不会叠加，但「自己立的规矩自己不守」是最容易长出真泄漏的地方。
@@ -1015,7 +1016,7 @@ async function renderNarrowBands(
         page.cleanup();
       }
     }
-    return { pageCount: pdf.numPages, bands, bandHeight };
+    return { pageCount: pdf.numPages, bands };
   } finally {
     // ⚠️ `await task.promise` 必须在 try 里（上面）：加载失败（坏 PDF / 加密 /
     // 资源缺失）时它会抛，抛在 try 外面就**永远走不到销毁** —— 真 worker 模式下
@@ -1049,7 +1050,7 @@ async function ocrBandsForSegmentation(
   opts: { existing?: PageText[]; isCancelled: () => boolean },
 ): Promise<{ pageCount: number; pageTexts: PageText[]; failedPages: number[] }> {
   const have = new Map((opts.existing ?? []).map((p) => [p.page, p.text]));
-  const { pageCount, bands, bandHeight } = await renderNarrowBands(file, {
+  const { pageCount, bands } = await renderNarrowBands(file, {
     needed: (pageNo) => !have.has(pageNo),
     isCancelled: opts.isCancelled,
   });
@@ -1086,8 +1087,12 @@ async function ocrBandsForSegmentation(
       if (opts.isCancelled()) throw new SegmentationCancelled();
       const pages = group.map((k) => need[k]);
       try {
-        const { blob, height } = await composeMosaic(pages.map((page) => bands[page - 1]));
-        const texts = await ocrMosaic(blob, bandHeight, pages.length, height);
+        const {
+          blob,
+          height,
+          bandHeight: groupBandHeight,
+        } = await composeMosaic(pages.map((page) => bands[page - 1]));
+        const texts = await ocrMosaic(blob, groupBandHeight, pages.length, height);
         pages.forEach((page, k) => pageTexts.push({ page, text: texts[k] }));
       } catch {
         // 这一批没成：**退回逐页**（多花配额但结果一样对），而不是把整批发成空文本 ——

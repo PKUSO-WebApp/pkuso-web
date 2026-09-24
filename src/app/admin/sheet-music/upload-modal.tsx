@@ -264,6 +264,21 @@ function editsOf(f: UploadFile): {
 }
 
 /**
+ * 这一行现在是不是总谱。取值**只走 editsOf**（与落库、文件名、拦截、分段资格同一条判据）。
+ *
+ * ⚠️ **必须放在模块作用域**，不能放进组件体：`segEligible`（组件体里更早的位置）要调它，
+ * 而 `segTargets` 是渲染期立即求值的语句 —— 声明在使用点**之后**的 `const` 会在那一刻
+ * 撞上 TDZ，`ReferenceError: Cannot access 'isFullScoreRow' before initialization`，
+ * **选完文件整个弹窗就崩**。这种错 `tsc` 报不出来（嵌套闭包里的调用序它不判）、
+ * 纯模块测试也测不到（这个组件在仓库里没有渲染测试）。
+ */
+function isFullScoreRow(f: UploadFile): boolean {
+  // 走 editsOf 而不是抄一遍 `(sectionEdit ?? sectionGuess).trim()`：同文件里已经栽过
+  // 一次「三处各抄一份推导式」的跟头，总谱这条判据只能有一份。
+  return editsOf(f).section === FULL_SCORE_SECTION;
+}
+
+/**
  * 「模型给了号但没读懂」的**统一文案**。
  *
  * ⚠️ 必须只有一份：`uploadBlocker` 用它做**拦截原因**，`subPartsNotice` 用它做**行内提示**
@@ -1635,12 +1650,6 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     }
     updateFile(index, { sectionEdit: value, error: undefined });
   };
-
-  /**
-   * 这一行现在是不是总谱。取值**只走 editsOf**（与落库、文件名、拦截同一条判据）——
-   * 界面上凡是要按「总谱没有分声部号」处理的都问它。
-   */
-  const isFullScoreRow = (f: UploadFile) => editsOf(f).section === FULL_SCORE_SECTION;
 
   /**
    * 预览「这将存成什么名字」。乐器名为空时返回空串。

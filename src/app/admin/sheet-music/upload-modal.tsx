@@ -38,6 +38,7 @@ import {
   parseSubPartsInput,
   sanitizeSubParts,
 } from "./sub-parts";
+import { mapLinesToPages, MOSAIC_HARD_LIMIT_BYTES, packBands } from "./mosaic";
 import { duplicateNames, openForSplit, splitRefusal } from "./split-pdf";
 
 /**
@@ -756,8 +757,23 @@ const OCR_RETRY_DELAYS = [1200, 3500];
 const OCR_TRANSIENT =
   /E5\d\d|HTTP 5\d\d|timeout|timed out|Failed to fetch|Failed to send a request|AbortError/i;
 
-/** 首页图片交给 ocr-analyze 转发 OCR.space；瞬时错误自动重试，最终失败抛错并带上体积便于排查 */
-async function runOcr(imageBase64: string): Promise<string> {
+/**
+ * 一次 `ocr-analyze` 调用（瞬时错误自动重试），返回**原始载荷**。
+ *
+ * 拆出这一层是为了让**拼图**那条路复用同一套重试/超时/错误文案 —— 它要多拿
+ * `pages[0].lines`（带坐标的行），而首页那条路只要 `text`。
+ *
+ * `overlay: true` 时上游才会回坐标；`shape.ts` 明确说过坐标的**量纲由调用方判定**
+ * （见 `mosaic.ts` 的 `mapLinesToPages`），所以这里原样透传，不做任何猜测。
+ */
+async function invokeOcr(
+  imageBase64: string,
+  opts: { overlay?: boolean; what: string },
+): Promise<{
+  text: string;
+  lines: Array<{ top: number; text: string }>;
+  upstreamHasOverlay: boolean;
+}> {
   const kb = base64Kb(imageBase64);
   let lastError = "";
 
@@ -765,27 +781,48 @@ async function runOcr(imageBase64: string): Promise<string> {
     if (attempt > 0) await sleep(OCR_RETRY_DELAYS[attempt - 1]);
 
     const { data, error } = await supabase.functions.invoke("ocr-analyze", {
-      body: { file_base64: imageBase64, mime_type: "image/jpeg" },
+      body: {
+        file_base64: imageBase64,
+        mime_type: "image/jpeg",
+        ...(opts.overlay ? { overlay: true } : {}),
+      },
       timeout: OCR_TIMEOUT_MS,
     });
 
     if (error) {
       lastError = await invokeErrorDetail(error);
       if (OCR_TRANSIENT.test(lastError) && attempt < OCR_RETRY_DELAYS.length) continue;
-      throw new Error(`OCR 请求失败（首页图 ${kb}KB）: ${lastError}`);
+      throw new Error(`OCR 请求失败（${opts.what} ${kb}KB）: ${lastError}`);
     }
     // 服务端 200 且 success：即便一个字都没读到也算成功，返回空串。
     // 这里**不能抛错** —— 调用方靠「文本去空白后 < 5 字符」触发回退整页，
     // 抛错会让最关键的那种情况（裁切条完全空白）根本走不到回退分支，
     // 而这正是「切错位置」最常见的表现。
-    if (data?.success) return String(data.text ?? "");
+    if (data?.success) {
+      const lines = Array.isArray(data.pages?.[0]?.lines)
+        ? (data.pages[0].lines as Array<{ top?: unknown; text?: unknown }>).map((l) => ({
+            top: Number(l.top),
+            text: String(l.text ?? ""),
+          }))
+        : [];
+      return {
+        text: String(data.text ?? ""),
+        lines,
+        upstreamHasOverlay: data.pages?.[0]?.upstreamHasOverlay === true,
+      };
+    }
 
     // success 为假：这张图确实没有可读文本，重试无意义
     lastError = `服务端 success=${data?.success} 但未返回文字`;
     break;
   }
 
-  throw new Error(`OCR 未识别到文字（首页图 ${kb}KB）: ${lastError}`);
+  throw new Error(`OCR 未识别到文字（${opts.what} ${kb}KB）: ${lastError}`);
+}
+
+/** 首页图片交给 ocr-analyze 转发 OCR.space；瞬时错误自动重试，最终失败抛错并带上体积便于排查 */
+async function runOcr(imageBase64: string): Promise<string> {
+  return (await invokeOcr(imageBase64, { what: "首页图" })).text;
 }
 
 /**
@@ -800,6 +837,70 @@ async function runOcr(imageBase64: string): Promise<string> {
  * 每加一份语料就错一次。
  */
 const BAND_PCT = 0.12;
+
+/**
+ * 把若干条窄带**垂直叠成一张长图**。返回长图与它的高度（归页要用）。
+ *
+ * 拼图尺寸 ≈ 各窄带之和（实测 0.95~0.99），所以调用方能在合成前就分好组；
+ * 这里再返回真实字节数，让调用方**提交前**能核一次（合成不花 OCR 配额）。
+ */
+async function composeMosaic(
+  bands: Blob[],
+): Promise<{ blob: Blob; width: number; height: number }> {
+  const bitmaps: ImageBitmap[] = [];
+  for (const b of bands) bitmaps.push(await createImageBitmap(b));
+  const width = Math.max(...bitmaps.map((b) => b.width));
+  const bandHeight = bitmaps[0].height;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = bandHeight * bitmaps.length;
+  try {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("无法创建 canvas 上下文");
+    // 与单页窄带同一条理由：透明像素编码成 JPEG 会合成到黑底
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    bitmaps.forEach((bmp, i) => ctx.drawImage(bmp, 0, i * bandHeight));
+    const blob = await new Promise<Blob | null>((r) =>
+      canvas.toBlob(r, "image/jpeg", OCR_JPEG_QUALITY),
+    );
+    if (!blob) throw new Error("拼图编码失败");
+    return { blob, width: canvas.width, height: canvas.height };
+  } finally {
+    bitmaps.forEach((b) => b.close());
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+}
+
+/**
+ * 一张拼图 → 各页文本。**坐标不可用时抛错**，让调用方退回逐页 OCR ——
+ * 那比「把文字归到错页」或「全归第 1 页」好：后两者都是看起来完全正常的错答案。
+ */
+async function ocrMosaic(
+  blob: Blob,
+  bandHeight: number,
+  pageCount: number,
+  mosaicHeight: number,
+): Promise<string[]> {
+  // 提交前核一次真实大小（不花配额）：超了当场抛，让调用方退回逐页 —— 发出去也是白费
+  if (blob.size > MOSAIC_HARD_LIMIT_BYTES) {
+    throw new Error(`拼图 ${Math.round(blob.size / 1024)}KB 超上限`);
+  }
+  const { lines, text } = await invokeOcr(await blobToBase64(blob), {
+    overlay: true,
+    what: `拼图 ${pageCount} 页`,
+  });
+  const mapped = mapLinesToPages(lines, bandHeight, pageCount, mosaicHeight);
+  if (!mapped) {
+    throw new Error(`拼图坐标不可用（${lines.length} 行）`);
+  }
+  // 坐标都在，但一行都没归到任何页 —— 也当失败（否则整批会变成 N 个空串）
+  if (mapped.every((t) => !t.trim()) && text.trim()) {
+    throw new Error("拼图坐标归页结果为空");
+  }
+  return mapped;
+}
 
 /** 用户关掉弹窗后中断 —— **不是失败**，不要落到 `segState: "error"` */
 class SegmentationCancelled extends Error {
@@ -824,7 +925,7 @@ class SegmentationCancelled extends Error {
 async function renderNarrowBands(
   file: File,
   opts: { needed: (pageNo: number) => boolean; isCancelled: () => boolean },
-): Promise<{ pageCount: number; bands: string[] }> {
+): Promise<{ pageCount: number; bands: Blob[]; bandHeight: number }> {
   const pdfjs = await loadPdfJs();
   const data = new Uint8Array(await file.arrayBuffer());
   const task = pdfjs.getDocument({
@@ -835,7 +936,9 @@ async function renderNarrowBands(
   });
   try {
     const pdf = await task.promise;
-    const bands: string[] = [];
+    const bands: Blob[] = [];
+    // 每条窄带的高度（同一份文件里恒定），拼图归页要用它把 top 换算成页号
+    let bandHeight = 0;
     for (let pageNo = 1; pageNo <= pdf.numPages; pageNo++) {
       // ⚠️ 关掉弹窗之后不能继续往下跑：一份 19 页的谱还有最多 19×65s 的 OCR 在排队，
       // 而配额是照烧的。**每个文件开头检查一次是不够的** —— 分段路径的粒度是
@@ -844,7 +947,7 @@ async function renderNarrowBands(
       // 已经在手里的页不重渲染（失败重试只补缺的页）。占位空串保住
       // `bands.length === pageCount` 这个对应关系，调用方按页号取。
       if (!opts.needed(pageNo)) {
-        bands.push("");
+        bands.push(new Blob([])); // 占位，保住 bands.length === pageCount
         continue;
       }
       const page = await pdf.getPage(pageNo);
@@ -879,14 +982,10 @@ async function renderNarrowBands(
             band.toBlob(r, "image/jpeg", OCR_JPEG_QUALITY),
           );
           if (!blob) throw new Error(`第 ${pageNo} 页窄带编码失败`);
-          const buf = new Uint8Array(await blob.arrayBuffer());
-          // 分段转成字符串再 btoa：一次 `String.fromCharCode(...buf)` 在大图上会撞
-          // 「参数过多」的栈上限，所以按 32KB 切
-          let bin = "";
-          for (let i = 0; i < buf.length; i += 0x8000) {
-            bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-          }
-          bands.push(btoa(bin));
+          // 存 **Blob** 而不是 base64：拼图要在 canvas 上把它们画出来（`createImageBitmap`
+          // 直接吃 Blob），而 base64 还得先解回去。尺寸也现成（`blob.size`）—— 分组要靠它。
+          bands.push(blob);
+          bandHeight = bandH;
         } finally {
           // 释放 canvas 后备存储（与 renderPageToJpeg 同一条规矩：scale 3 的一页约 20MB）。
           // 串行跑不会叠加，但「自己立的规矩自己不守」是最容易长出真泄漏的地方。
@@ -899,7 +998,7 @@ async function renderNarrowBands(
         page.cleanup();
       }
     }
-    return { pageCount: pdf.numPages, bands };
+    return { pageCount: pdf.numPages, bands, bandHeight };
   } finally {
     // ⚠️ `await task.promise` 必须在 try 里（上面）：加载失败（坏 PDF / 加密 /
     // 资源缺失）时它会抛，抛在 try 外面就**永远走不到销毁** —— 真 worker 模式下
@@ -933,13 +1032,15 @@ async function ocrBandsForSegmentation(
   opts: { existing?: PageText[]; isCancelled: () => boolean },
 ): Promise<{ pageCount: number; pageTexts: PageText[]; failedPages: number[] }> {
   const have = new Map((opts.existing ?? []).map((p) => [p.page, p.text]));
-  const { pageCount, bands } = await renderNarrowBands(file, {
+  const { pageCount, bands, bandHeight } = await renderNarrowBands(file, {
     needed: (pageNo) => !have.has(pageNo),
     isCancelled: opts.isCancelled,
   });
 
   const pageTexts: PageText[] = [];
   const failedPages: number[] = [];
+  /** 还需要 OCR 的页号（已有的页已经在 `pageTexts` 里） */
+  const need: number[] = [];
   for (let i = 0; i < pageCount; i++) {
     const page = i + 1;
     const known = have.get(page);
@@ -948,14 +1049,40 @@ async function ocrBandsForSegmentation(
       continue;
     }
     if (opts.isCancelled()) throw new SegmentationCancelled();
-    // 单页 OCR 失败**不塞空串**：空串在后端等价于「这一页是空白的」，而这里的意思是
-    // 「这一页没取到」—— 两者完全不同。页面从 `pages` 里缺席时后端会明确告诉模型
-    // 「第 X 页没取到文本，不要在那几页上给切点」，那才是对的降级。
-    // （实测：空文本页承载不住任何切点，所以少发一页只会**少切**，方向安全。）
-    try {
-      pageTexts.push({ page, text: await runOcr(bands[i]) });
-    } catch {
-      failedPages.push(page);
+    // 剩下的页交给下面的拼图批次统一处理（`need` 收集页号，循环后按批跑）
+    need.push(page);
+  }
+
+  /**
+   * **拼图批次**：把待 OCR 的窄带按大小分组，每组合成一张长图**一次**调用，
+   * 再用 overlay 坐标把文字分回各页（`mosaic.ts`；探针数据见 #290 的评论）。
+   *
+   * 一次 load 全部窄带 → 一组一次调用 → 页文本的形状与逐页路线**完全一致**，
+   * 所以后面（`segment-parts`、失败页处理、成本显示）一行都不用改。
+   *
+   * 分组用**渲染时就拿到的大小**（`blob.size`），实测「拼图 ≤ 各窄带之和」，所以
+   * 预算是安全上界；合成后还会拿真实字节数再核一次（不花 OCR 配额）。
+   */
+  if (need.length > 0) {
+    const groups = packBands(need.map((page) => bands[page - 1].size));
+    for (const group of groups) {
+      if (opts.isCancelled()) throw new SegmentationCancelled();
+      const pages = group.map((k) => need[k]);
+      try {
+        const { blob, height } = await composeMosaic(pages.map((page) => bands[page - 1]));
+        const texts = await ocrMosaic(blob, bandHeight, pages.length, height);
+        pages.forEach((page, k) => pageTexts.push({ page, text: texts[k] }));
+      } catch {
+        // 这一批没成：**退回逐页**（多花配额但结果一样对），而不是把整批发成空文本 ——
+        // 「拿不到文本」与「这一页是空白页」在后端是两件事（见下面那段说明）。
+        for (const page of pages) {
+          try {
+            pageTexts.push({ page, text: await runOcr(await blobToBase64(bands[page - 1])) });
+          } catch {
+            failedPages.push(page);
+          }
+        }
+      }
     }
   }
 
@@ -2326,7 +2453,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                                 <span className="text-xs text-text-muted">分段：</span>
                                 {f.segState === "running" && (
                                   <span className="text-xs text-text-muted">
-                                    识别中…（至少 {costOf(f)} 次 OCR）
+                                    识别中…（最多 {costOf(f)} 次 OCR）
                                   </span>
                                 )}
                                 {f.segState === "error" && (
@@ -2514,7 +2641,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                 >
                   {segTargets.some(({ f }) => f.segState === "running")
                     ? "识别分段中..."
-                    : `识别分段（${segTargets.length} 份，至少 ${segCost} 次 OCR）`}
+                    : `识别分段（${segTargets.length} 份，最多 ${segCost} 次 OCR）`}
                 </button>
               )}
               <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">

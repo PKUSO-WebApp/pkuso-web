@@ -1,3 +1,4 @@
+import { MOSAIC_MAX_PAGES } from "./mosaic";
 /**
  * 合订谱分段的纯逻辑（pkuso-web#290 Step 1）。
  *
@@ -24,14 +25,18 @@
 /**
  * 一份合订谱的页数 → 跑分段要几次 OCR。`done` = 已经在手里的页数（重试时不为 0）。
  *
- * ⚠️ 这个数是**下界**：每页在瞬时故障时会重试（次数见 `upload-modal.tsx` 的
- * `OCR_RETRY_DELAYS`，那里才是唯一的定义处），所以真实调用数可以到 N × 尝试次数。
- * 给用户看的数只承诺下界，界面上不要写成「没有别的调用」。
+ * ⚠️ 这是**上界**（拼图分组只会让它更少），但**不是精确值**：单张拼图装多少页取决于
+ * 每页窄带的真实大小。另外每张拼图在瞬时故障时会重试（次数见 `upload-modal.tsx` 的
+ * `OCR_RETRY_DELAYS`），所以真实调用数可能超过它 —— 界面上写「最多 N 次」是准的。
  */
 export function estimateOcrCalls(pageCount: number, done = 0): number {
   if (!Number.isSafeInteger(pageCount) || pageCount < 1) return 0;
   const missing = pageCount - (Number.isSafeInteger(done) && done > 0 ? done : 0);
-  return missing > 0 ? missing : 0;
+  if (missing <= 0) return 0;
+  // 窄带是**拼图**后一次 OCR（见 `mosaic.ts`）：一张长图最多 `MOSAIC_MAX_PAGES` 页，
+  // 所以一份 N 页的谱是 ⌈N / 每张页数⌉ 次。这是**上界** —— 实际按各页真实大小贪心分组，
+  // 只会更少（探针：12 页一张 254KB，远没到预算）。文案因此说「最多 N 次」。
+  return Math.ceil(missing / MOSAIC_MAX_PAGES);
 }
 
 /** 一批文件还要跑多少次 OCR —— 导入前给用户看的那个数 */

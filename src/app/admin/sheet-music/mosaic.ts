@@ -44,6 +44,23 @@ export const MOSAIC_BUDGET_BYTES = 700 * 1024;
 export const MOSAIC_MAX_PAGES = 24;
 
 /**
+ * 分组用的**保守每页字节**：成本估算拿它把字节预算折成「每张几页」。
+ *
+ * ⚠️ 为什么必须有：`MOSAIC_MAX_PAGES` 只是**页数**上限，真实分组是「700KB **或** 24 页，
+ * 先到先算」。窄带偏大时（页更宽 / 扫描噪声多）字节先到 —— 只按 24 页估算会**低报**
+ * （实测：每页 40KB 时 100 页真实要 6 次而不是 5 次；每页 1.4MB 时 30 页要 30 次而不是 2 次），
+ * 而「调用次数在导入前可见」正是 #290 的验收标准。取 70KB（实测窄带的上限档位）
+ * → 每张约 10 页，宁可高报。
+ */
+export const MOSAIC_TYPICAL_BAND_BYTES = 70 * 1024;
+
+/** 成本估算用的**每张页数**：页数上限与字节预算两条线里更紧的那条 */
+export const MOSAIC_PAGES_PER_CALL = Math.max(
+  1,
+  Math.min(MOSAIC_MAX_PAGES, Math.floor(MOSAIC_BUDGET_BYTES / MOSAIC_TYPICAL_BAND_BYTES)),
+);
+
+/**
  * **硬上限**：免费档一次 1MB。分组是按估算来的（安全上界），但合成之后拿到的是真实字节数 ——
  * 提交前再核一次，超了就让调用方退回逐页 OCR，而不是发一个注定被拒的请求。
  * （合成不花 OCR 配额，所以这次核对是免费的。）
@@ -108,6 +125,11 @@ export function mapLinesToPages(
   if (!Number.isFinite(bandHeight) || bandHeight <= 0) return null;
   if (!Number.isSafeInteger(pageCount) || pageCount < 1) return null;
   if (lines.length === 0) return null;
+  // ⚠️ **非有限坐标一律整张弃权**：`NaN` 会污染 `Math.max/min`，让下面两条判据**全都失效**
+  //（`NaN <= 1.5` 与 `NaN > h*1.1` 都是 false），然后 `Math.floor(NaN/bandH) = NaN` →
+  // `pages[NaN]` 是 undefined → 抛 TypeError。那一下会被调用方的 catch 吞掉、退回逐页，
+  // 结果虽对，但「1 次调用变成 N 次」的原因在界面上完全看不见。宁可在这里显式弃权。
+  if (lines.some((l) => !Number.isFinite(l.top))) return null;
   const maxTop = Math.max(...lines.map((l) => l.top));
   const minTop = Math.min(...lines.map((l) => l.top));
   // 归一化坐标（0~1）：全部行都会被算进第 1 页 —— 必须当场认出这个形态

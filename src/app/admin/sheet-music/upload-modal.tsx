@@ -848,7 +848,24 @@ async function composeMosaic(
   bands: Blob[],
 ): Promise<{ blob: Blob; width: number; height: number }> {
   const bitmaps: ImageBitmap[] = [];
-  for (const b of bands) bitmaps.push(await createImageBitmap(b));
+  try {
+    for (const b of bands) bitmaps.push(await createImageBitmap(b));
+    // ⚠️ **本组必须等高**。`bandH` 是**逐页**算的（`round(canvas.height * 0.12)`，而 canvas
+    // 高度取决于该页自己的尺寸与缩放）—— 同一份合订谱里混了横排插页 / 不同扫描仪的页时
+    // 就不等高。那时叠图步长（第一条的高）与归页除数（`renderNarrowBands` 返回的高）会对不上，
+    // 后果是**把两页的文字并进一页、另一页留空** —— 看起来完全合法的错答案。
+    // 判据落在这里：不等高时**唯一的正确做法是不拼图**（抛错 → 调用方退回逐页 OCR，结果一样对）。
+    // 宽不等没关系：叠图按 x=0 画，右边露白不影响识别，所以只判高。
+    const heights = new Set(bitmaps.map((b) => b.height));
+    if (heights.size !== 1) {
+      throw new Error(`窄带高度不一致（${[...heights].join("/")}）—— 不拼图，退回逐页`);
+    }
+  } catch (err) {
+    // 解码循环也在这个 try 里：第 k 条失败时前 k−1 个 ImageBitmap 必须 close
+    //（每个约 1788×285×4B ≈ 2MB 的解码后像素，一批最多几十 MB）
+    bitmaps.forEach((b) => b.close());
+    throw err;
+  }
   const width = Math.max(...bitmaps.map((b) => b.width));
   const bandHeight = bitmaps[0].height;
   const canvas = document.createElement("canvas");
@@ -1076,6 +1093,9 @@ async function ocrBandsForSegmentation(
         // 这一批没成：**退回逐页**（多花配额但结果一样对），而不是把整批发成空文本 ——
         // 「拿不到文本」与「这一页是空白页」在后端是两件事（见下面那段说明）。
         for (const page of pages) {
+          // ⚠️ 取消点不能只在每组开头：这一批最多 24 页，关窗后最坏再烧 24×65s 的 OCR，
+          // 而配额是照烧的（本文件早为「逐页循环没有取消点」栽过一次）
+          if (opts.isCancelled()) throw new SegmentationCancelled();
           try {
             pageTexts.push({ page, text: await runOcr(await blobToBase64(bands[page - 1])) });
           } catch {
@@ -2453,7 +2473,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                                 <span className="text-xs text-text-muted">分段：</span>
                                 {f.segState === "running" && (
                                   <span className="text-xs text-text-muted">
-                                    识别中…（最多 {costOf(f)} 次 OCR）
+                                    识别中…（约 {costOf(f)} 次 OCR）
                                   </span>
                                 )}
                                 {f.segState === "error" && (
@@ -2641,7 +2661,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                 >
                   {segTargets.some(({ f }) => f.segState === "running")
                     ? "识别分段中..."
-                    : `识别分段（${segTargets.length} 份，最多 ${segCost} 次 OCR）`}
+                    : `识别分段（${segTargets.length} 份，约 ${segCost} 次 OCR）`}
                 </button>
               )}
               <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">

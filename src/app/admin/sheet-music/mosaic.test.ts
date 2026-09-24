@@ -4,6 +4,8 @@ import {
   mapLinesToPages,
   MOSAIC_BUDGET_BYTES,
   MOSAIC_MAX_PAGES,
+  MOSAIC_PAGES_PER_CALL,
+  MOSAIC_TYPICAL_BAND_BYTES,
   packBands,
 } from "./mosaic";
 
@@ -111,5 +113,30 @@ describe("坐标归页", () => {
       "",
       "X",
     ]);
+  });
+});
+
+describe("成本估算用的保守每页字节（两条线里更紧的那条）", () => {
+  it("每张页数 = min(页数上限, 预算 ÷ 保守每页字节)，且写成字面量", () => {
+    // 「不写死数字」这条习惯在被测的就是那个数字时不成立（见 memory 的验证陷阱）
+    expect(MOSAIC_TYPICAL_BAND_BYTES).toBe(70 * 1024);
+    expect(MOSAIC_PAGES_PER_CALL).toBe(10); // min(24, floor(700/70)) = 10
+    expect(MOSAIC_PAGES_PER_CALL).toBeLessThanOrEqual(MOSAIC_MAX_PAGES);
+  });
+
+  it("**非有限坐标整张弃权** —— NaN 曾让两条量纲判据全失效、最后抛 TypeError 被 catch 掩盖", () => {
+    expect(mapLinesToPages([{ top: NaN, text: "X" }], 288, 3, 864)).toBeNull();
+    expect(
+      mapLinesToPages(
+        [
+          { top: 10, text: "A" },
+          { top: NaN, text: "B" },
+        ],
+        288,
+        3,
+        864,
+      ),
+    ).toBeNull();
+    expect(mapLinesToPages([{ top: Infinity, text: "X" }], 288, 3, 864)).toBeNull();
   });
 });

@@ -23,18 +23,21 @@ const covers = (segs: Array<{ from: number; to: number }>, n: number) =>
   segs.every((s, i) => s.from <= s.to && (i === 0 || s.from === segs[i - 1].to + 1));
 
 describe("成本可见（验收标准：OCR 调用次数在导入前可见）", () => {
-  it("**拼图后一份 19 页的谱只要 1 次 OCR**（一张长图装得下）", () => {
-    expect(estimateTotalOcrCalls([{ pageCount: 19, eligible: true }])).toBe(1);
+  it("**拼图后一份 19 页的谱是 2 次 OCR**（按保守估算；实际常是 1 次）", () => {
+    // 估算刻意保守（每页 70KB、每张 10 页）：窄带偏大时分组会更多，
+    // 少报配额比多报糟 —— 所以界面上写「约 N 次」而不是「最多/至少」
+    expect(estimateTotalOcrCalls([{ pageCount: 19, eligible: true }])).toBe(2);
   });
 
-  it("超过单张上限才分张 —— 这是**上界**（实际按真实大小贪心分组只会更少）", () => {
-    expect(estimateOcrCalls(24)).toBe(1);
-    expect(estimateOcrCalls(25)).toBe(2);
-    expect(estimateOcrCalls(116)).toBe(5); // Egmont 那批：116 次 → 5 次
+  it("按「页数上限与字节预算里更紧的那条」估 —— 界面上写的是「约」", () => {
+    // 每张 10 页：700KB 预算 ÷ 保守每页 70KB = 10，比页数上限 24 更紧
+    expect(estimateOcrCalls(10)).toBe(1);
+    expect(estimateOcrCalls(11)).toBe(2);
+    expect(estimateOcrCalls(116)).toBe(12);
   });
 
   it("已经在手里的页不再重烧 —— 失败重试时按**缺的页**算", () => {
-    expect(estimateOcrCalls(25, 24)).toBe(1); // 缺 1 页 → 1 次
+    expect(estimateOcrCalls(25, 24)).toBe(1); // 缺 1 页 → 1 次（一张装得下）
     // 拿到的比页数还多（不该发生）不能算出负数
     expect(estimateOcrCalls(19, 25)).toBe(0);
   });
@@ -46,7 +49,7 @@ describe("成本可见（验收标准：OCR 调用次数在导入前可见）", 
         { pageCount: 3, eligible: false },
         { pageCount: null, eligible: true },
       ]),
-    ).toBe(1); // 只有那 19 页那份算，且拼图后是 1 次
+    ).toBe(2); // 只有那 19 页那份算（拼图后 2 次）
   });
 
   it("空列表是 0", () => {

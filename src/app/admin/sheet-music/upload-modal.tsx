@@ -234,23 +234,32 @@ function editsOf(f: UploadFile): {
   subPartsUnread?: string;
   subPartsOverCap?: number;
 } {
-  const parsed =
-    f.subPartsEditText !== undefined
+  const section = (f.sectionEdit ?? f.sectionGuess ?? "").trim();
+  // 总谱**没有分声部可言**：它不是「第几号」，而是「整份都在里面」。所以 section 是总谱时
+  // 一律把号当成空 —— 用户填什么、模型猜什么、模型没读懂什么，都不该在这里冒出拦截
+  // （分声部输入框在这个状态下也是禁用的，见渲染处）。
+  const isFullScore = section === FULL_SCORE_SECTION;
+  const parsed = isFullScore
+    ? { value: [] as number[] }
+    : f.subPartsEditText !== undefined
       ? parseSubPartsInput(f.subPartsEditText)
       : { value: f.subPartsGuess ?? [] };
   return {
-    section: (f.sectionEdit ?? f.sectionGuess ?? "").trim(),
+    section,
     instrument: (f.instrumentEdit ?? f.instrumentGuess ?? "").trim(),
     subParts: parsed.value,
-    subPartsInvalid: parsed.invalid,
+    subPartsInvalid: isFullScore ? undefined : parsed.invalid,
     // 「模型给了号、后端没读懂、用户还没表态」—— 见 uploadBlocker 里为什么必须拦。
     // ⚠️ 条件里的 `guess 为空` 不能省：小提琴那类声部会在模型给不出号时用声部推导
     // 补出 [1]/[2]（**同时**带着 subPartsRaw），那种行**有号**，拦下就是误伤。
     subPartsUnread:
-      f.subPartsEditText === undefined && (f.subPartsGuess ?? []).length === 0 && f.subPartsRaw
+      !isFullScore &&
+      f.subPartsEditText === undefined &&
+      (f.subPartsGuess ?? []).length === 0 &&
+      f.subPartsRaw
         ? f.subPartsRaw
         : undefined,
-    subPartsOverCap: f.subPartsOverCap,
+    subPartsOverCap: isFullScore ? undefined : f.subPartsOverCap,
   };
 }
 
@@ -1603,8 +1612,27 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   };
 
   const handleSectionChange = (index: number, value: string) => {
+    // 选成总谱 = 「整份都在里面」：乐器名与分声部都跟着定下来，不该再让用户填两个
+    // 说不通的东西（总谱没有「第几号」）。切回别的声部时不动它们 —— 用户可以用那个
+    // 「重置为识别结果」的 X 回到模型给的值。
+    if (value === FULL_SCORE_SECTION) {
+      updateFile(index, {
+        sectionEdit: value,
+        instrumentEdit: FULL_SCORE_SECTION,
+        // 空串是**显式表态**「没有号」（与「没编辑过」不同），editsOf 会据此给出 `[]`
+        subPartsEditText: "",
+        error: undefined,
+      });
+      return;
+    }
     updateFile(index, { sectionEdit: value, error: undefined });
   };
+
+  /**
+   * 这一行现在是不是总谱。取值**只走 editsOf**（与落库、文件名、拦截同一条判据）——
+   * 界面上凡是要按「总谱没有分声部号」处理的都问它。
+   */
+  const isFullScoreRow = (f: UploadFile) => editsOf(f).section === FULL_SCORE_SECTION;
 
   /**
    * 预览「这将存成什么名字」。乐器名为空时返回空串。
@@ -1730,6 +1758,19 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           const blocker = uploadBlocker({ section, instrument, subPartsInvalid, subPartsUnread });
           if (blocker) {
             updateFile(i, { error: blocker });
+            return false;
+          }
+
+          // **分了段却没拆**就上传 = 悄悄只传一份出去，而屏幕上明明写着「共 N 段」——
+          // 用户看到的分段结果等于白做。两条出路都写进文案里：拆开，或者合并成一段
+          // （合并 = 「这本来就是一份」，那正是他不同意模型时的表达方式）。
+          const segCount = segmentsOf(uploadFile).length;
+          if (segCount > 1 && !uploadFile.splitOf) {
+            updateFile(i, {
+              error:
+                `这份谱识别出 ${segCount} 段 —— 请先点「确认这 ${segCount} 段」逐段确认；` +
+                `如果它其实是一份，用「合并」把段并成一段`,
+            });
             return false;
           }
           // 这一行能往下走了，把上一次的拦截/失败提示清掉，免得文案留在界面上说谎
@@ -2176,10 +2217,19 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                             </label>
                             <input
                               type="text"
-                              value={f.subPartsEditText ?? formatSubParts(f.subPartsGuess ?? [])}
+                              // 总谱没有「第几号」：框里直接显示「总谱」并禁用，
+                              // 比留一个填什么都说不通的输入框清楚
+                              value={
+                                isFullScoreRow(f)
+                                  ? FULL_SCORE_SECTION
+                                  : (f.subPartsEditText ?? formatSubParts(f.subPartsGuess ?? []))
+                              }
                               onChange={(e) => handleSubPartsChange(i, e.target.value)}
                               placeholder="号，如 1,2"
-                              disabled={phase === "uploading"}
+                              disabled={phase === "uploading" || isFullScoreRow(f)}
+                              title={
+                                isFullScoreRow(f) ? "总谱是整份，没有分声部号" : "分声部号，如 1,2"
+                              }
                               className="px-1.5 py-0.5 text-sm bg-muted border border-border rounded w-16 shrink-0 disabled:opacity-50"
                             />
                             {/* 「没有号」——**逃生口**，只在模型给了号却没读懂时出现。
@@ -2366,6 +2416,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                               {f.segState === "done" && segmentsOf(f).length > 1 && (
                                 <button
                                   onClick={() => splitIntoSegments(i)}
+                                  // ⚠️ 这个按钮是**必经之路**，不是可选项：不点它就上传会被
+                                  // 拦下（见 uploadOne 里的同源判据），因为「共 N 段」而传出去
+                                  // 一份，等于把用户确认过的分段结果整个丢掉。
                                   // ⚠️ `segBusy` 不能漏：拆分**会改变 files 的长度**，而分段
                                   // 的 worker 手里攥着点击那一刻的下标 —— 两份合订谱一起跑时，
                                   // 先跑完的那份被拆开，另一份的结果就会写进**它的某一段**，
@@ -2375,7 +2428,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                                   className="px-2 py-0.5 text-xs border border-border rounded shrink-0 hover:text-primary disabled:opacity-50"
                                   title="按这些边界把文件拆成多行，逐段确认乐器与分声部号；上传时自动切开，不会重复 OCR"
                                 >
-                                  按这 {segmentsOf(f).length} 段拆分
+                                  确认这 {segmentsOf(f).length} 段
                                 </button>
                               )}
                             </div>

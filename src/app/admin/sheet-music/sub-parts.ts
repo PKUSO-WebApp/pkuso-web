@@ -46,7 +46,11 @@ export function formatSubParts(subParts: number[]): string {
  */
 export function generateFileName(instrument: string, subParts: number[]): string {
   const base = instrument.trim();
-  if (subParts.length > 0) return `${base}_${formatSubParts(subParts)}.pdf`;
+  // ⚠️ 号与乐器名之间**不加下划线**（用户定的格式：`双簧管1,2.pdf`）。
+  // 历史行里有 `圆号_1.pdf` 那种写法，那是回填迁移解析用的格式 ——
+  // 迁移已经跑完，运行时代码**不解析文件名里的号**（号有自己的列 `sub_parts`），
+  // 所以两种格式并存不影响任何逻辑，只是新文件统一成不带下划线的。
+  if (subParts.length > 0) return `${base}${formatSubParts(subParts)}.pdf`;
   return `${base}.pdf`;
 }
 

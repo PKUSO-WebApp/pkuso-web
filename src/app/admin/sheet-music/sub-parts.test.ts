@@ -149,19 +149,19 @@ describe("generateFileName", () => {
   it("**一份文件覆盖多个分声部时把号全列出来**（本 issue 的核心验收点）", () => {
     // IMSLP 的 Horn_1,_2,_3,_4.pdf。只写第一个号正是要消灭的那类错：
     // 把「含 1、2、3、4」记成「只有 1」。
-    expect(generateFileName("圆号", [1, 2, 3, 4])).toBe("圆号_1,2,3,4.pdf");
-    expect(generateFileName("小提琴", [1, 2])).toBe("小提琴_1,2.pdf");
-    expect(generateFileName("圆号", [1])).toBe("圆号_1.pdf");
+    expect(generateFileName("圆号", [1, 2, 3, 4])).toBe("圆号1,2,3,4.pdf");
+    expect(generateFileName("小提琴", [1, 2])).toBe("小提琴1,2.pdf");
+    expect(generateFileName("圆号", [1])).toBe("圆号1.pdf");
   });
 
   it("乐器名首尾空白不进文件名", () => {
-    expect(generateFileName("  圆号  ", [1])).toBe("圆号_1.pdf");
+    expect(generateFileName("  圆号  ", [1])).toBe("圆号1.pdf");
     expect(generateFileName("  圆号  ", [])).toBe("圆号.pdf");
   });
 
   it("与 formatSubParts 同源：文件名里的号就是那个规范字符串", () => {
     const parts = [1, 2, 3, 4];
-    expect(generateFileName("圆号", parts)).toBe(`圆号_${formatSubParts(parts)}.pdf`);
+    expect(generateFileName("圆号", parts)).toBe(`圆号${formatSubParts(parts)}.pdf`);
   });
 });
 

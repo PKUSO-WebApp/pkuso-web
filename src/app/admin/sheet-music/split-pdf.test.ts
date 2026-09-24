@@ -94,20 +94,20 @@ describe("页下标换算（pdf-lib 要 0-based，用户看的是 1-based）", (
 
 describe("同组重名（切出来的每一份必须靠文件名能区分）", () => {
   it("无重名 = 空数组", () => {
-    expect(duplicateNames(["圆号_1.pdf", "圆号_2.pdf", "圆号_3.pdf"])).toEqual([]);
+    expect(duplicateNames(["圆号1.pdf", "圆号2.pdf", "圆号3.pdf"])).toEqual([]);
   });
 
   it("重名的只标**后面**那个（第一份放行，用户只改被标出来的）", () => {
     expect(duplicateNames(["圆号.pdf", "圆号.pdf", "圆号.pdf"])).toEqual([1, 2]);
-    expect(duplicateNames(["圆号_1.pdf", "圆号.pdf", "圆号_1.pdf"])).toEqual([2]);
+    expect(duplicateNames(["圆号1.pdf", "圆号.pdf", "圆号1.pdf"])).toEqual([2]);
   });
 
   it("空名字不算重名 —— 那是「还没填」，由别的拦截去管", () => {
-    expect(duplicateNames(["", "", "圆号_1.pdf"])).toEqual([]);
+    expect(duplicateNames(["", "", "圆号1.pdf"])).toEqual([]);
   });
 
   it("去掉首尾空白后比较（用户多敲一个空格不该算成两个名字）", () => {
-    expect(duplicateNames(["圆号_1.pdf", " 圆号_1.pdf "])).toEqual([1]);
+    expect(duplicateNames(["圆号1.pdf", " 圆号1.pdf "])).toEqual([1]);
   });
 });
 

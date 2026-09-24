@@ -1165,6 +1165,12 @@ interface LlmAnalysis {
   subPartsRaw?: string;
   /** 后端给的号超过前端上界时的个数，见 UploadFile.subPartsOverCap */
   subPartsOverCap?: number;
+  /**
+   * 后端判出这是**总谱**（pkuso-backend#26）。总谱不是声部，而是「整份都在里面」：
+   * 声部落「总谱」、号清空，且**不参与分段**（`segEligible` 对总谱恒 false）——
+   * 分段里最贵的一笔就是总谱，而它今天只能靠人工标记（人工标记要等分段跑完才做得出）。
+   */
+  isFullScore: boolean;
 }
 
 async function runLlmAnalysis(fileName: string, ocrText: string): Promise<LlmAnalysis> {
@@ -1191,6 +1197,9 @@ async function runLlmAnalysis(fileName: string, ocrText: string): Promise<LlmAna
       // 超上界时 sanitize 会把号整个丢掉，而这条路径**不带任何其他信号** ——
       // 不单独报的话它就是一条完全静默的丢号路径（见 overSubPartsCap）
       subPartsOverCap: overSubPartsCap(data.subParts) ?? undefined,
+      // 与后端同一条判据：只有恰好 true 才算总谱。字段缺失/后端还是旧版时必然是
+      // undefined → false，于是行为与加这个字段之前一字不变（**平滑降级**）。
+      isFullScore: data.isFullScore === true,
     };
   }
   throw new Error(`LLM 分析失败: ${data?.error || data?.message || "未知错误"}`);
@@ -1369,16 +1378,23 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         }
       }
 
-      const { section, instrument, subParts, subPartsRaw, subPartsOverCap } = analysis;
+      const { section, instrument, subParts, subPartsRaw, subPartsOverCap, isFullScore } = analysis;
       // 未识别时**不预填** instrumentEdit（留空串）：预填一个猜测值会被用户直接
       // 接受，等于把错误洗成「已确认」。空的输入框会逼用户做一次真实判断。
+      // **总谱**（#297）：模型判出「一页上并列着多个乐器」时，声部直接落「总谱」——
+      // 总谱不是声部，而是「整份都在里面」，所以分声部号清空（`editsOf` 在总谱下也
+      // 一律当空）；而且 `segEligible` 对总谱恒 false → **它不会再进分段**，
+      // 那正是分段里最贵的一笔（总谱今天要靠人工标记，而人工标记只能等分段跑完才做得出）。
       updateFile(i, {
         status: "analyzed",
-        llmResult: analysisSummary(section, instrument, subParts),
-        sectionGuess: section,
-        sectionEdit: section,
-        instrumentGuess: instrument,
-        instrumentEdit: instrument,
+        llmResult: isFullScore
+          ? "识别结果: 总谱（整份）—— 不参与分段"
+          : analysisSummary(section, instrument, subParts),
+        sectionGuess: isFullScore ? FULL_SCORE_SECTION : section,
+        sectionEdit: isFullScore ? FULL_SCORE_SECTION : section,
+        instrumentGuess: isFullScore ? FULL_SCORE_SECTION : instrument,
+        instrumentEdit: isFullScore ? FULL_SCORE_SECTION : instrument,
+        ...(isFullScore ? { subPartsEditText: "" } : {}),
         subPartsGuess: subParts,
         // 不设 subPartsEditText：`undefined` = 没编辑过 → 输入框显示 Guess。
         // 「模型给了号但没读懂」时 subParts 是空数组，输入框自然留空，

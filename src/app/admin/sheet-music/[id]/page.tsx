@@ -17,17 +17,18 @@ interface SheetMusicFile {
   /** 中文乐器名。同一份谱子里不同乐器要按拼音排（见 sort-parts.ts） */
   instrument: string | null;
   /**
-   * 分声部号。**历史行是 NULL**（该列是后加的，见 pkuso-backend#15），
-   * 读取侧两种都要兜 —— `sort-parts.ts` 已把 NULL 与 `[]` 一视同仁。
+   * 分声部号。**恒非 NULL**（迁移 `20260926130000` 把残余 NULL 回填成空数组、
+   * 并收了 NOT NULL），所以读取侧不再有 NULL 那一支 —— 「没有分声部」就是空数组。
    */
-  sub_parts: number[] | null;
+  sub_parts: number[];
 }
 
 interface SheetMusicPart {
   id: string;
-  /** 声部名。旧的 `instrument` 列已废弃（识别改造后语义迁到 `section`），
-   *  新写入的行该列为 NULL —— 所以这里读 section，且允许为空。 */
-  section: string | null;
+  /** 声部名。旧的 `instrument` 列**已被迁移删掉**（`20260926120000`），
+   *  而 `section` 自那次迁移起是 `NOT NULL` —— 所以这里既不该读旧列、也不用兜空值。
+   *  （形状的仓内事实来源是 `src/types/database.types.ts`。） */
+  section: string;
   sort_order: number;
   files: SheetMusicFile[];
 }
@@ -181,7 +182,7 @@ export default function ScoreDetailPage() {
   const deletePart = async (part: SheetMusicPart) => {
     if (deletingId) return;
     const fileCount = part.files.length;
-    if (!confirm(`确认删除声部「${part.section ?? "未命名"}」及其 ${fileCount} 个文件？`)) return;
+    if (!confirm(`确认删除声部「${part.section}」及其 ${fileCount} 个文件？`)) return;
 
     setDeletingId(part.id);
     try {
@@ -256,7 +257,7 @@ export default function ScoreDetailPage() {
                 >
                   <div className="flex items-center justify-between px-4 py-2 bg-muted/50 border-b border-border">
                     <div>
-                      <span className="font-medium text-text">{part.section ?? "未命名"}</span>
+                      <span className="font-medium text-text">{part.section}</span>
                       <span className="text-xs text-text-muted ml-2">
                         {part.files.length} 个文件
                       </span>

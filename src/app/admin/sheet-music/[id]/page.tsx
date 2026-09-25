@@ -17,7 +17,7 @@ interface SheetMusicFile {
   /** 中文乐器名。同一份谱子里不同乐器要按拼音排（见 sort-parts.ts） */
   instrument: string | null;
   /**
-   * 分声部号。**恒非 NULL**（技术债 A2 的迁移 `20260926130000` 把残余 NULL 回填成空数组、
+   * 分声部号。**恒非 NULL**（迁移 `20260926130000` 把残余 NULL 回填成空数组、
    * 并收了 NOT NULL），所以读取侧不再有 NULL 那一支 —— 「没有分声部」就是空数组。
    */
   sub_parts: number[];
@@ -25,8 +25,9 @@ interface SheetMusicFile {
 
 interface SheetMusicPart {
   id: string;
-  /** 声部名。旧的 `instrument` 列**已被迁移删掉**（技术债 A1，`20260926120000`），
-   *  而 `section` 自那次迁移起是 `NOT NULL` —— 所以这里既不该读旧列、也不用兜空值。 */
+  /** 声部名。旧的 `instrument` 列**已被迁移删掉**（`20260926120000`），
+   *  而 `section` 自那次迁移起是 `NOT NULL` —— 所以这里既不该读旧列、也不用兜空值。
+   *  （形状的仓内事实来源是 `src/types/database.types.ts`。） */
   section: string;
   sort_order: number;
   files: SheetMusicFile[];

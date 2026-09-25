@@ -11,7 +11,7 @@ import { compareFiles, sectionSortKey, sortPartsForDisplay } from "./sort-parts"
  * 同声部内按乐器拼音；同乐器内按第一个分声部号、**没有号的最前**。
  */
 
-// ⚠️ `sub_parts` 与 `section` 都**不再可空**（技术债 A1/A2 的迁移把它们收成 NOT NULL）：
+// ⚠️ `sub_parts` 与 `section` 都**不再可空**（迁移 `20260926120000` / `20260926130000`）：
 // 「没有分声部」是空数组，不是 null。夹具跟着改，免得多测一条已经不存在的分支。
 type TestFile = { instrument: string | null; sub_parts: number[] };
 const file = (instrument: string | null, sub_parts: number[]): TestFile => ({

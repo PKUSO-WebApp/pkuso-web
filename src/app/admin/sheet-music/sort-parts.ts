@@ -22,16 +22,21 @@ import { FULL_SCORE_SECTION, INSTRUMENT_ORDER } from "@/constants/instruments";
  * 而传入顺序来自查询的 `created_at` —— 至少是个确定的顺序，不会每次刷新都跳。
  *
  * ⚠️ 排在这里还顺带绕开了一件事：`sub_parts` 是**数组**，在 SQL 里按首元素排要写
- * 表达式（`(sub_parts)[1]`）且 NULL/空数组的排序语义还得单独调；这里就是 `[0]`。
+ * 表达式（`(sub_parts)[1]`）且空数组的排序语义还得单独调；这里就是 `[0]`。
+ *
+ * ⚠️ **两列都不再可空**（技术债 A1/A2 收的尾）：`sheet_music_parts.section` 与
+ * `sheet_music_files.sub_parts` 都是 `NOT NULL`（迁移 `20260926120000` / `20260926130000`），
+ * 所以这里的类型与兜底里**不再有 NULL 那一支** —— `sub_parts` 的「没有号」是空数组。
+ * `instrument` 仍然是可空的（那是 `sheet_music_files.instrument`，开集、允许为空）。
  */
 
 interface SortableFile {
   instrument: string | null;
-  sub_parts: number[] | null;
+  sub_parts: number[];
 }
 
 interface SortablePart {
-  section: string | null;
+  section: string;
   files: SortableFile[];
 }
 
@@ -42,8 +47,8 @@ interface SortablePart {
  * 而闭集外的值只可能来自 prompt 词表漂移（界面上已有 `isKnownSection` 告警）——
  * 排在最后比混进正常声部里更容易被发现。
  */
-export function sectionSortKey(section: string | null): number {
-  const s = (section ?? "").trim();
+export function sectionSortKey(section: string): number {
+  const s = section.trim();
   if (s === FULL_SCORE_SECTION) return -1;
   const i = INSTRUMENT_ORDER.indexOf(s as (typeof INSTRUMENT_ORDER)[number]);
   return i === -1 ? INSTRUMENT_ORDER.length : i;
@@ -88,12 +93,11 @@ function pinyinKey(s: string): string {
 }
 
 /**
- * 文件 → 排序用的「第一个分声部号」。没有号（`[]`、或本迁移之前历史行的 NULL）返回 0，
- * 于是**排在所有有号的前面** —— 合法的分声部号恒 ≥ 1，所以 0 是个安全的哨兵，
- * 不需要再分一层「空数组 vs NULL」。
+ * 文件 → 排序用的「第一个分声部号」。没有号（空数组）返回 0，于是**排在所有有号的前面**
+ * —— 合法的分声部号恒 ≥ 1，所以 0 是个安全的哨兵。
  */
 function firstSubPart(f: SortableFile): number {
-  const first = f.sub_parts?.[0];
+  const first = f.sub_parts[0];
   return typeof first === "number" ? first : 0;
 }
 

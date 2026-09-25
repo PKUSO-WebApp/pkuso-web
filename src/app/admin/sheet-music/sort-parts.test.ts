@@ -11,13 +11,15 @@ import { compareFiles, sectionSortKey, sortPartsForDisplay } from "./sort-parts"
  * 同声部内按乐器拼音；同乐器内按第一个分声部号、**没有号的最前**。
  */
 
-type TestFile = { instrument: string | null; sub_parts: number[] | null };
-const file = (instrument: string | null, sub_parts: number[] | null): TestFile => ({
+// ⚠️ `sub_parts` 与 `section` 都**不再可空**（技术债 A1/A2 的迁移把它们收成 NOT NULL）：
+// 「没有分声部」是空数组，不是 null。夹具跟着改，免得多测一条已经不存在的分支。
+type TestFile = { instrument: string | null; sub_parts: number[] };
+const file = (instrument: string | null, sub_parts: number[]): TestFile => ({
   instrument,
   sub_parts,
 });
-const part = (section: string | null, files: TestFile[] = []) => ({ section, files });
-const sectionsOf = (parts: { section: string | null }[]) => parts.map((p) => p.section);
+const part = (section: string, files: TestFile[] = []) => ({ section, files });
+const sectionsOf = (parts: { section: string }[]) => parts.map((p) => p.section);
 const instrumentsOf = (files: { instrument: string | null }[]) => files.map((f) => f.instrument);
 
 describe("sectionSortKey", () => {
@@ -33,10 +35,10 @@ describe("sectionSortKey", () => {
     );
   });
 
-  it("未知值（NULL / 空串 / 闭集外）与「其他」同档，不会插进标准声部中间", () => {
+  it("未知值（空串 / 闭集外）与「其他」同档，不会插进标准声部中间", () => {
     // 闭集外的值只可能来自 prompt 词表漂移；排在最后比混在正常声部里更容易被发现
+    //（`section` 自 A1 的迁移起是 NOT NULL，所以这里不再有 NULL 那一档）
     const last = sectionSortKey(OTHER_INSTRUMENT_GROUP);
-    expect(sectionSortKey(null)).toBe(last);
     expect(sectionSortKey("")).toBe(last);
     expect(sectionSortKey("木管")).toBe(last);
     expect(sectionSortKey("   ")).toBe(last);
@@ -75,7 +77,7 @@ describe("sectionSortKey", () => {
 
 describe("compareFiles", () => {
   it("先按乐器名拼音", () => {
-    const files = [file("钟琴", null), file("定音鼓", null), file("木琴", null)];
+    const files = [file("钟琴", []), file("定音鼓", []), file("木琴", [])];
     const sorted = [...files].sort(compareFiles);
     // d < m < zh
     expect(instrumentsOf(sorted)).toEqual(["定音鼓", "木琴", "钟琴"]);
@@ -87,19 +89,19 @@ describe("compareFiles", () => {
     // 它区分不出「拼音」与「码点」。下面这三对才区分得出，且**每一对都取自线上真实数据**。
     //
     // 长笛(changdi) < 短笛(duandi)：码点序 长 U+957F > 短 U+77ED，方向相反
-    expect(instrumentsOf([file("短笛", null), file("长笛", null)].sort(compareFiles))).toEqual([
+    expect(instrumentsOf([file("短笛", []), file("长笛", [])].sort(compareFiles))).toEqual([
       "长笛",
       "短笛",
     ]);
     // 长号(changhao) < 低音长号(diyinchanghao)
-    expect(instrumentsOf([file("低音长号", null), file("长号", null)].sort(compareFiles))).toEqual([
+    expect(instrumentsOf([file("低音长号", []), file("长号", [])].sort(compareFiles))).toEqual([
       "长号",
       "低音长号",
     ]);
     // 拉丁开头的中文名：A调(atiao…) < 降E调(jiangetiao…)。
     // ⚠️ ICU 会把这类名字排到**所有中文名之后**，正是换掉 Intl.Collator 的原因。
     expect(
-      instrumentsOf([file("降E调单簧管", null), file("A调单簧管", null)].sort(compareFiles)),
+      instrumentsOf([file("降E调单簧管", []), file("A调单簧管", [])].sort(compareFiles)),
     ).toEqual(["A调单簧管", "降E调单簧管"]);
   });
 
@@ -108,14 +110,15 @@ describe("compareFiles", () => {
     expect([...files].sort(compareFiles).map((f) => f.sub_parts)).toEqual([[1, 3], [2], [4]]);
   });
 
-  it("**没有号的排最前** —— [] 与历史行的 NULL 一视同仁", () => {
-    // 号恒 ≥ 1，所以「没有号」用 0 做哨兵就够了，不需要再分「空数组 vs NULL」
-    const files = [file("木琴", [3]), file("木琴", []), file("木琴", null), file("木琴", [1])];
-    expect([...files].sort(compareFiles).map((f) => f.sub_parts)).toEqual([[], null, [1], [3]]);
+  it("**没有号的排最前** —— 空数组（「没有号」的唯一形态）用 0 做哨兵", () => {
+    // 号恒 ≥ 1，所以「没有号」用 0 做哨兵就够了；`sub_parts` 自 A2 的迁移起 NOT NULL，
+    // 所以「没有号」只有空数组这一种形态（历史行的 NULL 已经被回填掉了）
+    const files = [file("木琴", [3]), file("木琴", []), file("木琴", []), file("木琴", [1])];
+    expect([...files].sort(compareFiles).map((f) => f.sub_parts)).toEqual([[], [], [1], [3]]);
   });
 
   it("哨兵值本身要钉住：违法的 `[0]` 必须与「没有号」**同档**", () => {
-    // ⚠️ 这条的写法是有讲究的。上一版只断言「[] 与 null 排在 [1] 之前」——
+    // ⚠️ 这条的写法是有讲究的。上一版只断言「[] 排在 [1] 之前」——
     // 把哨兵从 0 改成 -1 照样绿（都在 1 之前）。要区分 0 与 -1，必须构造一对
     // **排序结果会因哨兵取值而变**的输入：
     //   哨兵 0  ：[0]→0、[]→0  → 同档 → 稳定排序保持输入顺序 [[0], []]
@@ -136,10 +139,10 @@ describe("compareFiles", () => {
     ).toEqual([[-1], []]);
     // 而真正的合法号必须排在所有这些之后
     expect(
-      [...[file("木琴", [1]), file("木琴", [0]), file("木琴", null)].sort(compareFiles)].map(
+      [...[file("木琴", [1]), file("木琴", [0]), file("木琴", [])].sort(compareFiles)].map(
         (f) => f.sub_parts,
       ),
-    ).toEqual([[0], null, [1]]);
+    ).toEqual([[0], [], [1]]);
   });
 
   it("只有第一个号参与比较（多号文件按最小的那个定位）", () => {
@@ -151,7 +154,7 @@ describe("compareFiles", () => {
   });
 
   it("乐器名为 NULL 不抛错，按空串参与比较（排最前）", () => {
-    const files = [file("圆号", null), file(null, null)];
+    const files = [file("圆号", []), file(null, [])];
     expect(instrumentsOf([...files].sort(compareFiles))).toEqual([null, "圆号"]);
   });
 });

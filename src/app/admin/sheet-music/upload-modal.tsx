@@ -240,6 +240,8 @@ interface UploadFile {
   /** 模型据以判断的原文 + 它有没有在原文里找到。见 `LlmAnalysis` 里同名字段的说明。 */
   evidence?: string;
   evidenceFound?: boolean;
+  /** 引文只在**文件名**里找得到（不在页面上）。见 `LlmAnalysis.evidenceFromFileName`。 */
+  evidenceFromFileName?: boolean;
   segState?: "running" | "done" | "error";
   segError?: string;
   /**
@@ -1472,6 +1474,16 @@ interface LlmAnalysis {
    * 没人读的话，那批改动的净效果是「预填一个可能错的答案 + 显示成已识别」，**降一道防线**。
    */
   evidenceFound?: boolean;
+  /**
+   * 引文**只在文件名里**找得到（后端 `Analysis.evidenceFromFileName`，2026-09-26 新增）。
+   *
+   * 与 `evidenceFound` 分开，是因为「引文来自文件名」和「引文哪儿都没找到」是**两件事**：
+   * 出版社扫描分谱的乐器名常印在文件名里（页面 OCR 是乱的），那时抄文件名是正当依据 ——
+   * 但用户该知道该去看哪儿核对（页面上找不到，得看文件名）。
+   *
+   * ⚠️ **可选**：旧后端不返回 → `undefined` → 显示成普通依据（平滑降级）。
+   */
+  evidenceFromFileName?: boolean;
 }
 
 /**
@@ -1487,12 +1499,18 @@ interface LlmAnalysis {
  * 印在文件名里，而扫描页的 OCR 可能是乱的）。
  */
 async function runLlmAnalysis(fileName: string | null, ocrText: string): Promise<LlmAnalysis> {
-  const input: string[] = [];
-  if (fileName) input.push(`文件名: ${fileName}`);
-  if (ocrText) input.push(`OCR 文本: ${ocrText}`);
-
   const { data, error } = await supabase.functions.invoke("llm-analyze", {
-    body: { ocr_text: input.join("\n") },
+    // ⚠️ **文件名单独一个字段**（pkuso-web#300）：以前把它拼进 `ocr_text` 的第一行，
+    // 于是后端判「引文在原文里找到」时**把文件名也算成原文** —— 抄文件名、甚至只抄
+    // 文件名里的流水号都能让 `evidenceFound` 为真，而那个字段是「让用户复核」的唯一依据
+    // （实测 36 次调用里 2 次是这种情形）。
+    //
+    // 段级调用（`fileName === null`）**一个字段都不发** —— 那条路本来就没有文件名
+    // （段行继承的是源合订本的名字，见 `refineSegments`）。
+    body: {
+      ...(fileName ? { file_name: fileName } : {}),
+      ocr_text: ocrText,
+    },
     timeout: LLM_TIMEOUT_MS,
   });
   if (error) {
@@ -1524,6 +1542,10 @@ async function runLlmAnalysis(fileName: string | null, ocrText: string): Promise
       // `typeof` 判型而不是 `??` —— undefined（旧后端）与 ""（模型没给）在界面上**不等价**。
       evidence: typeof data.evidence === "string" ? data.evidence : undefined,
       evidenceFound: typeof data.evidenceFound === "boolean" ? data.evidenceFound : undefined,
+      // 引文**只在文件名里**找得到（`Analysis.evidenceFromFileName`，2026-09-26 新增）。
+      // 同样平滑降级：旧后端不返回 → undefined → 不进那一支（显示成普通依据）。
+      evidenceFromFileName:
+        typeof data.evidenceFromFileName === "boolean" ? data.evidenceFromFileName : undefined,
     };
   }
   throw new Error(`LLM 分析失败: ${data?.error || data?.message || "未知错误"}`);
@@ -1841,6 +1863,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         subPartsOverCap,
         evidence,
         evidenceFound,
+        evidenceFromFileName,
         isFullScore,
         extraSections,
       } = analysis;
@@ -1883,8 +1906,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         subPartsOverCap,
         // 引文与「找没找到」：两者要一起进界面（`evidenceLine`），否则后端那批改动
         // 唯一的补偿信号就断在这里 —— 与 subPartsOverCap 曾经漏写是同一种病。
+        // （`evidenceFromFileName` 同理：漏写它，那句「依据来自文件名」就永远不出现。）
         evidence,
         evidenceFound,
+        evidenceFromFileName,
         // 记下页数：成本估算与「这份要不要分段」都看它（多页且非总谱才走分段）
         pageCount: walk?.pageCount,
         // 存储键要在**分析完成时**就定下来（每行一次、重试复用），
@@ -1964,6 +1989,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
               : analysisSummary(got.section, got.instrument, got.subParts),
             evidence: got.evidence,
             evidenceFound: got.evidenceFound,
+            evidenceFromFileName: got.evidenceFromFileName,
             // 号也一并写回（2026-09-25）：这一段的重试就是为了「上一次没认出来」，
             // 而号同样是段级识别的产物 —— 只更新乐器名、把号留在空上，用户还得手填。
             // ⚠️ **空数组不覆盖**：组级补号（`fillMissingSubParts`）可能已经给这一段
@@ -2510,6 +2536,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
               : analysisSummary(got.section, got.instrument, got.subParts),
             evidence: got.evidence,
             evidenceFound: got.evidenceFound,
+            evidenceFromFileName: got.evidenceFromFileName,
             // 空数组也照写 —— 「这一段没有号」是完整答案（见 docblock）
             subPartsGuess: got.subParts,
             subPartsRaw: got.subPartsRaw,
@@ -3177,6 +3204,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     if (f.evidence === undefined) return null;
     const ev = f.evidence.trim();
     if (!ev) return "依据：（模型没给引文，请核对）";
+    // 引文只在**文件名**里 —— 那不是「没找到」，而是「依据不在页面上」（pkuso-web#300）：
+    // 出版社把乐器名印在文件名里而页面是扫描件时，抄文件名是**正当**依据；
+    // 但用户该去核对的地方不同（看文件名，不是看谱面），所以分开说。
+    if (f.evidenceFromFileName) return `依据（来自文件名，不在页面上）：${ev}`;
     return f.evidenceFound === false ? `依据（未在原文中找到，请核对）：${ev}` : `依据：${ev}`;
   };
 

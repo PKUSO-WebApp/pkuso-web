@@ -77,6 +77,14 @@ const h = vi.hoisted(() => ({
    * 用它复刻真机上出问题的那份：整份 `[1,2]`、第 1 段 `[1]`、第 2 段 `[2]`。
    */
   llmReplies: [] as Record<string, unknown>[],
+  /**
+   * 每次 `llm-analyze` 调用带的 `file_name`（与 `llm` 逐位对应；空串 = 没带）。
+   *
+   * ⚠️ **判「这是段级调用吗」只能靠它**：拆字段之后，段级调用**不带文件名**，
+   * 而整份调用带 —— 以前那个「文本里含不含『文件名:』」的判据在拆完之后对两者都成立，
+   * 于是「两段各问了一次」这种断言会数出 3 次（把整份那次也算进来）。
+   */
+  llmFileNames: [] as string[],
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -142,12 +150,17 @@ vi.mock("@/lib/supabase", () => {
           }
           if (name === "llm-analyze") {
             const text = String(opts.body.ocr_text ?? "");
+            // ⚠️ 文件名是**另一个字段**（pkuso-web#300 之后）：以前它拼在 `ocr_text`
+            // 第一行里，所以「这次调用带没带文件名」可以直接看文本 —— 现在不行了。
+            // 桩必须把两个字段都记下来，否则 `llmFailFor` 匹配不上、也分不出段级调用。
+            const fileName = typeof opts.body.file_name === "string" ? opts.body.file_name : "";
             h.llm.push(text);
+            h.llmFileNames.push(fileName);
             // 需要「分析还在飞」的窗口时挂在这里（真实 LLM 要几秒到几十秒）
             if (h.llmGate) await h.llmGate;
             // LLM 失败走 `error` 那条路：`runLlmAnalysis` 会抛，而**抛出来的异常该让整行
             // 落 `status: "error"`**，不该被降级 catch 吞掉再补一次「只凭文件名」的调用
-            if (h.llmFail || h.llmFailFor.some((n) => text.includes(n))) {
+            if (h.llmFail || h.llmFailFor.some((n) => text.includes(n) || fileName.includes(n))) {
               return { data: null, error: { message: "boom" } };
             }
             // 按调用顺序取的答案优先（见 `llmReplies`）
@@ -212,6 +225,7 @@ function makePixels() {
 beforeEach(() => {
   h.ocr.length = 0;
   h.llm.length = 0;
+  h.llmFileNames.length = 0;
   h.ocrFail = false;
   h.llmFail = false;
   h.loadFail = false;
@@ -326,7 +340,12 @@ describe("升级链的集成：哪几张图真的被送出去了", () => {
     await runAnalysis({ loadFail: true });
     expect(h.ocr).toEqual([]); // 打不开就没有页可送
     expect(h.llm).toHaveLength(1); // 但 LLM 仍被问了一次（只带文件名）
-    expect(h.llm[0]).toContain("圆号1,2.pdf");
+    // ⚠️ 文件名现在是**另一个字段**（#300）：断言要落在 `llmFileNames` 上。
+    // 落在 `h.llm`（OCR 文本）上会恒为真 —— 那条路上它本来就是空串。
+    expect(h.llmFileNames[0]).toBe("圆号1,2.pdf");
+    // 反向自检：这一路**确实**没有 OCR 文本（「一页有内容的都没读到」才会走到这里），
+    // 否则上面那条断言证明不了「退化成了只凭文件名」。
+    expect(h.llm[0]).toBe("");
   });
 });
 
@@ -380,6 +399,28 @@ describe("错误行不再是死胡同：重试", () => {
     await runAnalysis({});
     const warn = screen.getByText(/未在原文中找到/);
     expect(warn.className).toContain("text-warning");
+  });
+
+  it("引文只在**文件名**里时，依据要说明它不在页面上（#300）", async () => {
+    // ⚠️ 这条是与「未在原文中找到」**分开**的那一态：出版社扫描分谱的乐器名常印在
+    // 文件名里（页面 OCR 是乱的），那时抄文件名是**正当**依据 —— 但用户该去核对的地方
+    // 不同（看文件名，不是看谱面）。以前它被判成「在原文里找到」而混进普通依据，
+    // 而「引文只出现在文件名里」正是「引文存在 ≠ 支撑结论」那个弱点的形态。
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [],
+      isFullScore: false,
+      evidence: "Horn_2",
+      evidenceFound: false,
+      evidenceFromFileName: true,
+    };
+    await runAnalysis({});
+    expect(screen.getByText(/^依据（来自文件名，不在页面上）：Horn_2$/)).toBeTruthy();
+    // 反向自检：**不能**说成「未在原文中找到」—— 那是另一回事（哪儿都没找到），
+    // 两句混用会让用户去页面上翻一段本来就不在页面上的引文。
+    expect(screen.queryByText(/未在原文中找到/)).toBeNull();
   });
 
   it("未识别的行：给「重试」，且不进分段（页数照旧显示）", async () => {
@@ -523,7 +564,7 @@ describe("错误行不再是死胡同：重试", () => {
     // 明写「文件名是 `Flute 1-2` 这种就写 [1,2]」—— 带着它，每一段都会被填成源行那份号、
     // 盖过页眉上真正写着的那一行（`Flauto I.` / `Flauto II.`）。整份那次调用是带文件名的，
     // 所以按这一条筛得出来。
-    await waitFor(() => expect(h.llm.filter((t) => !t.includes("文件名:"))).toHaveLength(2), {
+    await waitFor(() => expect(h.llmFileNames.filter((n) => !n)).toHaveLength(2), {
       timeout: 10000,
     });
 
@@ -602,7 +643,7 @@ describe("错误行不再是死胡同：重试", () => {
       timeout: 10000,
     });
     // 等两次段级识别都落地，再看号：两段都应为空（旧实现这里是 ["1","2"]）
-    await waitFor(() => expect(h.llm.filter((t) => !t.includes("文件名:"))).toHaveLength(2), {
+    await waitFor(() => expect(h.llmFileNames.filter((n) => !n)).toHaveLength(2), {
       timeout: 10000,
     });
     expect(

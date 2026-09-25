@@ -692,6 +692,31 @@ describe("错误行不再是死胡同：重试", () => {
     expect((screen.getAllByPlaceholderText("号，如 1,2")[0] as HTMLInputElement).value).toBe("");
   });
 
+  it("只识别出 1 段时不提「可改分段点」（那一段的起点恒为第 1 页，没有可改的）", async () => {
+    // 用户实测反馈：每个**没有边界**的正常分谱都会显示「共 1 段 —— 段的起始页可改」，
+    // 而那个「起始页」根本改不了 —— 让人去找一个不存在的东西。
+    // ⚠️ 但**不能连块一起藏掉**：「拆分」按钮是模型漏切时唯一的出路（见那里的注释）。
+    h.segmentCuts = [];
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [],
+      isFullScore: false,
+    };
+    await runAnalysis({ names: ["圆号.pdf"] });
+    await waitFor(() => expect(screen.getByText(/^已识别 → 圆号/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getByText("识别出 1 段")).toBeTruthy(), { timeout: 10000 });
+
+    expect(screen.queryByText(/可改分段点/)).toBeNull();
+    // 出路还在
+    expect(screen.getByText("拆分")).toBeTruthy();
+  });
+
   it("段数与号数**不等**时不再拿文件名对账（旧实现会在这里要用户逐段手填）", async () => {
     // 源行读出 `[1,2]`（2 个号）而切点分出 3 段。旧实现在这个形态下会渲染
     // 「共 3 段，但文件名里是 2 个号（1,2）—— 请逐段确认乐器与号」，
@@ -935,7 +960,8 @@ describe("跨声部的共用分谱：一份文件落成两行", () => {
     // ⚠️ **行标题也要带上落点**。`previewPath` 展开成两个落点之后，标题若只报主声部，
     // 同一张卡片里两句话就互相矛盾（用户按标题核对会以为只落一个声部）——
     // 而 `statusText` 自己的注释写着「必须与文件名预览一致」。对抗测试实测抓出来的。
-    expect(screen.getByText(/已识别 → 大提琴 \/ 大提琴（还落到 低音提琴）/)).toBeTruthy();
+    // （措辞从「还落到」改成「并另存到」：用户实测反馈前者读起来像「**仍然**落到」。）
+    expect(screen.getByText(/已识别 → 大提琴 \/ 大提琴（并另存到 低音提琴）/)).toBeTruthy();
   });
 
   it("主声部是「其他」时：不显示「+ 声部」，但**说清为什么**（不静默丢弃）", async () => {

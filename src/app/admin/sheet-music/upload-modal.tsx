@@ -3095,7 +3095,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     // ⚠️ **跨声部时要把落点写出来**：`previewPath` 已经展开成两个落点，标题只报主声部的话，
     // 同一张卡片里两句话互相矛盾（用户按标题核对会以为只落一个声部）。这条正是上面那句
     // 「必须与预览一致」要守的东西 —— 改成多落点之后漏掉了它，对抗测试实测抓出来的。
-    const also = extraSections.length > 0 ? `（还落到 ${extraSections.join("、")}）` : "";
+    const also = extraSections.length > 0 ? `（并另存到 ${extraSections.join("、")}）` : "";
     switch (f.status) {
       case "pending":
         return "待分析";
@@ -3563,7 +3563,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                             )}
                           {canHaveExtraSections(f) && (
                             <div className="flex flex-wrap items-center gap-1 pl-5">
-                              <span className="text-xs text-text-muted shrink-0">还落到</span>
+                              {/* 「还落到」读起来像「仍然落到」，用户实测反馈迷惑 —— 换成
+                                  「并另存到」：它说的是同一份字节会**再落一个文件**，
+                                  与 `previewPath` 展开成两个落点这件事对得上。 */}
+                              <span className="text-xs text-text-muted shrink-0">并另存到</span>
                               {editsOf(f).extraSections.map((s) => (
                                 <span
                                   key={s}
@@ -3682,7 +3685,13 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                                 )}
                                 {f.segState === "done" && (
                                   <span className="text-xs text-text-muted">
-                                    共 {segmentsOf(f).length} 段 —— 段的起始页可改
+                                    {/* 只有一段时**不提「可改分段点」**：那一段的起点恒为第 1 页，
+                                        没有分段点可改 —— 写着只会让人去找一个不存在的东西。
+                                        （「拆分」按钮仍然在：模型漏切时那是唯一的出路，
+                                        所以这一段不能连块一起藏掉。） */}
+                                    {segmentsOf(f).length > 1
+                                      ? `识别出 ${segmentsOf(f).length} 段 —— 可改分段点`
+                                      : "识别出 1 段"}
                                     {f.segFailedPages?.length
                                       ? `（其中 ${f.segFailedPages.length} 页 OCR 失败，边界可能不全）`
                                       : ""}
@@ -3786,8 +3795,17 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                               {/* 边界确认完了就拆成多行（#290 Step 2）：拆完每段各占一行、
                                   各有各的乐器/号，上传时源文件只读一次、逐段切出来各传各的。
                                   放在这里（而不是上传时才切）是因为**每一段都要人工确认乐器
-                                  与号** —— 那是拆完之后才看得见的东西。 */}
-                              {unsplitSegments(f) && (
+                                  与号** —— 那是拆完之后才看得见的东西。
+
+                                  ⚠️ **`!segBusy` 不能漏**（用户实测反馈）：自动拆要等**整个
+                                  分段池**跑完才执行，而池子里先跑完的那几行此时已经是
+                                  `segState: "done"` —— 于是「识别中」的窗口里它们会挂着一个
+                                  「确认这 N 段」，全部跑完才消失。那是个**一闪而过且点不了**
+                                  （按钮自身被 `segBusy` 禁用）的按钮，用户只会以为功能坏了。
+                                  分段在跑 = 自动拆还没轮到，这一刻不该给手动入口。
+                                  池子跑完后 `segBusy` 落下，若 `splitRefusal` 拒了，
+                                  按钮会照常回来 —— 那条后备路没被堵掉。 */}
+                              {unsplitSegments(f) && !segBusy && (
                                 <button
                                   onClick={() => splitIntoSegments(i)}
                                   // ⚠️ 这个按钮是**必经之路**，不是可选项：不点它就上传会被
@@ -3923,7 +3941,17 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                   disabled
                   className="px-4 py-2 bg-primary text-primary-foreground rounded-lg opacity-50"
                 >
-                  上传中...
+                  {/* ⚠️ 转圈而不是「…」（用户实测反馈）：省略号是**静止**的，看不出还在动 ——
+                      上传十几份谱要等一会儿，静止的三个点读起来就是「卡住了」。
+                      用 `admin/layout.tsx` 守护页那套纯 CSS 转圈（border + animate-spin），
+                      不引图标依赖。颜色取 `border-primary-foreground`，与本按钮的前景色一致。 */}
+                  <span className="inline-flex items-center gap-2">
+                    <span
+                      aria-hidden
+                      className="animate-spin rounded-full h-4 w-4 border-2 border-primary-foreground border-t-transparent shrink-0"
+                    />
+                    上传中
+                  </span>
                 </button>
               ) : allDone ? (
                 // 干完了就给一个**正向出口**：全部传完后还显示禁用的「确认上传（0/N）」

@@ -1163,10 +1163,10 @@ describe("状态色与「依据」（#301 补的两处零覆盖）", () => {
     expect(screen.getByText(/^已识别 → 圆号/).className).toContain("text-success");
   });
 
-  it("后端**没返回** `evidence`（旧后端）时一个字都不显示", async () => {
-    // 「这个字段还没上线」与「模型没给引文」在界面上**不等价**，所以判的是
-    // `typeof data.evidence === "string"` 而不是 `?? ""` —— 后者会让旧后端也冒出一句
-    // 「模型没给引文，请核对」，而那句话对旧后端是**假的**（它压根没这个字段）。
+  it("后端**没返回** `evidence` 时一个字都不显示", async () => {
+    // 「这一行没有这个信号」与「模型没给引文」在界面上**不等价**，所以判的是
+    // `typeof data.evidence === "string"` 而不是 `?? ""` —— 后者会让缺字段的行也冒出一句
+    // 「模型没给引文，请核对」，而那句话在这里是**编的**（响应里压根没有这个字段）。
     h.llmReply = {
       success: true,
       section: "圆号",
@@ -1245,7 +1245,7 @@ describe("后端信号字段的消费者（#302：发了没人读，就等于不
     expect(screen.getByLabelText("收起详情")).toBeTruthy();
   });
 
-  it("后端不给弃权原因时面板里没有那一行（旧后端平滑降级）", async () => {
+  it("后端不给弃权原因时面板里没有那一行（字段缺席）", async () => {
     h.llmReply = {
       success: true,
       section: "圆号",

@@ -41,6 +41,22 @@ const h = vi.hoisted(() => ({
   loadFail: false,
   renderFailPages: [] as number[],
   pages: 3,
+  /**
+   * 逐页的页高（pt）。默认等高。
+   *
+   * 它决定窄带的高（`round(页高px × BAND_PCT)`，见 `h.pageHeights` 的使用处 —— 桩按尺寸
+   * 认出「这是窄带」）。设成**不等高**时，`composeMosaic` 会因「本组必须等高」直接抛错
+   * （`upload-modal.tsx` 的 `composeMosaic`），窄带于是**确定地**走逐页 OCR 那条回退 ——
+   * 不必依赖桩对拼图那张图的回包形状。所以它买的是**确定性**，不是「否则测不到」：
+   * 每页窄带本来就各 OCR 一次，桩按调用序给的文本本来就能区分页。
+   */
+  pageHeights: [100, 100, 100] as number[],
+  /**
+   * OCR 桩为**窄带**（矮图）返回过的文本，按调用顺序 —— 也就是页序。
+   *
+   * ⚠️ 只在**逐页**那条路上增长；拼图那条路若真成功，这里会是空的（拼图是一张图一次调用）。
+   */
+  bandTexts: [] as string[],
   /** 登录用户。`null` = 未登录（`confirmUpload` 会 alert 并返回） */
   user: null as { id: string } | null,
   /** LLM 成功时回什么。默认「一律未识别」—— 那正是要逼出回退/升级的那种输入 */
@@ -142,10 +158,22 @@ vi.mock("@/lib/supabase", () => {
       functions: {
         invoke: vi.fn(async (name: string, opts: { body: Record<string, unknown> }) => {
           if (name === "ocr-analyze") {
-            h.ocr.push(Buffer.from(String(opts.body.file_base64 ?? ""), "base64").toString());
+            const size = Buffer.from(String(opts.body.file_base64 ?? ""), "base64").toString();
+            h.ocr.push(size);
             // success:false 那条路**不重试**（见 invokeOcr：「重试无意义」）—— 用它模拟
             // 「这张图读不出文字」，不会引入 OCR_RETRY_DELAYS 的 sleep
             if (h.ocrFail) return { data: { success: false }, error: null };
+            // 窄带（页高 × BAND_PCT 那一小块）：给**逐页不同**的文本，编号按调用序。
+            // 判据是「图很矮」—— 夹在**标题条**（`W x 85`，见 TITLE_TAG 的来历）与
+            // **整页**（`W x 300` 上下）之间：默认页高下窄带是 36，两端的页高见 `h.pageHeights`。
+            // ⚠️ 这三个常量（`OCR_MAX_SCALE`=3、`BAND_PCT`=0.12、页高）任一变大到把窄带顶过 60，
+            // 这条分支就不再命中 —— 那时两条 prompt 会退化成同一个常量、断言**打红**（不是静默变绿），
+            // 但要照着这里才能看懂报错。
+            if (Number(size.split("x")[1]) < 60) {
+              const text = `第${h.bandTexts.length + 1}页页眉`;
+              h.bandTexts.push(text);
+              return { data: { success: true, text }, error: null };
+            }
             return { data: { success: true, text: "PMLASIA 出版社 编号" }, error: null };
           }
           if (name === "llm-analyze") {
@@ -188,7 +216,7 @@ vi.mock("pdfjs-dist", () => ({
         getPage: async (n: number) => ({
           getViewport: ({ scale }: { scale: number }) => ({
             width: 100 * scale,
-            height: 100 * scale,
+            height: (h.pageHeights[n - 1] ?? 100) * scale,
           }),
           // 指定页渲染失败：那条「就地消化、不判死整份」的分支否则一条测试都跑不到
           render: () =>
@@ -226,6 +254,8 @@ beforeEach(() => {
   h.ocr.length = 0;
   h.llm.length = 0;
   h.llmFileNames.length = 0;
+  h.pageHeights = [100, 100, 100];
+  h.bandTexts.length = 0;
   h.ocrFail = false;
   h.llmFail = false;
   h.loadFail = false;
@@ -542,6 +572,9 @@ describe("错误行不再是死胡同：重试", () => {
       isFullScore: false,
     };
     h.segmentCuts = [2];
+    // 两页不一样高 → `composeMosaic` 因「本组必须等高」抛错 → 窄带**确定地**走逐页 OCR
+    //（不依赖桩对拼图那张图的回包形状，见 `h.pageHeights`）
+    h.pageHeights = [100, 120];
     await runAnalysis({ names: ["短笛长笛.pdf"] });
     // ⚠️ **必须等分析落定再取基准**：`runAnalysis` 只等到渲染，此刻 LLM 调用还在飞
     //（第一版就栽在这里：基准取成 0，断言变成「总共 5 次」而期望 2 次）。
@@ -559,6 +592,10 @@ describe("错误行不再是死胡同：重试", () => {
     const ocrAfterSeg = h.ocr.length;
     expect(ocrAfterSeg).toBeGreaterThan(ocrBefore);
 
+    // ⚠️ **0 次额外 OCR** —— 这条就是「各段用的是每段自己的 `segHeadText`，而不是重跑
+    // 一遍取页+OCR」的充分证据（重跑必然增加 `h.ocr`）。
+    expect(h.ocr.length).toBe(ocrAfterSeg);
+
     // 两段各问了一次 LLM，而且**都没带「文件名:」那一行**。
     // 段行继承的是源合订本的名字（`…--_Piccolo,_Flute_1,_2.pdf`），而 prompt 规则 8
     // 明写「文件名是 `Flute 1-2` 这种就写 [1,2]」—— 带着它，每一段都会被填成源行那份号、
@@ -568,10 +605,16 @@ describe("错误行不再是死胡同：重试", () => {
       timeout: 10000,
     });
 
-    // ⚠️ **0 次额外 OCR** —— 这条就是「各段用的是每段自己的 `segHeadText`，而不是重跑
-    // 一遍取页+OCR」的充分证据（重跑必然增加 `h.ocr`）。桩的 OCR 文本是常量（每页同文），
-    // 所以两条 prompt 无法区分，这里不断言它们不同。
-    expect(h.ocr.length).toBe(ocrAfterSeg);
+    // **拿到的是不是各自那一页的文本**（#301：这条此前钉不住 —— 桩对每张图回的是同一个常量，
+    // 于是把 `pageTexts.find(p => p.page === seg.from)` 改成 `p.page === 1` 也全绿）。
+    // 段级那两次调用夹带的 `ocr_text` 就是 `segHeadText`，所以直接看它。
+    // ⚠️ **顺序也要钉**：`runWithConcurrency` 按行序起 worker、桩的 push 在任何 await 之前，
+    // 所以第 1 段的调用必然在前 —— 加上 `.sort()` 就等于放弃「哪一段拿的哪一页」这一半，
+    // 两段文本对调也看不出来。
+    expect(h.llm.filter((_, i) => !h.llmFileNames[i])).toEqual(["第1页页眉", "第2页页眉"]);
+    // **每一页**的窄带各 OCR 了一次（桩只在逐页那条路上记这些文本；拼图那条路是一张图
+    // 一次调用，与页数无关）。桩报的页数恒为 `h.pages`，与文件名无关。
+    expect(h.bandTexts).toHaveLength(h.pages);
   });
 
   it("段级识别出的号落到各段行上；读不出的那一段由组级补号兜住", async () => {
@@ -1097,6 +1140,56 @@ describe("跨声部的共用分谱：一份文件落成两行", () => {
 
     expect(h.fileInserts).toHaveLength(1);
     expect(h.fileInserts[0] as unknown[]).toHaveLength(1);
+  });
+});
+
+describe("状态色与「依据」（#301 补的两处零覆盖）", () => {
+  it("未识别行的状态文字是**警示色** —— 一行「需人工确认」配上 success 绿，用户扫一眼会以为没事", async () => {
+    // 桩的默认回包就是「未识别」（空乐器名）→ 状态行渲染 `statusText` 的「需人工确认」那一支。
+    // ⚠️ 别拿「未识别（N 页）」当靶子：那是**另一处**文案（页数那一行），未必受 `statusColor` 管。
+    await runAnalysis();
+    expect(screen.getByText("需人工确认").className).toContain("text-warning");
+  });
+
+  it("已识别行仍是 success 绿（对照组：上一条不是在测「所有行都是 warning」）", async () => {
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [],
+      isFullScore: false,
+    };
+    await runAnalysis();
+    expect(screen.getByText(/^已识别 → 圆号/).className).toContain("text-success");
+  });
+
+  it("后端**没返回** `evidence`（旧后端）时一个字都不显示", async () => {
+    // 「这个字段还没上线」与「模型没给引文」在界面上**不等价**，所以判的是
+    // `typeof data.evidence === "string"` 而不是 `?? ""` —— 后者会让旧后端也冒出一句
+    // 「模型没给引文，请核对」，而那句话对旧后端是**假的**（它压根没这个字段）。
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [],
+      isFullScore: false,
+      // 刻意不给 evidence
+    };
+    await runAnalysis();
+    expect(screen.queryByText(/依据/)).toBeNull();
+  });
+
+  it("模型**给了**空串（没抄引文）时才给那句提示", async () => {
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [],
+      isFullScore: false,
+      evidence: "",
+    };
+    await runAnalysis();
+    expect(screen.getByText(/依据：（模型没给引文，请核对）/)).toBeTruthy();
   });
 });
 

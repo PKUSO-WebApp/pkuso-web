@@ -1193,6 +1193,182 @@ describe("状态色与「依据」（#301 补的两处零覆盖）", () => {
   });
 });
 
+describe("后端信号字段的消费者（#302：发了没人读，就等于不存在）", () => {
+  it("模型给的声部落在闭集外时，界面要把它报出来 —— 这是词表漂移**唯一**的可见信号", async () => {
+    // 后端把闭集外的声部折成「其他」并带上原值（`sectionRaw`）。只看折完的值的话，
+    // 「两仓词表漂移了」与「模型真的判不出来」在界面上长得一模一样 —— 都是合法的「其他」。
+    h.llmReply = {
+      success: true,
+      section: "其他",
+      instrument: "长笛",
+      subParts: [],
+      isFullScore: false,
+      sectionRaw: "木管",
+    };
+    await runAnalysis();
+    // 文案用**过去式**：用户把声部改对之后这句仍然挂着（它陈述的是模型当时给过什么），
+    // 说成「现在的声部不在列表内」会让人以为自己的修改没生效（对抗测试实测的取舍）
+    expect(screen.getByText(/模型曾给出声部「木管」（不在标准列表内）/)).toBeTruthy();
+  });
+
+  it("没有漂移时不显示那句话（对照组）", async () => {
+    h.llmReply = {
+      success: true,
+      section: "长笛",
+      instrument: "长笛",
+      subParts: [],
+      isFullScore: false,
+    };
+    await runAnalysis();
+    expect(screen.queryByText(/不在标准列表内/)).toBeNull();
+  });
+
+  it("弃权原因进展开面板 —— 「模型没说话」与「我们把模型的话拒了」在界面上必须分得开", async () => {
+    // 两者的用户可见后果都是「需人工确认」，但排查时该看的地方不同（#303 之后
+    // 「名字里有不能用于文件名的字符」这类**拒绝**变多了，更需要这一行）。
+    h.llmReply = {
+      success: true,
+      section: "其他",
+      instrument: "",
+      subParts: [],
+      isFullScore: false,
+      abstainReason: "instrument-illegal-chars",
+    };
+    await runAnalysis();
+
+    expect(screen.getByText("需人工确认")).toBeTruthy();
+    // 展开按钮此前是个**只有图标**的按钮（没有无障碍名，测试也够不着）
+    fireEvent.click(screen.getByLabelText("查看详情"));
+    // 措辞是**过去式**：用户手填之后它仍然为真（陈述的是「上一次识别后端弃权了」）
+    expect(screen.getByText(/上一次识别后端弃权：instrument-illegal-chars/)).toBeTruthy();
+    // 展开态的无障碍名要跟着变（它是个 toggle）
+    expect(screen.getByLabelText("收起详情")).toBeTruthy();
+  });
+
+  it("后端不给弃权原因时面板里没有那一行（旧后端平滑降级）", async () => {
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [],
+      isFullScore: false,
+    };
+    await runAnalysis();
+    expect(screen.queryByText(/后端弃权/)).toBeNull();
+  });
+
+  it("段级弃权也要把诊断落到段行上 —— 那句「模型没给出乐器」可能是在说反话", async () => {
+    // 对抗测试实测的缺口：`refineSegmentsInner` 的「段级没认出乐器」早退分支里只挂了
+    // warning，把 `sectionRaw` / `abstainReason` 一起丢了。而那句 warning 说的
+    // 「模型没给出乐器」，**正是 `abstainReason` 要拆开的事** —— 弃权也可能是
+    // 「模型说了、我们拒了」（名字里有不能用于文件名的字符）。
+    h.segmentCuts = [2];
+    h.pageHeights = [100, 120];
+    h.llmReplies = [
+      // #1 整份：识别正常，但**声部漂移**（源行带一个 sectionRaw）
+      {
+        success: true,
+        section: "长笛",
+        instrument: "长笛",
+        subParts: [1, 2],
+        isFullScore: false,
+        sectionRaw: "木管",
+      },
+      // #2 第 1 段：弃权（模型没说话）
+      {
+        success: true,
+        section: "其他",
+        instrument: "",
+        subParts: [],
+        isFullScore: false,
+        sectionRaw: "木管",
+        abstainReason: "empty-instrument",
+      },
+      // #3 第 2 段：弃权，但原因是「模型给的乐器名里有不能用于文件名的字符」
+      {
+        success: true,
+        section: "其他",
+        instrument: "",
+        subParts: [],
+        isFullScore: false,
+        abstainReason: "instrument-illegal-chars",
+      },
+    ];
+    await runAnalysis({ names: ["短笛长笛.pdf"] });
+    await waitFor(() => expect(screen.getByText(/^已识别 → 长笛/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+    // 诊断在**展开面板**里（`warning` 与那行弃权原因都是面板内容）——
+    // 状态行上显示的是**继承自源行**的判断（「已识别 → 长笛」），这正是段级弃权要小心的地方
+    await waitFor(() => expect(screen.getAllByLabelText("查看详情")).toHaveLength(2), {
+      timeout: 10000,
+    });
+    fireEvent.click(screen.getAllByLabelText("查看详情")[1]);
+    await waitFor(() => expect(screen.getByText(/这一段没能单独识别/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    // ① **弃权原因落到了段行上**（它此前被那条早退 return 丢掉）
+    expect(screen.getByText(/上一次识别后端弃权：instrument-illegal-chars/)).toBeTruthy();
+    // ② **段级的漂移也能报出来**：第 1 段自己那次识别的回包就带着 `sectionRaw`（见上面的桩），
+    //    它的写回与整份那条路同源 —— 所以这一行也是「段级写回点没有漏字段」的见证
+    //    （⚠️ 别把这句读成「源行的漂移被继承下来了」：诊断字段**刻意不继承**，见 `splitIntoSegments`）
+    expect(screen.getAllByText(/模型曾给出声部「木管」/).length).toBeGreaterThan(0);
+  });
+
+  it("段行重试只重跑这一段，诊断也一并写回（0 次 OCR）", async () => {
+    // 段行的「重试」走 `retryRow` 里 `splitOf` 那一支。此前**没有任何用例**钉住它的写回 ——
+    // 删掉它写回的两行诊断字段，套件全绿（对抗测试实测）。
+    h.segmentCuts = [2];
+    h.pageHeights = [100, 120];
+    h.llmReplies = [
+      { success: true, section: "长笛", instrument: "长笛", subParts: [1, 2], isFullScore: false },
+      { success: true, section: "长笛", instrument: "长笛", subParts: [1], isFullScore: false },
+      { success: true, section: "长笛", instrument: "长笛", subParts: [2], isFullScore: false },
+    ];
+    await runAnalysis({ names: ["短笛长笛.pdf"] });
+    await waitFor(() => expect(screen.getByText(/^已识别 → 长笛/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+
+    // 「重试」只在未识别/失败的行上出现 —— 用户清空第 2 段的乐器名，那一行才变成未识别
+    const names = screen.getAllByPlaceholderText("乐器名");
+    fireEvent.change(names[1], { target: { value: "" } });
+    const ocrBefore = h.ocr.length;
+    // 这一次重试后端弃权 —— 原因必须落到这一行上
+    h.llmReplies.push({
+      success: true,
+      section: "其他",
+      instrument: "",
+      subParts: [],
+      isFullScore: false,
+      abstainReason: "instrument-too-long",
+    });
+    fireEvent.click(screen.getByText("重试"));
+
+    // 原因在**展开面板**里
+    await waitFor(() => expect(screen.getAllByLabelText("查看详情")).toHaveLength(2), {
+      timeout: 10000,
+    });
+    fireEvent.click(screen.getAllByLabelText("查看详情")[1]);
+    await waitFor(
+      () => expect(screen.getByText(/上一次识别后端弃权：instrument-too-long/)).toBeTruthy(),
+      { timeout: 10000 },
+    );
+    // 段行重试是纯 LLM：那一页的窄带文本切分时已经 OCR 过了
+    expect(h.ocr.length).toBe(ocrBefore);
+  });
+});
+
 describe("名字里的字符判据（判据本体在 unsafe-name.test.ts，这里钉的是**接上了没有**）", () => {
   it("乐器名里藏着 NBSP：拦在落库之前，且**指出码位** —— 后端管不到用户手输的这一份", async () => {
     // ⚠️ 理由要说准（这轮之后后端也判两种形态了，NBSP 在后端同样会被拦）：

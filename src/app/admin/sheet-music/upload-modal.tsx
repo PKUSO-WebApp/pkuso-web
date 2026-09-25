@@ -202,6 +202,17 @@ interface UploadFile {
    */
   subPartsOverCap?: number;
   /**
+   * 模型给的声部**原值**（`Analysis.sectionRaw`），落在闭集外时才有 —— 见 `LlmAnalysis`。
+   *
+   * ⚠️ 它**不是用户可编辑字段**（没有 Edit/Guess 两态，所以 `editsOf` 里没有它）：
+   * 唯一来源是 `runLlmAnalysis` 那次映射，读法就是 `f.sectionRaw`（`sectionWarning`）。
+   */
+  sectionRaw?: string;
+  /**
+   * 后端为什么弃权（`Analysis.abstainReason`）—— 展开面板里的一行诊断，见 `LlmAnalysis`。
+   */
+  abstainReason?: string;
+  /**
    * 存储键里那一段 id。**每行生成一次、重试复用**，这样失败重传走 `upsert`
    * 覆盖同一个对象，不会留下一堆孤儿文件。
    *
@@ -1430,10 +1441,52 @@ async function requestSegmentation(pageCount: number, pageTexts: PageText[]): Pr
  * ⚠️ **以上只对「整份」那次调用成立**：段级识别**不发文件名**（段行继承的是源合订本
  * 的名字，描述的是整本而不是这一段，见 `runLlmAnalysis` 的 `fileName` 参数）。
  */
+/**
+ * 后端响应里**「信号类」字段的消费者清单**（pkuso-web#302）。
+ *
+ * 后端为了「把静默差异变成可见信号」专门发这些字段；前端不读就等于它们不存在，
+ * 而后端会以为已经交代过了。这类漏接**已经发生过多次**（`evidence`、`sectionRaw` 各一次），
+ * 所以把清单钉在这里：**新增信号字段时，这一块要一起改**。
+ *
+ * - `subPartsRaw` → `subPartsNotice`（行内提示）+ `uploadBlocker`（拦下）
+ * - `subPartsOverCap` → `subPartsNotice`（上界漂移的维护者提示）
+ * - `evidence` → `evidenceLine`（显示依据）
+ * - `evidenceFound` → `evidenceWarn`（警示色）
+ * - `evidenceFromFileName` → `evidenceLine`（「来自文件名」那一态）
+ * - `sectionRaw` → `sectionWarning`（两仓声部词表漂移的**唯一**可见信号）
+ * - `abstainReason` → 展开面板的「上一次识别后端弃权」（排查用）
+ * - `isFullScore` → `isFullScoreRow`（声部落总谱、不进分段）
+ * - `extraSections` → `editsOf().extraSections`（一份谱落成几行）
+ *
+ * ⚠️ 注意「算了但没写进行状态」也是漏接的一种形态：`analyzeOne` / `refineSegmentsInner`
+ * 是**逐字段**构造 `UploadFile` 的（不是 spread），中间少写一个字段，展示代码就成死代码
+ * —— `subPartsOverCap` 栽过这一次（它自己的注释里记着：审查靠「提示可达性」的探针抓出来的）。
+ */
 interface LlmAnalysis {
   section: string;
   instrument: string;
   subParts: number[];
+  /**
+   * 模型给的声部**原值**（后端 `Analysis.sectionRaw`）：它落在两仓约定的闭集之外时才有，
+   * 此时 `section` 已被后端折成「其他」。
+   *
+   * ⚠️ **它必须有消费者**（pkuso-web#302）：后端 prompt 里的声部词表与前端
+   * `INSTRUMENT_ORDER` 是两份手抄副本，没有同步机制 —— 这个字段就是漂移的**唯一**信号。
+   * 而漂移后的落库值（「其他」）本身是合法的，只看 `section` 的话漂移**完全不可见**。
+   */
+  sectionRaw?: string;
+  /**
+   * 后端**为什么弃权**（`Analysis.abstainReason`，如 `empty-instrument` /
+   * `instrument-illegal-chars`）。
+   *
+   * ⚠️ 与「模型没给出乐器」**不是一回事**：弃权可能是「模型说了、但我们拒了」
+   * （名字里含不能用于文件名的字符、超长）。两者的界面后果都是「需人工确认」，
+   * 但排查时该看的地方不同，所以它是展开面板里的诊断信息（与 `cropNote` 同一类），
+   * 不是给用户照做的一句话。
+   *
+   * ⚠️ **可选**：旧后端不返回 → `undefined` → 面板里不显示这一行（平滑降级）。
+   */
+  abstainReason?: string;
   /** 模型给了号但后端没解析出来时，模型用的那个写法，见 UploadFile.subPartsRaw */
   subPartsRaw?: string;
   /** 后端给的号超过前端上界时的个数，见 UploadFile.subPartsOverCap */
@@ -1523,6 +1576,12 @@ async function runLlmAnalysis(fileName: string | null, ocrText: string): Promise
       subParts: sanitizeSubParts(data.subParts),
       // 「模型给了号但没读懂」的信号，原样带过来给界面提示用户手填
       subPartsRaw: typeof data.subPartsRaw === "string" ? data.subPartsRaw : undefined,
+      // 声部漂移信号（`sectionRaw`）与弃权原因（`abstainReason`）：都是**可选**字段，
+      // 旧后端不返回 → undefined → 界面不显示（两仓各自上线都不会坏）。
+      // ⚠️ 这两个字段此前**一个消费者都没有**（pkuso-web#302）—— 后端为「把静默差异
+      // 变成可见信号」专门发了它们，没人读就等于不存在。
+      sectionRaw: typeof data.sectionRaw === "string" ? data.sectionRaw : undefined,
+      abstainReason: typeof data.abstainReason === "string" ? data.abstainReason : undefined,
       // 超上界时 sanitize 会把号整个丢掉，而这条路径**不带任何其他信号** ——
       // 不单独报的话它就是一条完全静默的丢号路径（见 overSubPartsCap）
       subPartsOverCap: overSubPartsCap(data.subParts) ?? undefined,
@@ -1860,6 +1919,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         evidence,
         evidenceFound,
         evidenceFromFileName,
+        sectionRaw,
+        abstainReason,
         isFullScore,
         extraSections,
       } = analysis;
@@ -1906,6 +1967,11 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         evidence,
         evidenceFound,
         evidenceFromFileName,
+        // 声部漂移信号与弃权原因（pkuso-web#302）：与上面那两个漏写是同一种病 ——
+        // 上游算了、展示代码也写了那一支，**中间没人把它写进行状态**，于是那是死代码。
+        // ⚠️ `undefined` 也要写：重试之后得把上一次的原因清掉。
+        sectionRaw,
+        abstainReason,
         // 记下页数：成本估算与「这份要不要分段」都看它（多页且非总谱才走分段）
         pageCount: walk?.pageCount,
         // 存储键要在**分析完成时**就定下来（每行一次、重试复用），
@@ -1986,6 +2052,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             evidence: got.evidence,
             evidenceFound: got.evidenceFound,
             evidenceFromFileName: got.evidenceFromFileName,
+            sectionRaw: got.sectionRaw,
+            abstainReason: got.abstainReason,
             // 号也一并写回（2026-09-25）：这一段的重试就是为了「上一次没认出来」，
             // 而号同样是段级识别的产物 —— 只更新乐器名、把号留在空上，用户还得手填。
             // ⚠️ **空数组不覆盖**：组级补号（`fillMissingSubParts`）可能已经给这一段
@@ -2391,6 +2459,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       sectionEdit: f.sectionEdit,
       instrumentGuess: f.instrumentGuess,
       instrumentEdit: f.instrumentEdit,
+      // ⚠️ **诊断字段刻意不继承源行**（与 `subPartsRaw` / `extraSections` 同一类决定）：
+      // 它们陈述的是「**这一次**识别怎么回答的」，而拆完段之后每一段都会各识别一次 ——
+      // 继承来的值只在这几秒的窗口里可见，随后就被这一段自己的答案覆盖（写回里成对写），
+      // 而那个窗口里用户什么也做不了。所以「源行那次漂移」随源行一起消失，不留到段上。
       // 号一律留空起手，由各段**自己的首页文本**识别得出（见 `refineSegments`）——
       // 不继承源行的号，也不按位置预填，理由见上面 `splitIntoSegments` 的 docblock。
       subPartsGuess: [],
@@ -2506,6 +2578,14 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             cur.sectionEdit === cur.sectionGuess && cur.instrumentEdit === cur.instrumentGuess
               ? {
                   warning: "这一段没能单独识别（模型没给出乐器）—— 上面是整份的判断，请逐段核对",
+                  // ⚠️ **两个诊断字段照样要写回**（对抗测试实测漏掉过）：上面那句 warning 说
+                  // 「模型没给出乐器」，而那**正是 `abstainReason` 要拆开的事** —— 弃权可能是
+                  // 「模型说了、但我们拒了」（名字里有不能用于文件名的字符）。不写回的话，
+                  // 界面上会留着一句会误导的话，而唯一能纠正它的字段被这条 return 丢掉。
+                  // （`subParts*` 那几个留着的理由 —— 空答案不该覆盖用户可传的继承值 ——
+                  // 不适用于诊断字段：它们不参与 `uploadBlocker`。）
+                  sectionRaw: got.sectionRaw,
+                  abstainReason: got.abstainReason,
                 }
               : {},
           );
@@ -2533,6 +2613,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             evidence: got.evidence,
             evidenceFound: got.evidenceFound,
             evidenceFromFileName: got.evidenceFromFileName,
+            // 声部漂移与弃权原因同理（pkuso-web#302）：段级识别也会漂移 / 也会弃权
+            sectionRaw: got.sectionRaw,
+            abstainReason: got.abstainReason,
             // 空数组也照写 —— 「这一段没有号」是完整答案（见 docblock）
             subPartsGuess: got.subParts,
             subPartsRaw: got.subPartsRaw,
@@ -3141,10 +3224,21 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   /**
    * 声部词表漂移告警。后端 prompt 里的 16 个声部名与前端 `INSTRUMENT_ORDER`
    * 是两份手抄副本，没有跨仓同步机制 —— 这条告警就是那个机制缺席时的可见信号。
+   *
+   * ⚠️ **两个来源都要判**（pkuso-web#302）：只看字段里的值（`sectionEdit ?? sectionGuess`）
+   * 时，模型返回词表外声部的那条路**完全不可见** —— 后端已经把它折成了合法的「其他」，
+   * 于是「漂移」与「模型真的判不出来」在界面上长得一模一样。原值在 `sectionRaw` 里。
    */
   const sectionWarning = (f: UploadFile) => {
     const s = (f.sectionEdit ?? f.sectionGuess ?? "").trim();
-    return s && !isKnownSection(s) ? `声部「${s}」不在标准列表内` : "";
+    if (s && !isKnownSection(s)) return `声部「${s}」不在标准列表内`;
+    // 只陈述模型给过什么，**不**说「已记为其他」：用户可能已经改成别的声部了，
+    // 那句话在那时会变成假话（而这一行是排查用的，宁可少说）
+    // ⚠️ 用**过去式**（对抗测试实测的取舍）：用户把声部改对之后这句仍然挂着 —— 它陈述的是
+    // 模型**当时**给过什么（漂移要维护者去改 prompt 词表），不随用户的修改消失。
+    // 说成「现在的声部不在列表内」会让用户以为自己的修改没生效。
+    if (f.sectionRaw) return `模型曾给出声部「${f.sectionRaw}」（不在标准列表内）`;
+    return "";
   };
 
   /**
@@ -3393,6 +3487,11 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                       {hasDetails(f) ? (
                         <button
                           onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
+                          // 图标按钮必须有无障碍名（也可以被测试直接取到 —— 展开面板里的
+                          // 诊断信息此前没有任何用例能触达，见 pkuso-web#302）
+                          aria-label={expandedIdx === i ? "收起详情" : "查看详情"}
+                          aria-expanded={expandedIdx === i}
+                          title={expandedIdx === i ? "收起详情" : "查看详情"}
                           className="shrink-0 text-text-muted hover:text-text"
                         >
                           {expandedIdx === i ? (
@@ -3912,6 +4011,16 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                         </div>
                       )}
                       {f.cropNote && <p className="text-text-muted">{f.cropNote}</p>}
+                      {/* 弃权原因：**排查用**，所以给的是后端那个 slug 而不是编一句人话 ——
+                          它要与后端日志对得上。用户能照做的那句话在状态行上（「需人工确认」）。
+                          ⚠️ 措辞必须是**过去式**、而且不能加「这一行未识别」之类的当下判断
+                          （对抗测试实测）：用户按提示手填之后这一行已经识别了，句子里那句
+                          「未识别原因」就成了假话；而**段级弃权**的行更特别 —— 它继承着源行的
+                          乐器名（状态行显示「已识别」），这时把原因藏起来恰恰会丢掉最需要它的
+                          那种情形。所以只陈述「上一次识别后端弃权了」这个**事实**。 */}
+                      {f.abstainReason && (
+                        <p className="text-text-muted">上一次识别后端弃权：{f.abstainReason}</p>
+                      )}
                       {f.warning && <p className="text-warning">{f.warning}</p>}
                       {f.ocrText && (
                         <div>

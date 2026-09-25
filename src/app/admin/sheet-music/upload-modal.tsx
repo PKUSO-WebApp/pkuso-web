@@ -38,6 +38,7 @@ import {
   parseSubPartsInput,
   sanitizeSubParts,
 } from "./sub-parts";
+import { fileTargetsOf, MAX_EXTRA_SECTIONS, normalizeExtraSections } from "./sections";
 import { mapLinesToPages, MOSAIC_HARD_LIMIT_BYTES, packBands } from "./mosaic";
 import { duplicateNames, openForSplit, splitRefusal } from "./split-pdf";
 
@@ -127,6 +128,19 @@ interface UploadFile {
   /** 声部（闭集，写进 `sheet_music_parts.section`，详情页按它分组、也按它排序） */
   sectionGuess?: string;
   sectionEdit?: string;
+  /**
+   * 主声部之外，这份谱**还要落到**哪几个声部（后端 `Analysis.extraSections`）。
+   *
+   * 只有「一个分部、跨两个声部、又不能切」的谱才有（`Violoncello e Basso` 那种共用分谱，
+   * 见 `sections.ts` 的说明）。上传时一份文件会**落成两行**，**每行各自一个存储对象**。
+   *
+   * ⚠️ `Guess` 缺省是 `undefined` 而不是 `[]`，与 `sectionGuess` 一样：
+   * **旧后端不返回这个字段**，那时必须与「没有额外声部」等价 —— 两仓各自上线才安全。
+   * 取值一律走 `editsOf`，别就地写 `?? []`（同文件里已栽过「三处各抄一份推导式」）。
+   */
+  extraSectionsGuess?: string[];
+  /** 用户增删过的额外声部。`undefined` = 没动过（用 Guess） */
+  extraSectionsEdit?: string[];
   /** 中文乐器名（开集，写进 sheet_music_files.instrument，也是文件名主干的来源） */
   instrumentGuess?: string;
   instrumentEdit?: string;
@@ -156,6 +170,13 @@ interface UploadFile {
   /**
    * 存储键里那一段 id。**每行生成一次、重试复用**，这样失败重传走 `upsert`
    * 覆盖同一个对象，不会留下一堆孤儿文件。
+   *
+   * ⚠️ **那句话只在「落点集不变」时成立**。跨声部的行按**落点位置**派生路径
+   * （`${storageId}-k`，见 `uploadOne`），所以「先传成功、批量 insert 失败、用户又
+   * 把落点数改小、再重试」这一串之下，多出来的那个对象（`-1`）没人引用 —— 而详情页
+   * 所有删除路径都是**按行枚举对象**的，从界面上删不掉它（只能到 Storage 后台清）。
+   * 概率极低、后果只是桶里多一个看不见的对象，所以先如实记着而不是加一套清理逻辑；
+   * 要根治就让路径带**落点身份**而不是位置（例如声部的短哈希），那样增删落点都不会挪动别人。
    */
   storageId?: string;
   /** 这一份 PDF 的总页数。分析时顺手记下 —— 成本估算与「要不要分段」都看它 */
@@ -229,6 +250,7 @@ interface UploadFile {
  */
 function editsOf(f: UploadFile): {
   section: string;
+  extraSections: string[];
   instrument: string;
   subParts: number[];
   subPartsInvalid?: string;
@@ -247,6 +269,11 @@ function editsOf(f: UploadFile): {
       : { value: f.subPartsGuess ?? [] };
   return {
     section,
+    // 清洗、保序、去主声部，只此一份 —— 文件名、落库行数、界面上的 chip 都读它
+    extraSections: normalizeExtraSections(
+      section,
+      f.extraSectionsEdit ?? f.extraSectionsGuess ?? [],
+    ),
     instrument: (f.instrumentEdit ?? f.instrumentGuess ?? "").trim(),
     subParts: parsed.value,
     subPartsInvalid: isFullScore ? undefined : parsed.invalid,
@@ -277,6 +304,18 @@ function isFullScoreRow(f: UploadFile): boolean {
   // 走 editsOf 而不是抄一遍 `(sectionEdit ?? sectionGuess).trim()`：同文件里已经栽过
   // 一次「三处各抄一份推导式」的跟头，总谱这条判据只能有一份。
   return editsOf(f).section === FULL_SCORE_SECTION;
+}
+
+/**
+ * 这一行能不能有**额外声部**（跨声部的共用分谱，见 `sections.ts`）。
+ *
+ * ⚠️ 判据必须与 `normalizeExtraSections` **同源**：那个函数在总谱与「其他」时都返回 `[]`。
+ * 分叉的后果很具体 —— 界面让用户加、加完被清洗悄悄丢掉（chip 不出现），
+ * 而用户是照着界面上的东西核对的。渲染处据此决定是给「+ 声部」还是给一句解释。
+ */
+function canHaveExtraSections(f: UploadFile): boolean {
+  const section = editsOf(f).section;
+  return section !== FULL_SCORE_SECTION && section !== OTHER_INSTRUMENT_GROUP;
 }
 
 /**
@@ -1353,6 +1392,14 @@ interface LlmAnalysis {
    * 分段里最贵的一笔就是总谱，而它今天只能靠人工标记（人工标记要等分段跑完才做得出）。
    */
   isFullScore: boolean;
+  /**
+   * 主声部之外还要落到哪几个声部（pkuso-backend 的 `Analysis.extraSections`）。
+   *
+   * ⚠️ **可选**，不是「后端一定会给」：这个字段是后加的，而线上跑着的后端可能还是旧的
+   * —— 那时它是 `undefined`，语义上等于「没有额外声部」。所以取值一律走
+   * `editsOf().extraSections`（那里统一 `?? []`），别在调用点各写各的。
+   */
+  extraSections?: string[];
 }
 
 async function runLlmAnalysis(fileName: string, ocrText: string): Promise<LlmAnalysis> {
@@ -1382,6 +1429,11 @@ async function runLlmAnalysis(fileName: string, ocrText: string): Promise<LlmAna
       // 与后端同一条判据：只有恰好 true 才算总谱。字段缺失/后端还是旧版时必然是
       // undefined → false，于是行为与加这个字段之前一字不变（**平滑降级**）。
       isFullScore: data.isFullScore === true,
+      // 同样平滑降级：旧后端不返回这个字段 → undefined → 清洗后是 `[]` →
+      // 这一行照旧只落一个声部。**两仓各自上线都不会坏**（这是 #15 那次
+      // 「必须同批上线」换来的教训：新字段只在**读的一侧**兜底是不够的，
+      // 还得保证「缺席」与「空」同义 —— 这里靠 normalizeExtraSections 兜住）。
+      extraSections: normalizeExtraSections(String(data.section ?? ""), data.extraSections),
     };
   }
   throw new Error(`LLM 分析失败: ${data?.error || data?.message || "未知错误"}`);
@@ -1420,6 +1472,16 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   // 防重复提交：ref 同步阻断竞态窗口（setState 是异步的，两次快速点击之间 phase 仍是旧值）
   const analyzingRef = useRef(false);
   const segRunningRef = useRef(false);
+  /**
+   * 正在重试的行下标（逐行重试用）。
+   *
+   * ⚠️ `analyzingRef` 挡不住它：那个 ref 只由 `startAnalysis` 置位，而 `analyzeOne`
+   * 自己不管它 —— 直接调 `analyzeOne` 就绕过去了。连点两次「重试」会起两条流水线写
+   * 同一行（最后写赢，但那一份文件的 OCR 烧两次）。
+   *
+   * 用 `Set<number>` 而不是单个布尔：两行可以各重试各的，互不相干。
+   */
+  const retryingRef = useRef(new Set<number>());
   // 分段的 state 半（ref 挡重复点击，state 让**别的按钮**知道分段在跑）
   const [segBusy, setSegBusy] = useState(false);
   /**
@@ -1610,7 +1672,15 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         analysis = await runLlmAnalysis(file.originalName, ocrText);
       }
 
-      const { section, instrument, subParts, subPartsRaw, subPartsOverCap, isFullScore } = analysis;
+      const {
+        section,
+        instrument,
+        subParts,
+        subPartsRaw,
+        subPartsOverCap,
+        isFullScore,
+        extraSections,
+      } = analysis;
       // 未识别时**不预填** instrumentEdit（留空串）：预填一个猜测值会被用户直接
       // 接受，等于把错误洗成「已确认」。空的输入框会逼用户做一次真实判断。
       // **总谱**（#297）：模型判出「一页上并列着多个乐器」时，声部直接落「总谱」——
@@ -1619,6 +1689,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       // 那正是分段里最贵的一笔（总谱今天要靠人工标记，而人工标记只能等分段跑完才做得出）。
       updateFile(i, {
         status: "analyzed",
+        // ⚠️ **必须清 `error`**：`updateFile` 是合并（`{...f, ...patch}`），而这一行可能是
+        // 从 `error` 重试回来的 —— 不清的话「失败: …」那句红字会挂在一条**已经成功**的
+        // 行上，读起来像「重试也没用」。这与三个输入 handler 顺手清 `error` 是同一条理由。
+        error: undefined,
         llmResult: isFullScore
           ? "识别结果: 总谱（整份）—— 不参与分段"
           : analysisSummary(section, instrument, subParts),
@@ -1626,6 +1700,12 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         sectionEdit: isFullScore ? FULL_SCORE_SECTION : section,
         instrumentGuess: isFullScore ? FULL_SCORE_SECTION : instrument,
         instrumentEdit: isFullScore ? FULL_SCORE_SECTION : instrument,
+        // 跨声部的共用分谱（`Violoncello e Basso` 那种）：这一行上传时要落成几行。
+        // 总谱恒为空（`normalizeExtraSections` 里挡掉了），所以这里不用再判 isFullScore。
+        // **不写 `extraSectionsEdit`**：`undefined` = 用户没动过 → 界面显示 Guess，
+        // 与 section/instrument 那两对「Guess + Edit 都写」不同 —— 那两个的 Edit 是输入框的
+        // 初值，而这个字段在界面上是 chip 列表，没有「输入框初值」这回事。
+        extraSectionsGuess: extraSections,
         ...(isFullScore ? { subPartsEditText: "" } : {}),
         subPartsGuess: subParts,
         // 不设 subPartsEditText：`undefined` = 没编辑过 → 输入框显示 Guess。
@@ -1647,6 +1727,54 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         status: "error",
         error: err instanceof Error ? err.message : String(err),
       });
+    }
+  };
+
+  /**
+   * 重试**一行**的分析（`pkuso-web#298` 的已知问题：错误行是死胡同）。
+   *
+   * 只服务一种行：**首次分析就失败**的（`status === "error"` 且 `instrumentGuess === undefined`）。
+   * 这种行三处叠加成死胡同（原因本身**看得见** —— 标题行那句 `失败: …` 是红的；
+   * 缺的是**能点的东西**）：
+   *   · `uploadableCount` 按 `instrumentGuess !== undefined` 计数 → 它不进上传；
+   *   · 编辑器与那行红字都在同一道门里 → 整格控件一个都不渲染；
+   *   · 移除按钮只在 select 阶段有。
+   * 整批都是这种行时，「确认上传」会被禁用 —— 用户唯一的出路是关掉弹窗重加文件，
+   * 代价是丢掉整批已经烧掉的 OCR 配额（`uploadableCount` 上面那段注释说的就是这个）。
+   *
+   * 上传阶段失败的行（有 `instrumentGuess` 的那种）**不走这里**：点「确认上传」就会重传，
+   * 那是既有的、有注释说明的重试路，这里再给一个按钮只会让人不知道按哪个。
+   */
+  const retryRow = async (i: number) => {
+    if (retryingRef.current.has(i)) return;
+    retryingRef.current.add(i);
+    try {
+      // 清掉上一次留下的**痕迹**。`updateFile` 是合并，不清就会挂在成功后的行上。
+      //
+      // ⚠️ **这里不清 `error`** —— 那一条归 `analyzeOne` 的成功 patch 管
+      // （它才是「这次分析成功了」的那个判据）。两处都清的话其中一处**永远不承重**，
+      // 而变异验证会直接暴露这件事：把成功 patch 里那句删掉，若两边都清则测试全绿 ——
+      // 等于那句没被任何用例钉住。清 error 只留一处，且留在知道结论的那一处。
+      // 重试**期间**也看不到上一次的错误：行进了 pending/analyzing，`statusText` 是
+      // 「待分析 / 分析中…」，而编辑器那道门在 `analyzed || error` 上 —— 三个状态都不显示它。
+      //
+      // ⚠️ **不清 `pageTexts` / `segState` / `segmentStarts` / `segFailedPages`** ——
+      // 那些是分段链路的产物（花过 OCR 买来的），一次「重跑分析」没有理由把它们抹掉；
+      // 重试后 `pageCount` 会重新写，分段要不要重跑由既有的 `segPending` 判据决定。
+      updateFile(i, {
+        status: "pending",
+        warning: undefined,
+        cropNote: undefined,
+        preview: undefined,
+        sourcePage: undefined,
+        pageCount: undefined,
+      });
+      // 传一份**状态已改成 pending 的对象**：`analyzeOne` 开头的 `file.status !== "pending"`
+      // 读的是传进去的那个对象（闭包快照，见 `analyzeOne` 的说明），而 `files[i]` 此刻
+      // 还是 `error`。其余字段（`file` / `originalName`）本来就来自这一行，照传即可。
+      await analyzeOne({ ...files[i], status: "pending" }, i);
+    } finally {
+      retryingRef.current.delete(i);
     }
   };
 
@@ -1941,6 +2069,21 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       // 号按位置预填，仅在个数相等时
       subPartsGuess: aligned ? [subParts[k]] : [],
       subPartsRaw: f.subPartsRaw,
+      // ⚠️ **刻意不继承 `extraSections`**（源行是跨声部共用分谱时它非空）——
+      // 这不是漏写的字段。切分的目的就是让**每一段各归各的声部**：源行那句
+      // 「还落到低音提琴」是对**整份**的判断，拆开之后对任何单独一段都不再成立，
+      // 用户会逐段确认自己该归哪儿（预填的 sectionEdit 就是干这个的）。
+      //
+      // 反过来「顺手补上」会坏掉：两段的行级主名都预填自源行（都叫 `大提琴.pdf`），
+      // 于是 `duplicatedInGroup` 判定同组重名、**把整组的上传拦下**，报一句
+      // 「与同组的其他段重名，请改乐器名或号」—— 而用户根本没做错什么，
+      // 改名字也解不开（改的是主名，额外落点那份仍在）。
+      //
+      // ⚠️ `duplicatedInGroup` 现在仍只看**行级**那一个名字，看不出「一行会展开成多个文件」。
+      // 已知的漏网形态：手工给某一段加了额外声部，而那个额外声部正是另一段的主声部
+      // —— 但这要求用户先拆一份共用分谱（本来就自相矛盾）再手工补，现实里很边缘。
+      // 没顺手改它，是因为那要连带处理「不同源文件之间也会同名」这个**既有**的更宽缺口，
+      // 属另一件事。
       pageCount: seg.to - seg.from + 1,
       // 每段一个存储键：重试覆盖的是**这一段自己**，不会串到别的段
       storageId: crypto.randomUUID(),
@@ -2056,6 +2199,42 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   };
 
   /**
+   * 额外声部（跨声部的共用分谱，见 `sections.ts`）的增删。
+   *
+   * 写进 `extraSectionsEdit` 而不是 Guess：一旦动过，这个字段就是**用户的表态**，
+   * 与 Guess 脱钩 —— 与 `sectionEdit` / `instrumentEdit` 同一条规矩。
+   *
+   * **存的是清洗后的值**（不是用户点的那个原始数组）：上界、去重、去主声部都由
+   * `normalizeExtraSections` 判一次，于是界面上的 chip 数 = 真实会落库的声部数，
+   * 两者不可能分叉。清洗规则只此一份（后端 `parseExtraSections` 是同一套）。
+   */
+  const setExtraSections = (index: number, next: string[]) => {
+    const f = files[index];
+    if (!f) return;
+    const primary = (f.sectionEdit ?? f.sectionGuess ?? "").trim();
+    updateFile(index, {
+      extraSectionsEdit: normalizeExtraSections(primary, next),
+      error: undefined,
+    });
+  };
+
+  const addExtraSection = (index: number, value: string) => {
+    const f = files[index];
+    if (!f) return;
+    // 从**当前生效的**那一份出发（Edit 优先，否则 Guess）—— 只走 editsOf，不自己抄推导式
+    setExtraSections(index, [...editsOf(f).extraSections, value]);
+  };
+
+  const removeExtraSection = (index: number, value: string) => {
+    const f = files[index];
+    if (!f) return;
+    setExtraSections(
+      index,
+      editsOf(f).extraSections.filter((s) => s !== value),
+    );
+  };
+
+  /**
    * 预览「这将存成什么名字」。乐器名为空时返回空串。
    *
    * 预览的是**人类可读的名字**（`声部 / 文件名`）而不是真实的存储键 ——
@@ -2066,11 +2245,17 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     // 取值**只走 editsOf**（与落库、与 uploadBlocker 是同一条判据）。
     // 早先这里自己抄了一份推导式，于是非法输入时预览会显示成一个**看着完全正常**的
     // `圆号.pdf`（非法时 parse 的 value 恒为 `[]`）—— 而那一行其实传不上去。
-    const { section, instrument, subParts, subPartsInvalid, subPartsUnread } = editsOf(f);
+    const { section, extraSections, instrument, subParts, subPartsInvalid, subPartsUnread } =
+      editsOf(f);
     if (!instrument) return "";
     // 有硬伤时不报一个像样的名字：宁可显示「待确认」，也别让用户以为存的就是它
     if (subPartsInvalid || subPartsUnread) return `${section} / （分声部号待确认）`;
-    return `${section} / ${generateFileName(instrument, subParts)}`;
+    // **跨声部时要把落点全列出来** —— 只显示主声部的话，用户看到的落库结果与预览对不上，
+    // 而这份文件确实会在两个声部组里各出现一次。逐条复用 `fileTargetsOf`（同一个判据），
+    // 不在这里另写一套推导式 —— 三处各抄一份的跟头这个文件已经栽过一次。
+    return fileTargetsOf(section, extraSections, instrument, subParts)
+      .map((t) => `${t.section} / ${t.fileName}`)
+      .join("、");
   };
 
   const handleSubPartsChange = (index: number, value: string) => {
@@ -2170,7 +2355,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         ): Promise<boolean> => {
           // 声部与乐器名分开取：声部是闭集（写进 parts.section），
           // 乐器名是开集（写进 files.instrument，也是文件名主干）
-          const { section, instrument, subParts, subPartsInvalid, subPartsUnread } =
+          const { section, extraSections, instrument, subParts, subPartsInvalid, subPartsUnread } =
             editsOf(uploadFile);
 
           // 拦下，但**不改状态**。这两行缺的是用户补填，而编辑器只在有识别结果的行上
@@ -2202,37 +2387,107 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           // 这一行能往下走了，把上一次的拦截/失败提示清掉，免得文案留在界面上说谎
           updateFile(i, { error: undefined, status: "uploading" });
 
-          // 用到才建。建失败时这张票就是 null，用到同一张票的行各报各的错。
-          const partId = await ensurePart(section);
-          if (!partId) {
-            updateFile(i, { status: "error", error: "创建声部失败" });
+          // 这一行要落成**几条**（跨声部的共用分谱多于一条，见 sections.ts）。
+          // 判据只此一份 —— 文件名、落库行数、界面上的 chip 都从 `editsOf` 这一条路来。
+          const targets = fileTargetsOf(section, extraSections, instrument, subParts);
+          // 理论上到不了这里（`uploadBlocker` 已经拦下空声部），但**必须当失败报**：
+          // 空数组会让这次上传什么都不插却回一个「成功」——那正是本仓反复记载的静默失败。
+          if (targets.length === 0) {
+            updateFile(i, { status: "error", error: "没有可落库的声部" });
             return false;
           }
 
-          const generatedFileName = generateFileName(instrument, subParts);
-          const filePath = pathOf(scoreId, uploadFile.storageId ?? crypto.randomUUID());
-          const { error: uploadError } = await supabase.storage
-            .from("sheet-music")
-            .upload(filePath, blob, { contentType: "application/pdf", upsert: true });
-
-          if (uploadError) {
-            updateFile(i, { status: "error", error: uploadError.message });
-            return false;
+          // 每个落点**各自一个存储对象**。
+          //
+          // ⚠️ 这里原来写的是「多条行共用同一个 `storage_path`」（一份物理分谱、一个对象），
+          // **那是错的，已改**：详情页删除时是**无条件**删对象的 —— `[id]/page.tsx` 的
+          // `deleteFile` / `deletePart` 都是**先** `storage.remove(...)`、**再**删行。
+          // 共用对象的话，删掉「大提琴」那一行会把 PDF 一起删掉，而「低音提琴」那行还指着它：
+          // 详情页里看着完好，**下载时 404**，用户没有任何线索。
+          // 改成共用需要把详情页那两条删除路径都改成「先查还有没有别人引用」——
+          // 那是另一处改动（且那个页面在本仓没有测试），所以这里让每个落点独立，
+          // 把耦合**从构造上**消掉。代价只是同一份字节在桶里存了两份。
+          //
+          // 路径的 id 由行自己的 `storageId` 派生（第 0 个仍用原值，保持既有行的形态不变），
+          // 所以**重试仍走同一条路径 + `upsert`**，不会留下一堆孤儿对象 ——
+          // ⚠️ 但那只在**落点集不变**时成立（路径按落点**位置**派生）：若一次尝试传成功、
+          // 批量 insert 失败、用户又把落点数改小，多出来的 `${base}-1` 就没人引用了，
+          // 而详情页的删除路径是按行枚举对象的，从界面上删不掉。见 `storageId` 的说明。
+          const baseStorageId = uploadFile.storageId ?? crypto.randomUUID();
+          // 与 `targets` **逐位对应**的存储路径（下标 k 的落点用 `paths[k]`）。
+          // 不用「给 target 挂一个可变字段」的写法：`FileTarget` 是纯数据，
+          // 往它身上塞运行期的副作用会让 `fileTargetsOf` 的返回值不再是纯函数的结果。
+          const paths: string[] = [];
+          for (let k = 0; k < targets.length; k++) {
+            const filePath = pathOf(scoreId, k === 0 ? baseStorageId : `${baseStorageId}-${k}`);
+            const { error: uploadError } = await supabase.storage
+              .from("sheet-music")
+              .upload(filePath, blob, { contentType: "application/pdf", upsert: true });
+            if (uploadError) {
+              updateFile(i, { status: "error", error: uploadError.message });
+              return false;
+            }
+            paths.push(filePath);
           }
 
-          const { error: dbError } = await supabase.from("sheet_music_files").insert({
-            part_id: partId,
-            storage_path: filePath,
-            file_name: generatedFileName,
-            // 乐器名单独存一列，与派生出的文件名分开 —— 便于区分
-            // 「LLM 答错」与「文件名生成错」
-            instrument,
-            // 分声部号同样单独存一列。**它此前只活在 file_name 字符串里** ——
-            // 详情页刷新后拿不到分声部，排序与显示都无从谈起；文件名不是数据。
-            sub_parts: subParts,
-            file_size: blob.size,
-            uploaded_by: user.id,
-          });
+          // 声部按需建（同一张票，见 `ensurePart`）。**先把所有声部建齐，再插文件行**：
+          // 建失败时一行文件都没插，不会留下「半条」记录。
+          //
+          // ⚠️ 已知代价：**这么建出来的声部不会回滚**。中途某个 `ensurePart` 失败时，
+          // 已经建好的那几个 part 会留下、而一行文件都没插 → 详情页多出「0 个文件」的空声部
+          // （只能人工删）。**最多留 = 落点数个**（1 个主声部 + `MAX_EXTRA_SECTIONS` 个额外声部），
+          // 属既有形态（以前最多 1 个）的放大。
+          //
+          // **不要「失败时把刚建的 part 删掉」**：`ensurePart` 的票是**按 section 共享**的，
+          // 同一批里别的行（甚至并发的另一个 worker）可能正要用那个 part —— 回滚会把
+          // 别人正在用的声部删掉，比留一个空声部糟得多。空声部是可恢复的（删除按钮一直渲染）。
+          const rows: Array<Record<string, unknown>> = [];
+          for (const [k, target] of targets.entries()) {
+            const partId = await ensurePart(target.section);
+            if (!partId) {
+              updateFile(i, { status: "error", error: `创建声部失败（${target.section}）` });
+              return false;
+            }
+            rows.push({
+              part_id: partId,
+              storage_path: paths[k],
+              file_name: target.fileName,
+              // 乐器名单独存一列，与派生出的文件名分开 —— 便于区分
+              // 「LLM 答错」与「文件名生成错」
+              instrument: target.instrument,
+              // 分声部号同样单独存一列。**它此前只活在 file_name 字符串里** ——
+              // 详情页刷新后拿不到分声部，排序与显示都无从谈起；文件名不是数据。
+              // 多条落库行共用同一份号：它们是同一个物理分谱的不同落点。
+              sub_parts: subParts,
+              file_size: blob.size,
+              uploaded_by: user.id,
+            });
+          }
+
+          // ⚠️ **一次批量 insert，不是循环 N 次。**
+          //
+          // 循环插的话，第 k 条失败会留下前 k-1 行；而重试会把它们**再插一遍** ——
+          // 详情页出现两份同名文件（`storage_path` 也相同），事后无法分辨哪行是多的。
+          // 这条路径正是本次改动最容易出错的地方。
+          //
+          // 依据分两半，把握程度不同，别当成一件事：
+          // · **实测**：传数组时 supabase-js 只发**一个** POST（body 是 JSON 数组），
+          //   循环则发 N 个。复现：建一个客户端时把 `global.fetch` 换成打桩函数，
+          //   分别调一次 `.insert([a, b])` 与两次 `.insert(a)` / `.insert(b)`，数调用次数。
+          // · **假设**：PostgREST 把那个数组体翻译成**一条**多行 INSERT，而单条语句在
+          //   PG 里是原子的（全落或全不落）。这是 PostgREST 批量插入的既有行为，
+          //   但本仓没有对它的直接实测 —— 若哪天要完全坐实，得在库里制造一次部分失败
+          //   再看有没有半截数据。**这一半不成立的话，下面这道防线就只是「少发几个请求」。**
+          //
+          // ⚠️ **它只挡住「部分提交」这一半，挡不住「响应丢了」。** 请求已经提交、而响应
+          // 在路上丢（网关 504 / 断网）时，客户端只知道失败；用户再点一次「确认上传」，
+          // 同一个 `storageId` 算出同一批路径 → **再插一遍**。这条路径**不受批量 insert 保护**，
+          // 而且库里没有任何唯一约束兜底（`sheet_music_files` 只有主键与两个外键）。
+          // 属**既有**形态（单落点的旧代码同样如此），不是本次引入 —— 真正的解法是在
+          // `pkuso-backend` 加一条 `unique (part_id, file_name)` 之类的约束，让重试**幂等**。
+          // 那是一次独立的 schema 改动（且会改变「同一 part 下允许两个同名文件」的现状），
+          // 不塞进本次改动。
+          const { error: dbError } = await supabase.from("sheet_music_files").insert(rows);
 
           if (dbError) {
             updateFile(i, { status: "error", error: dbError.message });
@@ -2331,8 +2586,12 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   const statusText = (f: UploadFile) => {
     // 取值**只走 editsOf**：行文案必须与文件名预览、落库结果一致，否则用户会以为
     // 「清空没生效」。三处各抄一份推导式就迟早会漂（这个文件里已经栽过一次）。
-    const { section, instrument, subParts } = editsOf(f);
+    const { section, extraSections, instrument, subParts } = editsOf(f);
     const sub = subParts.length > 0 ? ` ${formatSubParts(subParts)}` : "";
+    // ⚠️ **跨声部时要把落点写出来**：`previewPath` 已经展开成两个落点，标题只报主声部的话，
+    // 同一张卡片里两句话互相矛盾（用户按标题核对会以为只落一个声部）。这条正是上面那句
+    // 「必须与预览一致」要守的东西 —— 改成多落点之后漏掉了它，对抗测试实测抓出来的。
+    const also = extraSections.length > 0 ? `（还落到 ${extraSections.join("、")}）` : "";
     switch (f.status) {
       case "pending":
         return "待分析";
@@ -2341,11 +2600,11 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       case "analyzed":
         // 空乐器名 = 后端弃权（证据不足 / 答不出来），必须与「已识别」区分开：
         // 输入框是空的、等用户填，不能显示成识别成功
-        return instrument ? `已识别 → ${section} / ${instrument}${sub}` : "需人工确认";
+        return instrument ? `已识别 → ${section} / ${instrument}${sub}${also}` : "需人工确认";
       case "uploading":
         return "上传中...";
       case "done":
-        return instrument ? `已上传 → ${section} / ${instrument}${sub}` : "已上传";
+        return instrument ? `已上传 → ${section} / ${instrument}${sub}${also}` : "已上传";
       case "error":
         return `失败: ${f.error}`;
     }
@@ -2610,8 +2869,16 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                               </span>
                               <button
                                 onClick={() => unsplitGroup(f.splitOf!.groupId)}
+                                // ⚠️ `hasAnalyzingFiles` 与下面「确认这 N 段」是同一条理由：
+                                // 这个按钮**会改变 files 的长度**，而分析 worker（含逐行重试）
+                                // 手里攥着点击那一刻的下标 —— 重试飞行中还原一份，会让结果
+                                // 写进**别的行**、被重试那行永远停在「分析中」。
+                                // 见 `retryRow` 的说明与本文件里 `segBusy` 的同类教训。
                                 disabled={
-                                  phase === "uploading" || segBusy || !canUnsplit(f.splitOf.groupId)
+                                  phase === "uploading" ||
+                                  segBusy ||
+                                  hasAnalyzingFiles ||
+                                  !canUnsplit(f.splitOf.groupId)
                                 }
                                 // 已上传的段不能撤销（否则库里会留下界面管不到的孤儿），
                                 // 用 title 说清为什么灰着 —— 只灰不给理由，用户会以为坏了
@@ -2734,6 +3001,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                                   // 分声部存的是「原文 + 有没有被编辑过」这个二元状态，
                                   // 置成 Guess 的值会把「没编辑过」这个信息抹掉。
                                   subPartsEditText: undefined,
+                                  // 额外声部同理（它是增删出来的列表，没有「初值」这回事）
+                                  extraSectionsEdit: undefined,
                                 })
                               }
                               disabled={phase === "uploading"}
@@ -2743,6 +3012,69 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                               <X className="w-4 h-4" />
                             </button>
                           </div>
+                          {/* 额外声部：「一份谱同时属于两个声部」的落点（见 sections.ts）。
+                              能不能有，判据是 `canHaveExtraSections` —— 与 `normalizeExtraSections`
+                              **同源**（总谱与「其他」都不能）。
+                              「+」这个入口是**必需的**，不是锦上添花：模型对这个字段的稳定性
+                              与别的字段一样（#298 记着答案非确定性），判漏时用户得有办法手工补，
+                              否则这份谱就永远只归一个声部、而低音提琴组根本看不到它。
+                              选项里排除已选的：选了也进不去（清洗会去重），留着只会让人以为没生效。 */}
+                          {!canHaveExtraSections(f) &&
+                            editsOf(f).section === OTHER_INSTRUMENT_GROUP && (
+                              // 「其他」不是「不能加」，而是**加了也没有立足点**（主声部没定，
+                              // 「除了主声部还落到…」就无从谈起，见 `normalizeExtraSections`）。
+                              // 必须说出这一句：不显示 chip 行而用户刚刚加过一项的话，
+                              // 他看到的是「加了没反应」—— 那正是本仓要消灭的静默丢弃。
+                              // 总谱不给这句：它是自明的，且分声部那一格已经写着「总谱」。
+                              <p className="text-xs text-text-muted pl-5">
+                                主声部是「其他」时不会落到具体声部 —— 请先选定声部
+                              </p>
+                            )}
+                          {canHaveExtraSections(f) && (
+                            <div className="flex flex-wrap items-center gap-1 pl-5">
+                              <span className="text-xs text-text-muted shrink-0">还落到</span>
+                              {editsOf(f).extraSections.map((s) => (
+                                <span
+                                  key={s}
+                                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-xs bg-muted border border-border rounded shrink-0"
+                                >
+                                  {s}
+                                  <button
+                                    onClick={() => removeExtraSection(i, s)}
+                                    disabled={phase === "uploading"}
+                                    className="text-text-muted hover:text-danger disabled:opacity-50"
+                                    title={`不再让这份谱落到「${s}」`}
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </span>
+                              ))}
+                              {editsOf(f).extraSections.length < MAX_EXTRA_SECTIONS && (
+                                <select
+                                  // 恒为空串：选完立刻被 onChange 处理掉，框回到「+ 声部」
+                                  // 这个提示位（受控 select 靠 value 归位，不需要额外 state）
+                                  value=""
+                                  onChange={(e) => {
+                                    if (e.target.value) addExtraSection(i, e.target.value);
+                                  }}
+                                  disabled={phase === "uploading"}
+                                  className="px-1 py-0.5 text-xs bg-muted border border-border rounded shrink-0 disabled:opacity-50"
+                                  title="一份谱同时属于两个声部时（如 Violoncello e Basso 是大提琴与低音提琴共用），在这里加上第二个声部；上传时这份文件会同时出现在两个声部里，各自存一份（删掉其中一个不影响另一个）。"
+                                >
+                                  <option value="">+ 声部</option>
+                                  {INSTRUMENT_ORDER.filter(
+                                    (s) =>
+                                      s !== editsOf(f).section &&
+                                      !editsOf(f).extraSections.includes(s),
+                                  ).map((s) => (
+                                    <option key={s} value={s}>
+                                      {s}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                            </div>
+                          )}
                           {sectionWarning(f) && (
                             <p className="text-xs text-warning">{sectionWarning(f)}</p>
                           )}
@@ -2896,7 +3228,11 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                                   // 先跑完的那份被拆开，另一份的结果就会写进**它的某一段**，
                                   // 而那份自己永远停在「识别中」。同一文件里「确认上传」与
                                   // 「识别分段」都带了 `segBusy`，这里必须一致。
-                                  disabled={phase === "uploading" || segBusy}
+                                  // ⚠️ `hasAnalyzingFiles` 同理，且是**逐行重试**带出来的新缺口：
+                                  // 重试是确认阶段第一个「攥着下标飞行」的长任务，它飞行时
+                                  // 这个按钮若可点，结果就会写进别的行、被重试那行永远卡住
+                                  // （对抗测试实测：拆出一段后再还原，行集平移一格）。
+                                  disabled={phase === "uploading" || segBusy || hasAnalyzingFiles}
                                   className="px-2 py-0.5 text-xs border border-border rounded shrink-0 hover:text-primary disabled:opacity-50"
                                   title="按这些边界把文件拆成多行，逐段确认乐器与分声部号；上传时自动切开，不会重复 OCR"
                                 >
@@ -2912,6 +3248,33 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                           {f.error && <p className="text-xs text-danger">{f.error}</p>}
                         </div>
                       )}
+
+                    {/* 死胡同行的**唯一出路**。这一块必须在编辑器那道门**之外**：
+                          「首次分析就失败」的行没有 `instrumentGuess`，门内的一切
+                          （编辑器、以及那行红字）都不渲染。
+                          ⚠️ 但**失败原因仍然看得见** —— 标题行的 `statusText` 就是
+                          `失败: <原因>`，且 `statusColor` 给 error 的是 `text-danger`。
+                          所以这里**不再重复渲染一遍原因**（那会同一句话出现两次），
+                          只补上原先完全缺失的东西：**一个能点的按钮**。
+                          只在**没有识别结果**的错误行上出现；有识别结果的上传失败行
+                          走「确认上传」那条重试路，这里不重复给。
+                          `disabled` 带上 `segBusy` 与 uploading：飞行中的闭包攥着
+                          `{f, i}` 下标，这时候挪动行集会把结果写进别的行（同「确认这 N 段」
+                          那个按钮上写的理由。**别在这里写行号** —— 本目录既有约定
+                          （见 `sub-parts.ts` 与 `sections.ts` 里都写过的那句），
+                          它随改动漂走，而且本分支已经把它飘错过一次）。 */}
+                    {f.status === "error" && f.instrumentGuess === undefined && (
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => retryRow(i)}
+                          disabled={phase === "uploading" || segBusy}
+                          className="px-2 py-0.5 text-xs border border-border rounded shrink-0 hover:text-primary disabled:opacity-50"
+                          title="重新跑这一份的分析（取页 → OCR → 识别）。只重烧这一份的配额，其余行不受影响。"
+                        >
+                          重试
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   {expandedIdx === i && hasDetails(f) && (

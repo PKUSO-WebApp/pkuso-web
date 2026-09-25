@@ -53,6 +53,10 @@ const h = vi.hoisted(() => ({
   } as Record<string, unknown>,
   /** `sheet_music_files` 每次 `.insert()` 的入参（**调用次数**本身就是要断言的东西） */
   fileInserts: [] as unknown[],
+  /** 最近一次 `upsert` 的 `onConflict` —— 它必须与后端那条唯一约束逐字对应 */
+  upsertOnConflict: null as string | null,
+  /** 非 null 时 `upsert` 回这个错（模拟唯一冲突等落库失败） */
+  upsertError: null as { code: string; message: string } | null,
   /** `storage.upload` 收到的路径 */
   uploaded: [] as string[],
   /** 只想让**某几个文件**的 LLM 失败时用（OCR 文本里含这些名字就失败） */
@@ -103,6 +107,14 @@ vi.mock("@/lib/supabase", () => {
         if (table === "sheet_music_parts") return partsTable();
         if (table === "sheet_music_files") {
           return {
+            // ⚠️ 上传走的是 `upsert(rows, { onConflict: "part_id,file_name" })` 而不是
+            // `insert`（pkuso-backend#29 的唯一约束 + 重试幂等，见 `uploadOne`）。
+            // `insert` 留在这里是给**其它**路径用的（若有），别删掉就当它不存在。
+            upsert: async (rows: unknown, opts?: { onConflict?: string }) => {
+              h.fileInserts.push(rows);
+              h.upsertOnConflict = opts?.onConflict ?? null;
+              return { error: h.upsertError };
+            },
             insert: async (rows: unknown) => {
               h.fileInserts.push(rows);
               return { error: null };
@@ -208,6 +220,8 @@ beforeEach(() => {
   h.user = null;
   h.llmReply = { success: true, section: "", instrument: "", subParts: [], isFullScore: false };
   h.fileInserts.length = 0;
+  h.upsertOnConflict = null;
+  h.upsertError = null;
   h.uploaded.length = 0;
   h.llmFailFor = [];
   h.llmGate = null;
@@ -862,7 +876,7 @@ describe("错误行不再是死胡同：重试", () => {
  * `storage_path` 还完全相同，事后分不出哪行是多的。
  */
 describe("跨声部的共用分谱：一份文件落成两行", () => {
-  it("LLM 给了 extraSections → **一次** insert 带两行，**每行各自一个存储对象**", async () => {
+  it("LLM 给了 extraSections → **一次** upsert 带两行，**每行各自一个存储对象**", async () => {
     h.user = { id: "u1" };
     h.llmReply = {
       success: true,
@@ -879,6 +893,10 @@ describe("跨声部的共用分谱：一份文件落成两行", () => {
 
     // **一次**调用。改成循环插时这里是 2。
     expect(h.fileInserts).toHaveLength(1);
+    // `onConflict` 必须与后端那条唯一约束**逐字对应**（pkuso-backend#29 的
+    // `unique (part_id, file_name)`）—— 写错列名时 PostgREST 会报 42P10，
+    // 而那条路只在**重试**时才走到，平时全绿。
+    expect(h.upsertOnConflict).toBe("part_id,file_name");
     const rows = h.fileInserts[0] as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(2);
     // 主声部用模型给的乐器名，额外声部用**声部名**当乐器名（模型没有第二件的信息）
@@ -938,7 +956,65 @@ describe("跨声部的共用分谱：一份文件落成两行", () => {
     expect(screen.queryByText("+ 声部")).toBeNull();
   });
 
-  it("没有额外声部时仍是**一行、一次 insert**（加这个功能之前的行为一字不变）", async () => {
+  it("唯一冲突（23505）翻译成人话，不把 PG 原文甩给用户", async () => {
+    // `sheet_music_files` 上有 `unique (part_id, file_name)`（pkuso-backend#29），
+    // 而 `file_name` 由乐器名 + 分声部号生成 —— 同一个声部下两份谱生成同一个名字时会撞。
+    // 这条以前是能传上去的（详情页出现两行分不清的同名文件），现在是**行为变更**：
+    // 那一次批量落库整批失败。关键是别让用户看见
+    // `duplicate key value violates unique constraint "sheet_music_files_part_id_file_name_key"`。
+    h.user = { id: "u1" };
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [1],
+      isFullScore: false,
+    };
+    h.upsertError = {
+      code: "23505",
+      message:
+        'duplicate key value violates unique constraint "sheet_music_files_part_id_file_name_key"',
+    };
+    await runAnalysis();
+
+    fireEvent.click(screen.getByText(/确认上传/));
+    // ⚠️ 用 `getAllByText`：同一句会渲染**两处**（折叠行上那句「失败: …」与展开面板里那句）
+    await waitFor(() => expect(screen.getAllByText(/已经有同名文件/).length).toBeGreaterThan(0), {
+      timeout: 10000,
+    });
+    // 要**指名道姓**说撞的是哪个名字，并给出可照做的下一步
+    expect(screen.getAllByText(/F调圆号1\.pdf/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/请改乐器名或分声部号/).length).toBeGreaterThan(0);
+    // 反向自检：PG 原文一个字都不该出现在界面上
+    expect(screen.queryByText(/duplicate key value/)).toBeNull();
+    expect(screen.queryByText(/unique constraint/)).toBeNull();
+  });
+
+  it("落库失败是**别的**错误时，照旧显示原始报文（不吞掉线索）", async () => {
+    // 上面那条把 23505 翻译成人话；这条钉住「翻译只对那一种」——
+    // 无条件替换会让别的失败（权限、外键、连接）失去唯一的排查线索。
+    h.user = { id: "u1" };
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [1],
+      isFullScore: false,
+    };
+    h.upsertError = { code: "42501", message: "permission denied for table sheet_music_files" };
+    await runAnalysis();
+
+    fireEvent.click(screen.getByText(/确认上传/));
+    await waitFor(
+      () =>
+        expect(
+          screen.getAllByText(/permission denied for table sheet_music_files/).length,
+        ).toBeGreaterThan(0),
+      { timeout: 10000 },
+    );
+  });
+
+  it("没有额外声部时仍是**一行、一次 upsert**（加这个功能之前的行为一字不变）", async () => {
     h.user = { id: "u1" };
     h.llmReply = {
       success: true,

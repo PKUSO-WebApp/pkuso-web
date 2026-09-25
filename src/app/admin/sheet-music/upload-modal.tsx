@@ -39,7 +39,12 @@ import {
   parseSubPartsInput,
   sanitizeSubParts,
 } from "./sub-parts";
-import { fileTargetsOf, MAX_EXTRA_SECTIONS, normalizeExtraSections } from "./sections";
+import {
+  type FileTarget,
+  fileTargetsOf,
+  MAX_EXTRA_SECTIONS,
+  normalizeExtraSections,
+} from "./sections";
 import { mapLinesToPages, MOSAIC_HARD_LIMIT_BYTES, packBands } from "./mosaic";
 import { duplicateNames, openForSplit, splitRefusal } from "./split-pdf";
 
@@ -112,6 +117,31 @@ function isKnownSection(section: string): boolean {
     section === FULL_SCORE_SECTION ||
     (INSTRUMENT_ORDER as readonly string[]).includes(section)
   );
+}
+
+/**
+ * 落库失败时给用户一句**能照着做**的话。
+ *
+ * ⚠️ 唯一冲突（`23505`）**不再是「意外」**：`sheet_music_files` 上有
+ * `unique (part_id, file_name)`（pkuso-backend#29 加的），而 `file_name` 是由
+ * 乐器名 + 分声部号生成的 —— **同一个声部下两份谱生成同一个名字**时就会撞。
+ * 那种情况下把 PG 的原文（`duplicate key value violates unique constraint …`）
+ * 甩给用户毫无用处：他既看不懂，也不知道该改哪一格。
+ *
+ * `21000` 是同一个约束的另一副面孔：一条 `INSERT … ON CONFLICT DO UPDATE` 里
+ * 出现两个相同的键时 PG 会报 `cannot affect row a second time`。那要在**同一份谱的
+ * 落点内部**撞名才可能出现（`fileTargetsOf` 按声部产出，正常不会有重复），
+ * 一并给同一句话，总好过让用户看 PG 原文。
+ */
+function describeInsertError(
+  err: { code?: string; message: string },
+  targets: FileTarget[],
+): string {
+  if (err.code === "23505" || err.code === "21000") {
+    const names = [...new Set(targets.map((t) => t.fileName))].join("、");
+    return `这一声部下已经有同名文件（${names}）—— 请改乐器名或分声部号，或先删掉详情页里那份`;
+  }
+  return err.message;
 }
 
 /**
@@ -2947,16 +2977,24 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           //
           // ⚠️ **它只挡住「部分提交」这一半，挡不住「响应丢了」。** 请求已经提交、而响应
           // 在路上丢（网关 504 / 断网）时，客户端只知道失败；用户再点一次「确认上传」，
-          // 同一个 `storageId` 算出同一批路径 → **再插一遍**。这条路径**不受批量 insert 保护**，
-          // 而且库里没有任何唯一约束兜底（`sheet_music_files` 只有主键与两个外键）。
-          // 属**既有**形态（单落点的旧代码同样如此），不是本次引入 —— 真正的解法是在
-          // `pkuso-backend` 加一条 `unique (part_id, file_name)` 之类的约束，让重试**幂等**。
-          // 那是一次独立的 schema 改动（且会改变「同一 part 下允许两个同名文件」的现状），
-          // 不塞进本次改动。
-          const { error: dbError } = await supabase.from("sheet_music_files").insert(rows);
+          // 同一个 `storageId` 算出同一批路径 → 会**再插一遍**。
+          //
+          // 那一半靠**库里那条唯一约束**兜（pkuso-backend#29）：
+          // `sheet_music_files` 上是 `unique (part_id, file_name)`，而这里用 `upsert`
+          // 指定同一个 `onConflict` —— 于是「重试」变成「把原来那几行更新一遍」，**幂等**。
+          //
+          // ⚠️ **顺序不能反**：`onConflict` 要求那条唯一索引**已经存在**，否则 PG 报 42P10。
+          // 所以后端那条迁移必须先上（见那个迁移文件顶部的说明）。
+          //
+          // ⚠️ 顺带一条**行为变更**：约束同时禁止「同一个声部下两份同名的谱」——
+          // 这以前是能传上去的（详情页出现两行分不清的同名文件）。撞上时 `insert` 会整批失败，
+          // 所以下面把唯一冲突翻译成用户看得懂的话（见 `describeInsertError`）。
+          const { error: dbError } = await supabase
+            .from("sheet_music_files")
+            .upsert(rows, { onConflict: "part_id,file_name" });
 
           if (dbError) {
-            updateFile(i, { status: "error", error: dbError.message });
+            updateFile(i, { status: "error", error: describeInsertError(dbError, targets) });
             return false;
           }
 

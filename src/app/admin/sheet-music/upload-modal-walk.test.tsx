@@ -267,12 +267,16 @@ describe("升级链的集成：哪几张图真的被送出去了", () => {
     expect(h.ocr).toEqual([TITLE_TAG, FULL_TAG, TITLE_TAG, FULL_TAG, TITLE_TAG, FULL_TAG]);
   });
 
-  it("OCR 全失败也**保住页数** —— 「识别分段」按钮不能静默消失", async () => {
+  it("OCR 全失败也**保住页数** —— 未识别时页数照旧显示（分段按钮按新规则不给）", async () => {
     await runAnalysis({ ocrFail: true });
-    // 页数一旦丢了（walk 抛穿 → pageCount 是 undefined → `needsSegmentation` 判假），
-    // 这个按钮就整块不渲染，而**屏幕上一个字都不会解释为什么** —— 用户从此没法对
-    // 那份谱跑分段/拆分。这条断言钉的就是那件事。
-    expect(screen.getByText(/^识别分段（/)).toBeTruthy();
+    // 页数一旦丢了（walk 抛穿 → pageCount 是 undefined），屏幕上**一个字都不会解释
+    // 为什么**，用户从此没法对那份谱跑分段/拆分。这条断言钉的就是那件事。
+    //
+    // ⚠️ 2026-09-25 起「识别分段」按钮对**未识别**的行不再出现（分段是**按页**烧 OCR，
+    // 而这一行是什么都还没定，跑完也归不了声部）。所以「保住页数」的责任从那个按钮
+    // 挪到了这句提示上 —— **断言的意图没变**，换的是承载它的文案。
+    expect(screen.getByText(/未识别（\d+ 页）/)).toBeTruthy();
+    expect(screen.queryByText(/^识别分段（/)).toBeNull();
   });
 
   it("LLM 失败 = **整行失败**，不会再补一次「只凭文件名」的调用把错误洗成结果", async () => {
@@ -319,6 +323,49 @@ describe("错误行不再是死胡同：重试", () => {
     expect(screen.getByText("重试")).toBeTruthy();
   });
 
+  it("模型依据要显示给用户 —— 没在原文里找到时是警示色", async () => {
+    // ⚠️ 这条用例守的是**后端那批改动的补偿信号**：后端不再因为「引文找不到」而弃权
+    // （改用 `evidenceFound` 标一下、答案照用）。如果前端不显示这段引文，
+    // 那批改动的净效果就是「预填一个可能错的答案 + 显示成已识别」——比原来更差。
+    // prompt 里也向模型承诺了「让用户一眼就能复核你」。
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [],
+      isFullScore: false,
+      evidence: "Corno I in F.",
+      evidenceFound: true,
+    };
+    await runAnalysis({});
+    expect(screen.getByText(/^依据：Corno I in F\.$/)).toBeTruthy();
+
+    cleanup();
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [],
+      isFullScore: false,
+      evidence: "引文是编的",
+      evidenceFound: false,
+    };
+    await runAnalysis({});
+    const warn = screen.getByText(/未在原文中找到/);
+    expect(warn.className).toContain("text-warning");
+  });
+
+  it("未识别的行：给「重试」，且不进分段（页数照旧显示）", async () => {
+    // 默认桩就是「一律未识别」——正是这一行要测的形态（多页 → 本可分段）
+    await runAnalysis({});
+    // 能重试：同一输入两次结果不同时，这是用户唯一的出路；也是未识别行唯一的动作
+    expect(screen.getByText("重试")).toBeTruthy();
+    // 不给分段按钮：分段是**按页**烧 OCR，而这一行是什么都还没定
+    expect(screen.queryByText(/^识别分段（/)).toBeNull();
+    // 但页数必须看得见（见上面那条用例的说明）
+    expect(screen.getByText(/未识别（\d+ 页）/)).toBeTruthy();
+  });
+
   it("**重试飞行中不能改行集** —— 否则结果会写进别的行、被重试那行永远卡住", async () => {
     // ⚠️ 对抗测试实测出来的缺口：逐行重试是确认阶段**第一个「攥着下标飞行」的长任务**，
     // 而「还原为一份」与「确认这 N 段」都会**改变 files 的长度**。它飞行时这两个按钮
@@ -326,6 +373,16 @@ describe("错误行不再是死胡同：重试", () => {
     // 被重试那行永远停在「分析中」→ `hasAnalyzingFiles` 恒真 →「确认上传」永久禁用，
     // 用户只能关窗、丢掉整批已经烧掉的分析结果。
     // 同一文件里对分段 worker 早写过这条教训（`segBusy`），重试这条新路径漏了。
+    // ⚠️ 这条用例要的是「a、c 能分段、b 是错误行」——所以桩必须返回**已识别**的结果：
+    // 2026-09-25 起未识别的行不进分段（见 `segEligible`），用默认那条「一律未识别」的
+    // 桩会让「识别分段」按钮根本不出现，这条竞态就无从触发。
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [],
+      isFullScore: false,
+    };
     h.llmFailFor = ["b.pdf"];
     await runAnalysis({ names: ["a.pdf", "c.pdf", "b.pdf"] });
 
@@ -365,6 +422,168 @@ describe("错误行不再是死胡同：重试", () => {
     // 放宽只影响「等多久算失败」，不会让真正的挂起变成通过。
   }, 30000);
 
+  it("每一段用**自己那一页**重新识别一次（N 次 LLM、**0 次 OCR**）", async () => {
+    // 合订谱的典型形态：一段短笛 + 一段长笛，切点落在页边界上。
+    // 不各自识别的话两段都继承**整份第一页**的判断，第二段要用户手改 ——
+    // 而改它所需的数据（那一段自己的首页文本）在分段那一步就已经 OCR 过了。
+    h.llmReply = {
+      success: true,
+      section: "长笛",
+      instrument: "长笛",
+      subParts: [],
+      isFullScore: false,
+    };
+    h.segmentCuts = [2];
+    await runAnalysis({ names: ["短笛长笛.pdf"] });
+    // ⚠️ **必须等分析落定再取基准**：`runAnalysis` 只等到渲染，此刻 LLM 调用还在飞
+    //（第一版就栽在这里：基准取成 0，断言变成「总共 5 次」而期望 2 次）。
+    await waitFor(() => expect(screen.getByText(/^已识别 → 长笛/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getByText(/^确认这 \d+ 段$/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    // ⚠️ 基准必须取在**分段跑完之后**：分段本身就要把每页窄带送一次 OCR
+    //（这正是它贵的地方，也是「各段单独识别用 0 次 OCR」值得单独钉的原因）。
+    const ocrBefore = h.ocr.length;
+    const llmBefore = h.llm.length;
+    fireEvent.click(screen.getByText(/^确认这 \d+ 段$/));
+
+    // 两段各问了一次 LLM
+    await waitFor(() => expect(h.llm.length).toBe(llmBefore + 2), { timeout: 10000 });
+    // ⚠️ **0 次额外 OCR** —— 这条就是「用的是每段自己的 `segHeadText`，而不是重跑一遍
+    // 取页+OCR」的充分证据（重跑必然增加 `h.ocr`）。
+    // 桩的 OCR 文本是常量（每页同文），所以两条 prompt 无法区分，这里不断言它们不同。
+    expect(h.ocr.length).toBe(ocrBefore);
+  });
+
+  it("各段识别**回来晚了**不会抹掉用户已经改过的值", async () => {
+    // 识别是异步的（真实要几秒），而那正是用户会去改值的窗口 —— 结果回来时把用户
+    // 刚落的手抹掉，是最难受的一种「智能」。判据是「编辑框还等于切分时预填的那个值」。
+    //
+    // 两次回包**故意给不同答案**（整份第一页 →「短笛」、各段自己的页 →「长笛」），
+    // 这样「识别落地了没有」是可观察的：第 2 段变成「长笛」就是落地信号。
+    // ⚠️ 第一版没有这个信号，`release()` 后立刻断言 —— 覆盖还没落地，断言**必然**通过，
+    // 于是撤掉那道守卫它也全绿（变异实测 NOT-CAUGHT）。
+    h.llmReply = {
+      success: true,
+      section: "短笛",
+      instrument: "短笛",
+      subParts: [],
+      isFullScore: false,
+    };
+    h.segmentCuts = [2];
+    await runAnalysis({ names: ["短笛长笛.pdf"] });
+    await waitFor(() => expect(screen.getByText(/^已识别 → 短笛/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getByText(/^确认这 \d+ 段$/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    // 让各段那次识别挂住（真实要几秒到几十秒），并把回包换成另一个答案
+    h.llmReply = {
+      success: true,
+      section: "长笛",
+      instrument: "长笛",
+      subParts: [],
+      isFullScore: false,
+    };
+    let release: () => void = () => {};
+    h.llmGate = new Promise<void>((r) => {
+      release = r;
+    });
+    fireEvent.click(screen.getByText(/^确认这 \d+ 段$/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份").length).toBeGreaterThan(0));
+
+    // 用户手改第 1 段的乐器名
+    fireEvent.change(screen.getAllByPlaceholderText(/乐器名/)[0]!, {
+      target: { value: "用户自己填的" },
+    });
+
+    release();
+    h.llmGate = null;
+    // **先等识别落地**（另一段变成「长笛」），再断言被改过的那一段
+    await waitFor(() => expect(screen.getAllByDisplayValue("长笛").length).toBeGreaterThan(0), {
+      timeout: 10000,
+    });
+    expect((screen.getAllByPlaceholderText(/乐器名/)[0] as HTMLInputElement).value).toBe(
+      "用户自己填的",
+    );
+  });
+
+  it("未识别行点「重试」**不覆盖用户已经选好的声部**（模型给的乐器名照收）", async () => {
+    // 合规审查实测出来的：`analyzeOne` 的成功 patch 无条件写 `sectionEdit`/`instrumentEdit`，
+    // 而这两个字段是**用户的表态**（本文件上面写过）。于是一个未识别的行、用户选好声部、
+    // 再点重试 —— 用户的声部被模型答案顶掉，且没有任何提示。
+    // 这条路径**不需要竞态**就能复现（同步的：点一下按钮就发生）。
+    await runAnalysis({});
+    await waitFor(() => expect(screen.getByText("需人工确认")).toBeTruthy(), { timeout: 10000 });
+
+    // 用户从声部下拉里选了「大提琴」
+    const sel = screen.getAllByRole("combobox")[0] as HTMLSelectElement;
+    fireEvent.change(sel, { target: { value: "大提琴" } });
+    expect((screen.getAllByRole("combobox")[0] as HTMLSelectElement).value).toBe("大提琴");
+
+    // 重试时换一个**已识别**的回包 —— 这样「结果落地了没有」是可观察的
+    h.llmReply = {
+      success: true,
+      section: "中提琴",
+      instrument: "中提琴",
+      subParts: [],
+      isFullScore: false,
+    };
+    fireEvent.click(screen.getByText("重试"));
+
+    // 落地信号：模型给的**乐器名**进来了（它那个框用户没动过 → 该被写）
+    await waitFor(() => expect(screen.getByText(/已识别 → .*中提琴/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+    // 而**声部**必须还是用户选的那个
+    expect((screen.getAllByRole("combobox")[0] as HTMLSelectElement).value).toBe("大提琴");
+  });
+
+  it("**段行**上的「重试」只重跑这一段（0 次额外 OCR、页数不变）", async () => {
+    // 合规审查实测出来的：段行的重试走的是整份源文件的完整分析 —— 2 页的段点一次重试
+    // 会变成「未识别（3 页）」（`pageCount` 被源文件覆盖），还会去渲染不属于该段的第 1 页。
+    h.llmReply = {
+      success: true,
+      section: "长笛",
+      instrument: "长笛",
+      subParts: [],
+      isFullScore: false,
+    };
+    h.segmentCuts = [2];
+    await runAnalysis({ names: ["短笛长笛.pdf"] });
+    await waitFor(() => expect(screen.getByText(/^已识别 → 长笛/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getByText(/^确认这 \d+ 段$/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+    fireEvent.click(screen.getByText(/^确认这 \d+ 段$/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份").length).toBeGreaterThan(0));
+
+    // 让第 2 段落进「未识别」：**清空它的乐器名**（段级识别现在会保留继承值，
+    // 所以不能指望「模型答不出来」把它变成未识别 —— 那条路已经改成保留 + 提示了）。
+    fireEvent.change(screen.getAllByPlaceholderText(/乐器名/)[1]!, { target: { value: "" } });
+    await waitFor(() => expect(screen.getAllByText("重试").length).toBeGreaterThan(0), {
+      timeout: 10000,
+    });
+
+    const ocrBefore = h.ocr.length;
+    fireEvent.click(screen.getAllByText("重试")[0]!);
+    // 收尾信号用「页数不变」这条断言本身：段行只有 2 页，整份重跑会覆盖成源文件的 3 页
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText(/未识别（3 页）/)).toBeNull();
+    expect(h.ocr.length).toBe(ocrBefore);
+  });
   it("点重试**重跑这一行**；成功后旧错误不再残留、行回到可上传状态", async () => {
     await runAnalysis({ llmFail: true });
     const llmBefore = h.llm.length;

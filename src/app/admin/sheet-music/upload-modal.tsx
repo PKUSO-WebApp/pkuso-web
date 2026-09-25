@@ -168,8 +168,8 @@ interface UploadFile {
    * 只有「一个分部、跨两个声部、又不能切」的谱才有（`Violoncello e Basso` 那种共用分谱，
    * 见 `sections.ts` 的说明）。上传时一份文件会**落成两行**，**每行各自一个存储对象**。
    *
-   * ⚠️ `Guess` 缺省是 `undefined` 而不是 `[]`，与 `sectionGuess` 一样：
-   * **旧后端不返回这个字段**，那时必须与「没有额外声部」等价 —— 两仓各自上线才安全。
+   * ⚠️ `Guess` 缺省是 `undefined` 而不是 `[]`，与 `sectionGuess` 一样：**字段缺失必须与
+   * 「没有额外声部」等价**（口径见 `LlmAnalysis` 的「为什么这些字段都写成可选」）。
    * 取值一律走 `editsOf`，别就地写 `?? []`（同文件里已栽过「三处各抄一份推导式」）。
    */
   extraSectionsGuess?: string[];
@@ -1461,6 +1461,16 @@ async function requestSegmentation(pageCount: number, pageTexts: PageText[]): Pr
  * ⚠️ 注意「算了但没写进行状态」也是漏接的一种形态：`analyzeOne` / `refineSegmentsInner`
  * 是**逐字段**构造 `UploadFile` 的（不是 spread），中间少写一个字段，展示代码就成死代码
  * —— `subPartsOverCap` 栽过这一次（它自己的注释里记着：审查靠「提示可达性」的探针抓出来的）。
+ *
+ * ## 为什么这些字段都写成可选（2026-09-26，技术债 B3 之后的口径）
+ *
+ * **不再是因为「线上可能还是旧后端」** —— 两仓现已同版本（#303 那一轮之后），那个过渡期
+ * 结束了，所以下面各字段注释里那句「旧后端不返回」已经作废，一律按这一段理解：
+ *
+ * 唯一的理由是 **`data` 是 `any`**（`functions.invoke` 的返回值），谁也不能保证形状。
+ * **字段缺失**时按「这一行没有这个信号」处理，而**不是**当成 `false` / 空串 —— 这两种在界面上
+ * **不等价**（见 `evidence` 那条：缺字段 = 什么都没有，空串 = 模型没给引文）。
+ * 所以那几处 `typeof` 判型**不是兼容层，别顺手删**。
  */
 interface LlmAnalysis {
   section: string;
@@ -1484,7 +1494,7 @@ interface LlmAnalysis {
    * 但排查时该看的地方不同，所以它是展开面板里的诊断信息（与 `cropNote` 同一类），
    * 不是给用户照做的一句话。
    *
-   * ⚠️ **可选**：旧后端不返回 → `undefined` → 面板里不显示这一行（平滑降级）。
+   * ⚠️ **可选**：字段缺失 → 面板里不显示这一行。
    */
   abstainReason?: string;
   /** 模型给了号但后端没解析出来时，模型用的那个写法，见 UploadFile.subPartsRaw */
@@ -1508,7 +1518,7 @@ interface LlmAnalysis {
   /**
    * 模型据以判断的那段原文（后端 `Analysis.evidence`）。
    *
-   * ⚠️ **可选**：旧后端不返回它。它的用途是**让用户一眼复核模型的依据** ——
+   * ⚠️ **可选**（缺字段时界面**什么都不显示**，见下）：它的用途是**让用户一眼复核模型的依据** ——
    * prompt 里对模型的承诺就是这句（「让用户一眼就能复核你」），前端不显示的话
    * 那个承诺是空的。它也是 `evidenceFound === false` 时用户唯一能据以判断的东西。
    */
@@ -1517,7 +1527,7 @@ interface LlmAnalysis {
    * 后端在原文里**找到了**这段引文吗（`Analysis.evidenceFound`，2026-09-25 新增）。
    *
    * ⚠️ 这是**信号，不是门** —— `false` 时答案照用，只是要提示用户核对。
-   * **可选**：旧后端不返回 → `undefined` → 不提示（平滑降级）。
+   * **可选**：字段缺失 → `undefined` → 不提示；**但不要把它当成 `false`** —— 二者不等价。
    *
    * ⚠️ **它必须有消费者**：后端删掉「证据弃权门」的唯一依据就是「交给前端提示用户核对」。
    * 没人读的话，那批改动的净效果是「预填一个可能错的答案 + 显示成已识别」，**降一道防线**。
@@ -1530,7 +1540,7 @@ interface LlmAnalysis {
    * 出版社扫描分谱的乐器名常印在文件名里（页面 OCR 是乱的），那时抄文件名是正当依据 ——
    * 但用户该知道该去看哪儿核对（页面上找不到，得看文件名）。
    *
-   * ⚠️ **可选**：旧后端不返回 → `undefined` → 显示成普通依据（平滑降级）。
+   * ⚠️ **可选**：字段缺失 → `undefined` → 显示成普通依据。
    */
   evidenceFromFileName?: boolean;
 }
@@ -1577,7 +1587,7 @@ async function runLlmAnalysis(fileName: string | null, ocrText: string): Promise
       // 「模型给了号但没读懂」的信号，原样带过来给界面提示用户手填
       subPartsRaw: typeof data.subPartsRaw === "string" ? data.subPartsRaw : undefined,
       // 声部漂移信号（`sectionRaw`）与弃权原因（`abstainReason`）：都是**可选**字段，
-      // 旧后端不返回 → undefined → 界面不显示（两仓各自上线都不会坏）。
+      // 缺失 → undefined → 界面不显示（口径见 `LlmAnalysis` 的「为什么这些字段都写成可选」）。
       // ⚠️ 这两个字段此前**一个消费者都没有**（pkuso-web#302）—— 后端为「把静默差异
       // 变成可见信号」专门发了它们，没人读就等于不存在。
       sectionRaw: typeof data.sectionRaw === "string" ? data.sectionRaw : undefined,
@@ -1585,20 +1595,20 @@ async function runLlmAnalysis(fileName: string | null, ocrText: string): Promise
       // 超上界时 sanitize 会把号整个丢掉，而这条路径**不带任何其他信号** ——
       // 不单独报的话它就是一条完全静默的丢号路径（见 overSubPartsCap）
       subPartsOverCap: overSubPartsCap(data.subParts) ?? undefined,
-      // 与后端同一条判据：只有恰好 true 才算总谱。字段缺失/后端还是旧版时必然是
-      // undefined → false，于是行为与加这个字段之前一字不变（**平滑降级**）。
+      // 与后端同一条判据：只有恰好 true 才算总谱（`=== true` 而不是真值判断 —— 响应是 any，
+      // 字符串 "true" / 1 都不该被当成总谱）。字段缺失时是 undefined → false。
       isFullScore: data.isFullScore === true,
-      // 同样平滑降级：旧后端不返回这个字段 → undefined → 清洗后是 `[]` →
-      // 这一行照旧只落一个声部。**两仓各自上线都不会坏**（这是 #15 那次
-      // 「必须同批上线」换来的教训：新字段只在**读的一侧**兜底是不够的，
-      // 还得保证「缺席」与「空」同义 —— 这里靠 normalizeExtraSections 兜住）。
+      // 字段缺失 → undefined → 清洗后是 `[]` → 这一行照旧只落一个声部。
+      // ⚠️ 「缺席」与「空」同义这件事**必须由 `normalizeExtraSections` 兜住**，别指望调用点：
+      // 这是 #15 那次「必须同批上线」换来的教训（当时只在新字段的**读的一侧**兜底，不够）。
       extraSections: normalizeExtraSections(String(data.section ?? ""), data.extraSections),
       // 引文与「有没有在原文里找到」：两者一起显示给用户复核（见 evidenceLine）。
-      // `typeof` 判型而不是 `??` —— undefined（旧后端）与 ""（模型没给）在界面上**不等价**。
+      // `typeof` 判型而不是 `??` —— 缺字段与空串在界面上**不等价**（前者什么都不显示，
+      // 后者要提示「模型没给引文」），**这不是兼容层**，别顺手改成 `?? ""`。
       evidence: typeof data.evidence === "string" ? data.evidence : undefined,
       evidenceFound: typeof data.evidenceFound === "boolean" ? data.evidenceFound : undefined,
       // 引文**只在文件名里**找得到（`Analysis.evidenceFromFileName`，2026-09-26 新增）。
-      // 同样平滑降级：旧后端不返回 → undefined → 不进那一支（显示成普通依据）。
+      // 字段缺失 → undefined → 不进那一支（显示成普通依据）。
       evidenceFromFileName:
         typeof data.evidenceFromFileName === "boolean" ? data.evidenceFromFileName : undefined,
     };
@@ -3286,8 +3296,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    *   · 引文**没**找到   → `依据（未在原文中找到，请核对）：…`（warning）
    *   · 模型没给引文      → `依据：（模型没给引文，请核对）`（warning）
    *
-   * ⚠️ **旧后端不返回 `evidence`（undefined）时不显示任何东西** —— 那是「这个字段还没上线」，
-   * 与「模型没给引文」（空串）是两件事，所以判的是 `undefined` 而不是 falsy。
+   * ⚠️ **字段缺失（`undefined`）时不显示任何东西** —— 那是「这一行没有这个信号」，
+   * 与「模型没给引文」（空串）是两件事，所以判的是 `undefined` 而不是 falsy
+   * （口径见 `LlmAnalysis`：两仓现已同版本，这里留下来的**不是**兼容层）。
    */
   const evidenceLine = (f: UploadFile): string | null => {
     if (f.status !== "analyzed" && f.status !== "done") return null;

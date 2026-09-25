@@ -72,7 +72,7 @@ describe("normalizeExtraSections", () => {
   it("缺字段/怪类型一律当空 —— 必须与「没有额外声部」同义", () => {
     // 这不是「模型答错」，而是「响应里根本没有这个字段」：响应是 `any`
     // （`functions.invoke` 的返回），「字段没来」是这条链路上一等的可能状态。
-    // 这个字段**按设计「缺席 ≡ 空」**（见 `upload-modal.types.ts` 的「为什么这些字段都写成可选」），
+    // 这个字段**按设计「缺席 ≡ 空」**（见 `LlmAnalysis` 的 docblock「为什么这些字段都写成可选」），
     // 所以这里归一成 `[]`；别处不能照抄（`evidence` 那条正好相反：缺字段 ≠ 空串）。
     for (const bad of [undefined, null, 1, {}, true, [1, {}, null]]) {
       expect(normalizeExtraSections("大提琴", bad)).toEqual([]);

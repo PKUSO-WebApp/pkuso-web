@@ -1455,7 +1455,7 @@ async function requestSegmentation(pageCount: number, pageTexts: PageText[]): Pr
  *
  * ## 为什么这些字段都写成可选
  *
- * 与「线上后端是新是旧」无关：下面各字段注释里那句「旧后端不返回 → 平滑降级」**已经作废**
+ * 与「线上后端是新是旧」无关：这些字段注释此前写的是「旧后端不返回 → 平滑降级」，那套口径**已经作废**
  * （那是两仓字段还没对齐时留下的写法，会让人误以为这些 `undefined` 是临时兼容层），
  * 一律按这一段理解。
  *
@@ -1479,7 +1479,9 @@ async function requestSegmentation(pageCount: number, pageTexts: PageText[]): Pr
  * - `section` / `instrument` / `subParts`：缺了就取默认（`String(data.x ?? …)` / `sanitizeSubParts`）；
  * - `isFullScore`：`=== true`，缺字段 → `false` —— 「只有恰好 true 才算总谱」本身就要归一；
  * - 反方向的 `extraSections` / `UploadFile.extraSectionsGuess`：**按设计「缺席 ≡ 空」**，
- *   所以那两处统一 `?? []` 是**对的**。
+ *   所以那两处统一 `?? []` 是**对的**；
+ * - `subPartsOverCap`：判据在函数里（`overSubPartsCap(…) ?? undefined`）—— 缺字段同样是
+ *   `undefined`，与上面六个同类，只是写法不是 `typeof`（可选信号字段一共七个，别漏数这一个）。
  */
 interface LlmAnalysis {
   section: string;
@@ -1629,7 +1631,8 @@ async function runLlmAnalysis(fileName: string | null, ocrText: string): Promise
       evidence: typeof data.evidence === "string" ? data.evidence : undefined,
       evidenceFound: typeof data.evidenceFound === "boolean" ? data.evidenceFound : undefined,
       // 引文**只在文件名里**找得到（`Analysis.evidenceFromFileName`，2026-09-26 新增）。
-      // 字段缺失 → undefined → 不进那一支（显示成普通依据）。
+      // 字段缺失 → undefined → 不进「来自文件名」那一支 —— 落到 `evidenceFound` 决定的那两句
+      // 之一（所以「`evidenceFound === false` + 缺这个字段」显示的是警示那一句，见上面接口处）。
       evidenceFromFileName:
         typeof data.evidenceFromFileName === "boolean" ? data.evidenceFromFileName : undefined,
     };

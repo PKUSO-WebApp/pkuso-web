@@ -54,7 +54,7 @@ import type {
   RenderedPage,
   UploadFile,
   UploadModalProps,
-} from "./types";
+} from "./upload-modal.types";
 import { findUnsafeInName, unsafeNameMessage } from "./unsafe-name";
 
 /**
@@ -1312,7 +1312,7 @@ async function runLlmAnalysis(fileName: string | null, ocrText: string): Promise
       // 「模型给了号但没读懂」的信号，原样带过来给界面提示用户手填
       subPartsRaw: typeof data.subPartsRaw === "string" ? data.subPartsRaw : undefined,
       // 声部漂移信号（`sectionRaw`）与弃权原因（`abstainReason`）：都是**可选**字段，
-      // 缺失 → undefined → 界面不显示（口径见 `LlmAnalysis` 的「为什么这些字段都写成可选」）。
+      // 缺失 → undefined → 界面不显示（口径见 `LlmAnalysis` 的 docblock「为什么这些字段都写成可选」）。
       // ⚠️ 这两个字段此前**一个消费者都没有**（pkuso-web#302）—— 后端为「把静默差异
       // 变成可见信号」专门发了它们，没人读就等于不存在。
       sectionRaw: typeof data.sectionRaw === "string" ? data.sectionRaw : undefined,
@@ -1324,7 +1324,7 @@ async function runLlmAnalysis(fileName: string | null, ocrText: string): Promise
       // 字符串 "true" / 1 都不该被当成总谱）。字段缺失时是 undefined → false。
       isFullScore: data.isFullScore === true,
       // 字段缺失 → undefined → 清洗后是 `[]` → 这一行照旧只落一个声部。
-      // ⚠️ 这里「缺席」与「空」同义 —— 这是**按设计**成立的（`LlmAnalysis` 的
+      // ⚠️ 这里「缺席」与「空」同义 —— 这是**按设计**成立的（`LlmAnalysis` 的 docblock
       // 「为什么这些字段都写成可选」），靠 `normalizeExtraSections` 兜住而不是靠调用点。
       // 别处不能照抄这个写法（`evidence` 那条正好相反：缺字段 ≠ 空串）。
       // 这是 pkuso-backend#15（subParts 契约 + sub_parts 列）那次「必须同批上线」的教训：
@@ -3028,7 +3028,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    *
    * ⚠️ **字段缺失（`undefined`）时不显示任何东西** —— 那是「这一行没有这个信号」，
    * 与「模型没给引文」（空串）是两件事，所以判的是 `undefined` 而不是 falsy
-   * （口径见 `LlmAnalysis` 的「为什么这些字段都写成可选」：这里的 `undefined` 判断
+   * （口径见 `LlmAnalysis` 的 docblock「为什么这些字段都写成可选」：这里的 `undefined` 判断
    * **不是**兼容层）。
    */
   const evidenceLine = (f: UploadFile): string | null => {

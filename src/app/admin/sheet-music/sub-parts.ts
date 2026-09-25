@@ -162,3 +162,58 @@ export function overSubPartsCap(v: unknown): number | null {
   const allValid = v.every((x) => typeof x === "number" && Number.isSafeInteger(x) && x >= 1);
   return allValid ? v.length : null;
 }
+
+/**
+ * 段级补号：某一段自己的文本里**没读出号**时，用**其它段**做减法补出来。
+ *
+ * 例：整份读出的号是 `[1,2]`，第 1 段的页眉读出 `[1]`、第 2 段的页眉上没印号
+ * → 第 2 段补 `[2]`。
+ *
+ * ## 为什么需要它
+ *
+ * 切分时**不再按位置预填号**（「第 k 段 ↔ 第 k 个号」那种猜法碰到
+ * `…--_Piccolo,_Flute_1,_2.pdf` 会把**每一段**都填成 `[1,2]` —— 长笛 1 那段与长笛 2
+ * 那段于是撞成同一个文件名）。号一律由各段**自己的**首页文本识别得出 ——
+ * 而总会有某一段的首页只有谱、没印页眉，那时它一个号都读不到。减法补的是这一种。
+ *
+ * ## 三条保守约束（一律「宁可不说，不要猜」）
+ *
+ * 1. **只在乐器与源行相同、且源行的号 ≥ 2 个时才补**。不同乐器时那份号对这一段
+ *    根本不成立 —— 短笛段自己读出的是**空数组**，那是一个**完整**的答案，
+ *    不是「没读出来」，补它就是把「本来就该没有号」的段补上一个号。
+ *    乐器认不出来（空串）的段一律不补。
+ * 2. **只有「漏号的段恰好一个」时才补**。两个以上漏号时谁该拿 `[2]` 谁该拿 `[3]`
+ *    又要靠位置去猜 —— 那正是这次要拆掉的东西。
+ * 3. **减完没有剩余就不补**（别的段已经把号全取走了）。
+ *
+ * @returns 与 `segments` 等长的数组，`null` = 这一段不动（调用方保留原值）
+ */
+export function fillMissingSubParts(input: {
+  /** 源行（整份那份）识别出的乐器；空串 = 没认出来，那就谁都不补 */
+  sourceInstrument: string;
+  /** 源行（整份那份）识别出的号 */
+  sourceSubParts: number[];
+  /** 各段**自己**识别出的结果，顺序与段序一致 */
+  segments: { instrument: string; subParts: number[] }[];
+}): (number[] | null)[] {
+  const untouched: (number[] | null)[] = input.segments.map(() => null);
+  const src = input.sourceInstrument.trim();
+  if (!src) return untouched;
+  if (input.sourceSubParts.length < 2) return untouched;
+
+  const taken = new Set<number>();
+  const missing: number[] = [];
+  input.segments.forEach((seg, i) => {
+    if (seg.instrument.trim() !== src) return;
+    if (seg.subParts.length > 0) for (const n of seg.subParts) taken.add(n);
+    else missing.push(i);
+  });
+  if (missing.length !== 1) return untouched;
+
+  const leftover = input.sourceSubParts.filter((n) => !taken.has(n));
+  if (leftover.length === 0) return untouched;
+
+  const out = [...untouched];
+  out[missing[0]] = leftover;
+  return out;
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import JSZip from "jszip";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
@@ -31,6 +31,7 @@ import {
   startsFromResponse,
 } from "./segmentation";
 import {
+  fillMissingSubParts,
   formatSubParts,
   generateFileName,
   MAX_SUB_PARTS,
@@ -112,6 +113,16 @@ function isKnownSection(section: string): boolean {
     (INSTRUMENT_ORDER as readonly string[]).includes(section)
   );
 }
+
+/**
+ * 「同组段重名」的拦截文案。
+ *
+ * ⚠️ 提成常量是为了**能按值比较**：自动拆完之后各段的号是空的（几秒后段级识别才回来），
+ * 用户若在这中间点「确认上传」，就会被这条拦下、红字留在行上；等号各自落地、名字已经
+ * 不同了，那句却没人清。段级识别落地时只清**这一种** `error` —— 不能无条件清，
+ * 那会把「上传失败」那类红字一起抹掉，用户会以为传上去了。
+ */
+const DUPLICATE_SEGMENT_ERROR = "与同组的其他段重名，请改乐器名或号";
 
 /** 行内文案：识别出了什么 / 需人工确认（未识别时输入框留空、不预填） */
 function analysisSummary(section: string, instrument: string, subParts: number[]): string {
@@ -242,8 +253,6 @@ interface UploadFile {
     to: number;
     segIndex: number;
     segTotal: number;
-    /** 拆分时发现的问题（如「段数与号数不一致」），显示在这一行上 */
-    note?: string;
   };
   ocrText?: string;
   llmResult?: string;
@@ -1389,6 +1398,9 @@ async function requestSegmentation(pageCount: number, pageTexts: PageText[]): Pr
  * 出版社扫描分谱的乐器名往往就写在文件名里（PMLASIA01165-13-Horn_2.pdf），
  * 而它们的页面常是扫描乐谱、OCR 读出来是乱的 —— 这种情况下文件名比 OCR 可靠得多。
  * 后端 llm-analyze 只接受 text/ocr_text 字段，因此这里合并成一段文本发送。
+ *
+ * ⚠️ **以上只对「整份」那次调用成立**：段级识别**不发文件名**（段行继承的是源合订本
+ * 的名字，描述的是整本而不是这一段，见 `runLlmAnalysis` 的 `fileName` 参数）。
  */
 interface LlmAnalysis {
   section: string;
@@ -1432,8 +1444,21 @@ interface LlmAnalysis {
   evidenceFound?: boolean;
 }
 
-async function runLlmAnalysis(fileName: string, ocrText: string): Promise<LlmAnalysis> {
-  const input = [`文件名: ${fileName}`];
+/**
+ * @param fileName 文件名，或 **`null` = 不发这一行**。
+ *
+ * ⚠️ **段级识别一律传 `null`**（2026-09-25 改）。段行继承的是**源合订本**的文件名，
+ * 它描述的是**整本**、不代表这一段 —— 而 prompt 规则 8 明写「文件名是 `Flute 1-2`
+ * 这种就写 `[1,2]`」，于是**每一段**都会被填成源行那份号，盖过页眉上真正写着的那一行。
+ * 后果不是「号不准」而已：各段算出的下载名会撞在一起，`duplicatedInGroup` 命中后
+ * **整组都传不上去**（见 issue #304）。
+ *
+ * 整份调用照旧发文件名 —— 对**单份**分谱它常常是最可靠的线索（出版社把乐器名
+ * 印在文件名里，而扫描页的 OCR 可能是乱的）。
+ */
+async function runLlmAnalysis(fileName: string | null, ocrText: string): Promise<LlmAnalysis> {
+  const input: string[] = [];
+  if (fileName) input.push(`文件名: ${fileName}`);
   if (ocrText) input.push(`OCR 文本: ${ocrText}`);
 
   const { data, error } = await supabase.functions.invoke("llm-analyze", {
@@ -1520,12 +1545,41 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   // 分段的 state 半（ref 挡重复点击，state 让**别的按钮**知道分段在跑）
   const [segBusy, setSegBusy] = useState(false);
   /**
+   * 正在飞的「段级识别」组数。
+   *
+   * ⚠️ **它落地前不能让用户上传**：`uploadOne` 算 `section/instrument/subParts` 用的是
+   * **点击那一刻的闭包行**，而段级识别的写回只被 `status === "done"` 挡住 ——
+   * 行还在 `uploading` 时写回照常落地。结果是界面上号已经各就各位、库里那份却是**没号**的
+   *（`file_name` 与 `sub_parts` 都定格在识别回来之前），而且行转 `done` 后不会回退、
+   * 也没有任何提示。号是下载文件名的来源，所以这是「文件名对不上」那类问题的入口。
+   */
+  const [refiningCount, setRefiningCount] = useState(0);
+  /**
    * 切分前的原行快照（`groupId` → 原行 + 它当时的位置），供「还原为一份」。
    *
    * 用 ref 不用 state：它只是一份**撤销用的底稿**，不参与渲染；放进 state 会让
    * 每次拆分多一次重渲染，而内容一模一样。
    */
   const splitSnapshots = useRef(new Map<string, { row: UploadFile; at: number }>());
+  /**
+   * `files` 的最新值，供**异步流程**读当前状态。
+   *
+   * ⚠️ 闭包里的 `files` 是**本次渲染的快照**，而分段/重试这些长任务跑完时它早就过期了。
+   * 自动拆行必须按**现在**那一行来拆 —— 用户可能在这几十秒里改了号、改了乐器，
+   * 或者把这一行标成「总谱」（= 这一份别拆，见 `needsSegmentation`）；
+   * 按点击那一刻的快照硬拆，那些表态会被静默丢掉。
+   *
+   * ⚠️ 用 **`useLayoutEffect`**（不是 `useEffect`）而不是渲染期赋值：
+   * · 渲染期赋值在并发渲染下可能被丢弃（那次渲染根本没提交）；
+   * · 被动 `useEffect` 是**调度器 normal 优先级**的任务，输入事件（用户正在打字/选声部）
+   *   优先级更高、能插到它前面 —— 于是「用户刚改完、分段刚好收尾」那一拍，
+   *   收尾的微任务续体可能读到**编辑前**那一行，正是这里要防的那件事。
+   *   layout effect 在提交那一刻同步跑完，之后任何任务读到的都是新值。
+   */
+  const filesRef = useRef(files);
+  useLayoutEffect(() => {
+    filesRef.current = files;
+  }, [files]);
   const uploadingRef = useRef(false);
   useEffect(() => {
     cancelledRef.current = false;
@@ -1860,7 +1914,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           updateFile(i, { warning: "这一段没有可用的首页文本（那一页 OCR 没成功）—— 请手填" });
           return;
         }
-        const got = await runLlmAnalysis(seg.originalName, head);
+        // 同 `refineSegments`：段级**不发源文件名**（它描述的是整本，不代表这一段）
+        const got = await runLlmAnalysis(null, head);
         const section = got.isFullScore ? FULL_SCORE_SECTION : got.section;
         const instrument = got.isFullScore ? FULL_SCORE_SECTION : got.instrument;
         updateFileByStorageId(seg.storageId ?? "", (cur) => {
@@ -1879,6 +1934,17 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
               : analysisSummary(got.section, got.instrument, got.subParts),
             evidence: got.evidence,
             evidenceFound: got.evidenceFound,
+            // 号也一并写回（2026-09-25）：这一段的重试就是为了「上一次没认出来」，
+            // 而号同样是段级识别的产物 —— 只更新乐器名、把号留在空上，用户还得手填。
+            // ⚠️ **空数组不覆盖**：组级补号（`fillMissingSubParts`）可能已经给这一段
+            // 补过一个号，而重试读到空只说明「这次没读出号」，不构成「那个补的号是错的」。
+            ...(got.subParts.length > 0
+              ? {
+                  subPartsGuess: got.subParts,
+                  subPartsRaw: got.subPartsRaw,
+                  subPartsOverCap: got.subPartsOverCap,
+                }
+              : {}),
             error: undefined,
             warning: undefined,
           };
@@ -2018,6 +2084,15 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   /**
    * 跑分段（#290 Step 1）。**不自动跑** —— 一份 N 页的合订谱要烧 N 次 OCR，
    * 用户必须在点火前知道这个数（见 segCost 与界面上的按钮文案）。
+   *
+   * 切点判出来之后**直接拆成 N 行**（用户 2026-09-25 定）：导入者本来就不想读，
+   * 所以主路径上不再需要点「确认这 N 段」。
+   *
+   * ⚠️ 那个按钮**没有被删掉** —— 它还留在两条路上：`splitRefusal` 拒绝后的后备，
+   * 以及用户点过「还原为一份」之后想再拆。删了它那两条路就没有出口了。
+   *
+   * 拆分放在**这个函数里**而不是渲染期效果 —— 后者会在用户点「还原为一份」之后
+   * 立刻再拆一次（死循环）。
    */
   const startSegmentation = async () => {
     if (segRunningRef.current) return;
@@ -2027,6 +2102,11 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     // 否则两个长任务重叠，而分段的结果会落到刚上传完、编辑器已隐藏的那一行上。
     setSegBusy(true);
     cancelledRef.current = false;
+    /**
+     * 待拆的行。**在并发池跑完、循环外的第二趟里才真拆** —— 拆分改变 `files` 的长度，
+     * 在池子里拆会让同时飞着的其它任务写错行（同 `retryRow` 那条教训）。
+     */
+    const toSplit: { i: number; patch: Partial<UploadFile> }[] = [];
     try {
       const targets = files.map((f, i) => ({ f, i })).filter(({ f }) => segPending(f));
       await runWithConcurrency(targets, PIPELINE_CONCURRENCY, async ({ f, i }) => {
@@ -2043,13 +2123,28 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           // 起点的推导走 segmentation.ts 里那份（校验 cuts 是它存在的理由）。
           // 别在这里内联重写 —— 否则上线跑的是没被测试覆盖的第三份实现。
           const starts = startsFromResponse(cuts, pageCount);
-          updateFile(i, {
-            segState: "done",
+          /**
+           * 分段自己产出的那几个字段。
+           *
+           * ⚠️ **state 侧只能写这几个**。写成整行（`{ ...f, ...segPatch }`）会把点击那一刻的
+           * 快照整个合并回去 —— 而窄带 OCR 要跑几十秒，用户完全可能在这期间改了声部/乐器
+           *（那两个输入框只判 `phase === "uploading"`，分段期间是可编辑的），
+           * 那些手改会被**静默回滚**成模型早先的答案。`updateFile` 是合并语义，
+           * patch 里带旧值就是旧值胜出。
+           */
+          const segPatch = {
+            pageTexts,
+            segFailedPages: failedPages,
+            segState: "done" as const,
             // 段的**起点**（恒含第 1 页）与输入框原文一起写：两者逐位对应，
             // 编辑时下标才不会错位（见 UploadFile.segmentStartText）
             segmentStarts: starts,
             segmentStartText: starts.map(String),
-          });
+          };
+          updateFile(i, segPatch);
+          // 只记下标与这几个字段，**不在这里拼整行**：整行要等池子跑完、
+          // 从 `filesRef` 里取**当时**那一行再拼 —— 用户可能在这几十秒里改过它（见下面的循环）。
+          if (starts.length > 1) toSplit.push({ i, patch: segPatch });
         } catch (err) {
           // 关窗导致的取消不是失败：状态留在那儿就行（重开弹窗本来就是全新状态）
           if (err instanceof SegmentationCancelled) return;
@@ -2059,6 +2154,25 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           });
         }
       });
+
+      // ⚠️ **下标降序**：拆一行会把它后面的行整体后移，从后往前拆才不会让前面待拆的
+      // 下标失效。
+      //
+      // ⚠️ **整行按 `filesRef` 现取**，不用点击那一刻的快照：分段要跑几十秒，用户在这期间
+      // 可能改了号、改了乐器、或者把这一行标成「总谱」（= 这一份别拆）。按旧快照硬拆，
+      // 那些表态会被静默丢掉 —— 而且不是「影响有界」：段行会继承旧值、补号也会拿旧的号集合
+      // 去做减法，用户以为改对的那版反而没生效。
+      for (const { i, patch } of [...toSplit].sort((a, b) => b.i - a.i)) {
+        if (cancelledRef.current) break;
+        const cur = filesRef.current[i];
+        if (!cur) continue;
+        const fresh: UploadFile = { ...cur, ...patch };
+        // 用户可能刚把它标成「总谱」或改成未识别 —— 那两种都不该再拆。
+        // 不拆是安全的：`unsplitSegments` 也走 `segEligible`，为假时不会拦上传，
+        // 这一行就按整份走（「跑完分段、看段数再标总谱」正是本文件写明的主用法）。
+        if (!segEligible(fresh)) continue;
+        splitIntoSegments(i, fresh);
+      }
     } finally {
       segRunningRef.current = false;
       setSegBusy(false);
@@ -2184,12 +2298,23 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    * 拆完之后每一段各占一行、各有各的声部/乐器/号，文件名各自生成（`圆号1.pdf`），
    * 上传时源文件只读一次、逐段切出来各传各的。
    *
-   * 号按**位置**预填（第 k 段 ↔ 第 k 个号）—— 这是文件名给的最强信号，
-   * 但**只在两边的个数相等时才敢填**：`Horn_1,2,3,4` 切成 3 段时谁也不知道缺的是哪个，
-   * 那时留空让用户逐段填，比塞一个错的号好（错的号会写进 DB 与文件名）。
+   * 号**不在这里定**（2026-09-25 改）。原先按「第 k 段 ↔ 第 k 个号」预填，依据是
+   * **文件名里的号数与段数相等** —— 而文件名可能什么有用信息都没有，也可能像
+   * `…--_Piccolo,_Flute_1,_2.pdf` 那样同时印着多件乐器，于是**每一段**都被填成
+   * `[1,2]`（长笛 1 那段与长笛 2 那段因此撞成同一个文件名、整组被上传拦下）。
+   * 号一律由**各段自己的首页文本**识别得出（见 `refineSegments`），读不到时再由
+   * `fillMissingSubParts` 用其它段做减法补。
+   *
+   * @param freshRow **刚由 `startSegmentation` 写进状态的那一行**，自动拆那条路必须传。
+   *   `files` 是本次渲染的闭包快照，`updateFile` 刚写进去的值在这里**还读不到**：
+   *   · 少了 `segmentStarts` → 读到的是空的旧段起点，等于没拆；
+   *   · 少了 `pageTexts` → **第一次**跑分段时它还是 `undefined`，于是每段的
+   *     `segHeadText` 都取不到、段级识别整批不跑（号全空）；
+   *   · 快照（「还原为一份」用的）也会是旧的，用户还原后得重跑一次 OCR。
+   *   传整行而不是零散字段，这三处就都自动是对的。
    */
-  const splitIntoSegments = (index: number) => {
-    const f = files[index];
+  const splitIntoSegments = (index: number, freshRow?: UploadFile) => {
+    const f = freshRow ?? files[index];
     const segments = segmentsOf(f);
     if (segments.length < 2) return;
     const refusal = splitRefusal({
@@ -2204,15 +2329,6 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     }
 
     const groupId = crypto.randomUUID();
-    const subParts = editsOf(f).subParts;
-    const aligned = subParts.length === segments.length;
-    // **对得上也给提示**：位置对应是个**猜**（依据是「合订顺序 = 页序」，通常成立但不是
-    // 契约），而猜错的号会写进 DB 与文件名。用户本来就要逐段确认，说一句不花什么。
-    const note = aligned
-      ? "号按位置预填（第 1 段 ↔ 第 1 个号…）—— 请逐段确认乐器与号"
-      : `共 ${segments.length} 段，但文件名里是 ${subParts.length} 个号${
-          subParts.length ? `（${formatSubParts(subParts)}）` : ""
-        } —— 请逐段确认乐器与号`;
 
     const rows: UploadFile[] = segments.map((seg, k) => ({
       // 源文件**共用同一个 File 对象**（不可变）：上传时按 groupId 只 load 一次
@@ -2223,9 +2339,13 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       sectionEdit: f.sectionEdit,
       instrumentGuess: f.instrumentGuess,
       instrumentEdit: f.instrumentEdit,
-      // 号按位置预填，仅在个数相等时
-      subPartsGuess: aligned ? [subParts[k]] : [],
-      subPartsRaw: f.subPartsRaw,
+      // 号一律留空起手，由各段**自己的首页文本**识别得出（见 `refineSegments`）——
+      // 不继承源行的号，也不按位置预填，理由见上面 `splitIntoSegments` 的 docblock。
+      subPartsGuess: [],
+      // ⚠️ **不继承 `subPartsRaw`**：源行那句「模型给了号但没读懂」是对**整份**说的，
+      // 继承下去会让**每一段**的 `subPartsUnread` 为真 → 每段都被 `uploadBlocker`
+      // 拦下（连用户没做错什么的那几段一起）。段自己没读出号时，由段级识别
+      // 自己带上 `subPartsRaw`。
       // ⚠️ **刻意不继承 `extraSections`**（源行是跨声部共用分谱时它非空）——
       // 这不是漏写的字段。切分的目的就是让**每一段各归各的声部**：源行那句
       // 「还落到低音提琴」是对**整份**的判断，拆开之后对任何单独一段都不再成立，
@@ -2253,7 +2373,6 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         to: seg.to,
         segIndex: k,
         segTotal: segments.length,
-        note,
       },
       // 分析阶段的调试信息只挂在第 1 段上：4 份重复的 OCR 文本/预览图没有意义
       ...(k === 0
@@ -2273,95 +2392,184 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     //
     // 成本：**N 次 LLM、0 次 OCR**（每段的首页窄带文本在分段那一步已经 OCR 过）。
     // 刻意不 `await`：切分要立刻可见，识别结果回来再各就各位。
-    void refineSegments(rows);
+    void refineSegments(rows, f);
   };
 
   /**
-   * 让每一段用**它自己的首页文本**重新识别一次。
+   * 让每一段用**它自己的首页文本**重新识别一次，然后给漏号的那一段补号。
    *
    * ⚠️ 写回一律走 `updateFileByStorageId`（这段是异步的，行集随时可能被用户改）。
    *
-   * ⚠️ **号码只在模型真读出号时才覆盖**：切分时按位置预填的号（`Horn_1,2,3,4` →
-   * 第 k 段 ↔ 第 k 个号）是**猜**（依据是「合订顺序 = 页序」），但它至少给了用户一个
-   * 起点；而某一段的页眉上没印号时，模型返的是空数组 —— 直接覆盖会把那个起点**清掉**，
-   * 用户反而更没线索。所以空数组不覆盖，读到了才覆盖（页眉上的号比位置猜测更可靠）。
+   * ⚠️ **不发源文件名**（第一个参数传 `null`）：段行继承的是**源合订本**的名字，
+   * 它描述的是整本、不代表这一段。照它填号会让**每一段**都填成源行那份号
+   * （`…--_Piccolo,_Flute_1,_2.pdf` → 段段都是 `[1,2]`），盖过页眉上真正写着的那一行。
+   *
+   * 号（2026-09-25 改）：段自己读出的号**哪怕是空数组也照写** —— 「这一段没有号」是
+   * 一个**完整**的答案（短笛段就是），而旧的「空数组不覆盖」是为了保护按位置预填的号，
+   * 那个预填已经删了。真正**没读出来**的那一种由最后那道 `fillMissingSubParts` 兜。
    *
    * 失败不致命：那一段保留继承来的值，只挂一句 `warning`（展开面板里能看到）。
+   *
+   * @param sourceRow 拆之前那一行（整份那份），补号要用它的乐器与号。
    */
-  const refineSegments = async (rows: UploadFile[]) => {
-    await Promise.all(
-      rows.map(async (row) => {
-        const head = row.segHeadText?.trim();
-        const id = row.storageId;
-        // 拿不到这一段的首页文本（那一页 OCR 失败/被跳过）→ 保留继承来的判断。
-        // **不挂 warning**：分段那一步已经在 `segFailedPages` 里报过了，再报一次是噪声。
-        if (!head || !id) return;
-        try {
-          const got = await runLlmAnalysis(row.originalName, head);
-          const section = got.isFullScore ? FULL_SCORE_SECTION : got.section;
-          const instrument = got.isFullScore ? FULL_SCORE_SECTION : got.instrument;
-          // ⚠️ **段级「没认出来」与段级「调用失败」对用户是同一件事**（对抗测试实测）：
-          // 空答案若照写，这一行会从「继承的整份判断、能直接传」变成「未识别、被
-          // `uploadBlocker` 拦下要逐段手填」——而它只是「模型对这一段说不出话」，
-          // 恰恰是这批改动预期会出现的形态。失败路径刻意保留继承值，成功路径
-          // 却抹掉，是不该有的不对称。所以只把识别**有内容**的结果写回。
-          if (!instrument) {
-            updateFileByStorageId(id, (cur) =>
-              cur.sectionEdit === cur.sectionGuess && cur.instrumentEdit === cur.instrumentGuess
-                ? {
-                    warning: "这一段没能单独识别（模型没给出乐器）—— 上面是整份的判断，请逐段核对",
-                  }
-                : {},
-            );
-            return;
-          }
-          updateFileByStorageId(id, (cur) => {
-            // ⚠️ **用户在这几秒里自己改过这一段的声部/乐器 → 以用户的为准，一个字都不覆盖。**
-            // 识别结果是异步回来的，而抹掉用户刚落的手是最难受的一种「智能」；
-            // 判据是「编辑框还等于切分时预填的那个值」，也就是他没动过。
-            // 两个字段**各自**判断：用户改了声部不该连带挡住模型给的乐器名
-            return {
-              sectionGuess: section,
-              instrumentGuess: instrument,
-              // 同 `analyzeOne`：判据是「Edit 仍等于 Guess」。
-              // ⚠️ 这是**值比较、不是「动过没有」的标记** —— 用户改成别的再改回来，
-              // 判据就成立、他的最后一次表态会被覆盖。取舍：加一个显式标记要新增字段
-              // （`subPartsEditText` 那种），而这条路径的收益不值那个成本。
-              ...(cur.sectionEdit === cur.sectionGuess ? { sectionEdit: section } : {}),
-              ...(cur.instrumentEdit === cur.instrumentGuess ? { instrumentEdit: instrument } : {}),
-              extraSectionsGuess: normalizeExtraSections(got.section, got.extraSections),
-              llmResult: got.isFullScore
-                ? "识别结果: 总谱（整份）—— 不参与分段"
-                : analysisSummary(got.section, got.instrument, got.subParts),
-              evidence: got.evidence,
-              evidenceFound: got.evidenceFound,
-              // 见上面那段说明：空数组不覆盖按位置预填的号
-              ...(got.subParts.length > 0
-                ? {
-                    subPartsGuess: got.subParts,
-                    subPartsRaw: got.subPartsRaw,
-                    subPartsOverCap: got.subPartsOverCap,
-                  }
-                : {}),
-              // 这一段自己识别成功了 → 清掉上一次的失败提示（可能来自更早的一次切分）
-              warning: undefined,
-            };
-          });
-        } catch (err) {
-          updateFileByStorageId(id, (cur) => {
-            // 同上：用户动过手就别再往他那一行挂「没能单独识别」的提示
-            if (cur.sectionEdit !== row.sectionEdit || cur.instrumentEdit !== row.instrumentEdit) {
-              return {};
-            }
-            return {
-              warning: `这一段没能单独识别（${
-                err instanceof Error ? err.message : String(err)
-              }）—— 上面是整份的判断，请逐段核对`,
-            };
-          });
+  const refineSegments = async (rows: UploadFile[], sourceRow: UploadFile) => {
+    // 包一层只为计「在飞」的数（见 `refiningCount`）—— 内层保持原样，免得整段重排缩进
+    setRefiningCount((c) => c + 1);
+    try {
+      await refineSegmentsInner(rows, sourceRow);
+    } finally {
+      setRefiningCount((c) => c - 1);
+    }
+  };
+
+  const refineSegmentsInner = async (rows: UploadFile[], sourceRow: UploadFile) => {
+    // 各段**自己**识别出的结果，供最后的补号用。没认出乐器的段不进这个表 ——
+    // 它们不参与补号（不知道它是什么，就不知道源行那份号对它成不成立）。
+    const seen = new Map<string, { instrument: string; subParts: number[] }>();
+    // ⚠️ **必须是限流的循环，不能是 `Promise.all(rows.map(...))`**：后者的 N 个 async
+    // 函数体在**同一个 tick** 里同步跑到各自的第一个 await，于是那句 `cancelledRef` 检查
+    // 对每一段读到的是同一个值 —— 一次调用都拦不下，是个「看起来承重、其实不承重」的守卫
+    //（对抗测试实测）。限流循环在段与段之间有 await，关窗之后剩下的段就真的不发了；
+    // 顺带把并发的 LLM 调用数也收在 `PIPELINE_CONCURRENCY` 以内。
+    await runWithConcurrency(rows, PIPELINE_CONCURRENCY, async (row) => {
+      // 关窗就别再烧配额了：还没发出去的那几段直接不发
+      //（同 `analyzeOne` 开头那条判断；已经飞出去的那几个拦不住，但它们是少数）
+      if (cancelledRef.current) return;
+      const head = row.segHeadText?.trim();
+      const id = row.storageId;
+      // 拿不到这一段的首页文本（那一页 OCR 失败/被跳过）→ 保留继承来的判断。
+      // **不挂 warning**：分段那一步已经在 `segFailedPages` 里报过了，再报一次是噪声。
+      if (!head || !id) return;
+      try {
+        const got = await runLlmAnalysis(null, head);
+        const section = got.isFullScore ? FULL_SCORE_SECTION : got.section;
+        const instrument = got.isFullScore ? FULL_SCORE_SECTION : got.instrument;
+        // ⚠️ **段级「没认出来」与段级「调用失败」对用户是同一件事**（对抗测试实测）：
+        // 空答案若照写，这一行会从「继承的整份判断、能直接传」变成「未识别、被
+        // `uploadBlocker` 拦下要逐段手填」——而它只是「模型对这一段说不出话」，
+        // 恰恰是这批改动预期会出现的形态。失败路径刻意保留继承值，成功路径
+        // 却抹掉，是不该有的不对称。所以只把识别**有内容**的结果写回。
+        if (!instrument) {
+          updateFileByStorageId(id, (cur) =>
+            cur.sectionEdit === cur.sectionGuess && cur.instrumentEdit === cur.instrumentGuess
+              ? {
+                  warning: "这一段没能单独识别（模型没给出乐器）—— 上面是整份的判断，请逐段核对",
+                }
+              : {},
+          );
+          return;
         }
-      }),
-    );
+        seen.set(id, { instrument, subParts: got.subParts });
+        updateFileByStorageId(id, (cur) => {
+          // ⚠️ **用户在这几秒里自己改过这一段的声部/乐器 → 以用户的为准，一个字都不覆盖。**
+          // 识别结果是异步回来的，而抹掉用户刚落的手是最难受的一种「智能」；
+          // 判据是「编辑框还等于切分时预填的那个值」，也就是他没动过。
+          // 两个字段**各自**判断：用户改了声部不该连带挡住模型给的乐器名
+          return {
+            sectionGuess: section,
+            instrumentGuess: instrument,
+            // 同 `analyzeOne`：判据是「Edit 仍等于 Guess」。
+            // ⚠️ 这是**值比较、不是「动过没有」的标记** —— 用户改成别的再改回来，
+            // 判据就成立、他的最后一次表态会被覆盖。取舍：加一个显式标记要新增字段
+            // （`subPartsEditText` 那种），而这条路径的收益不值那个成本。
+            ...(cur.sectionEdit === cur.sectionGuess ? { sectionEdit: section } : {}),
+            ...(cur.instrumentEdit === cur.instrumentGuess ? { instrumentEdit: instrument } : {}),
+            extraSectionsGuess: normalizeExtraSections(got.section, got.extraSections),
+            llmResult: got.isFullScore
+              ? "识别结果: 总谱（整份）—— 不参与分段"
+              : analysisSummary(got.section, got.instrument, got.subParts),
+            evidence: got.evidence,
+            evidenceFound: got.evidenceFound,
+            // 空数组也照写 —— 「这一段没有号」是完整答案（见 docblock）
+            subPartsGuess: got.subParts,
+            subPartsRaw: got.subPartsRaw,
+            subPartsOverCap: got.subPartsOverCap,
+            // 这一段自己识别成功了 → 清掉上一次的失败提示（可能来自更早的一次切分）
+            warning: undefined,
+            // ⚠️ **只清「同组重名」那一条 `error`**（2026-09-25）：拆完号是空的，几秒后
+            // 识别才回来 —— 用户若在这中间点了「确认上传」，会被那句重名拦下、红字留在
+            // 行上；等号各自落地、名字已经不同了，那句却没人清。
+            // **不能无条件清**：那会把「上传失败」那类红字一起抹掉，用户会以为传上去了。
+            //
+            // ⚠️ **与 `refiningCount` 是双保险，目前不可达**：那条 `error` 的唯一产生点是
+            // 点「确认上传」（`duplicatedInGroup` 那一支），而那时 `refiningCount` 必为 0
+            //（按钮灰着）—— 也就是说识别在飞的窗口里根本产生不出这条 error，这一段清理
+            // 今天跑不到。留着是因为它的成本是一行，而**万一哪天 `refiningCount` 那道门
+            // 被收窄或去掉**（比如改成只拦「确实有待传行」的判据），这条就会立刻变成活的：
+            // 到那时没有它，那句已经过期的红字会赖在行上没人清。变异验证打不红它，属预期。
+            ...(cur.error === DUPLICATE_SEGMENT_ERROR ? { error: undefined } : {}),
+          };
+        });
+      } catch (err) {
+        updateFileByStorageId(id, (cur) => {
+          // 同上：用户动过手就别再往他那一行挂「没能单独识别」的提示
+          if (cur.sectionEdit !== row.sectionEdit || cur.instrumentEdit !== row.instrumentEdit) {
+            return {};
+          }
+          return {
+            warning: `这一段没能单独识别（${
+              err instanceof Error ? err.message : String(err)
+            }）—— 上面是整份的判断，请逐段核对`,
+          };
+        });
+      }
+    });
+
+    // 组级补号：只剩**一段**没从自己页眉上读出号时，用源行的号做减法补给它
+    // （例：整份 `[1,2]` + 第 1 段读出 `[1]` → 第 2 段补 `[2]`）。
+    // 三条保守约束（不同乐器不补、漏号不止一段不补、减完没剩余不补）见 `fillMissingSubParts`。
+    const src = editsOf(sourceRow);
+    // ⚠️ **整组里任何一行被用户动过声部/乐器 → 整组不补**。
+    // `fillMissingSubParts` 的约束 1（「乐器与源行相同才补」）判的是**所有段模型读出的**
+    // 乐器，而用户改的完全可能是**兄弟段**（模型把 B 段认错了、用户改成别的乐器）——
+    // 那时 `taken` 里那个号根本不属于源行那套号，减法算出来的结果就是错的，而界面上
+    // 那一格看起来就是识别结果、看不出是猜的。
+    // 只盯「被补的那一行」不够 —— 那正是上一轮修复留下的缺口（对抗测试实测）。
+    // 取值走 `filesRef`：这段是异步的，`rows` 是拆行那一刻的快照。
+    const anyEdited = rows.some((r) => {
+      const cur = filesRef.current.find((x) => x.storageId === r.storageId);
+      return (
+        !!cur &&
+        (cur.sectionEdit !== cur.sectionGuess || cur.instrumentEdit !== cur.instrumentGuess)
+      );
+    });
+    const filled = anyEdited
+      ? rows.map(() => null)
+      : fillMissingSubParts({
+          sourceInstrument: src.instrument,
+          sourceSubParts: src.subParts,
+          // 没进 `seen` 的段（没认出乐器 / 没拿到首页文本）一律按「不认识」算 → 不参与
+          segments: rows.map(
+            (r) => seen.get(r.storageId ?? "") ?? { instrument: "", subParts: [] },
+          ),
+        });
+    rows.forEach((row, i) => {
+      const parts = filled[i];
+      const id = row.storageId;
+      if (!parts || !id) return;
+      updateFileByStorageId(id, (cur) =>
+        // 用户自己填过号（`subPartsEditText` 有值）或已经识别出号 → 一个字都不动
+        cur.subPartsEditText === undefined &&
+        (cur.subPartsGuess ?? []).length === 0 &&
+        // ⚠️ **带 `subPartsRaw` / `subPartsOverCap` 的行也不动**：那两种是
+        //「**有号但没读懂**」/「后端给的个数超上界」，与「页眉上没印号」是两件事。
+        // 补上一个号会让 `subPartsUnread` 变假 → 拦截与黄色提示**同时消失**，
+        // 用户拿到一个从没确认过的号，而 `subPartsRaw` 还留在行上、再没有任何渲染路径读它
+        // —— 那正是本 issue 要消灭的「静默丢号」的镜像。
+        !cur.subPartsRaw &&
+        !cur.subPartsOverCap &&
+        // ⚠️ **用户在这几秒里改过这一段的声部/乐器 → 也不补**。判据与**同函数上面那次
+        // 写回完全同源**（`cur.sectionEdit === cur.sectionGuess` 那一对）。
+        // 少了它就有个真窗口：模型把某段的乐器认错、用户趁识别还没落地（乐器输入框那时
+        // 是可编辑的）改成别的 —— 而 `fillMissingSubParts` 的约束 1（乐器与源行相同才补）
+        // 判的是**模型读出的**那个乐器，于是减法猜出来的号照样写进这一行，
+        // `file_name` / `sub_parts` 落一个用户从没确认过的号，界面上还看不出是猜的。
+        cur.sectionEdit === cur.sectionGuess &&
+        cur.instrumentEdit === cur.instrumentGuess
+          ? { subPartsGuess: parts }
+          : {},
+      );
+    });
   };
 
   /**
@@ -2773,7 +2981,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         const dup = duplicatedInGroup(range.groupId);
         if (pending.some(({ i }) => dup.has(i))) {
           for (const { i } of pending) {
-            if (dup.has(i)) updateFile(i, { error: "与同组的其他段重名，请改乐器名或号" });
+            if (dup.has(i)) updateFile(i, { error: DUPLICATE_SEGMENT_ERROR });
           }
           return;
         }
@@ -3181,9 +3389,6 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                               </button>
                             </div>
                           )}
-                          {f.splitOf?.note && (
-                            <p className="text-xs text-warning">{f.splitOf.note}</p>
-                          )}
                           {/* 同组重名：详情页会出现几份分不清的文件，上传也会被拦下。
                               （这个块本身就只在 analyzed/error 上渲染，所以不用再判 done） */}
                           {f.splitOf && duplicatedInGroup(f.splitOf.groupId).has(i) && (
@@ -3490,7 +3695,12 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                                             onKeyDown={(e) => {
                                               if (e.key === "Enter") commitSegmentStart(i, si);
                                             }}
-                                            disabled={phase === "uploading"}
+                                            // ⚠️ `segBusy` 不能漏（2026-09-25）：切点判出后会自动拆，
+                                            // 而拆分用的是**这次分段算出来的** `starts`。池子里还有
+                                            // 别的文件在跑时，这一行已经 `done`、边界框是可编辑的 ——
+                                            // 用户在这儿改的边界会被随后的自动拆按旧快照推翻。
+                                            // 收了再丢比直接禁掉更糟，所以与「确认这 N 段」同一条纪律。
+                                            disabled={phase === "uploading" || segBusy}
                                             className={`w-14 px-1.5 py-0.5 text-xs bg-muted border rounded shrink-0 disabled:opacity-50 ${
                                               bad ? "border-danger text-danger" : "border-border"
                                             }`}
@@ -3509,7 +3719,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                                         {si > 0 && (
                                           <button
                                             onClick={() => mergeSegmentAt(i, si)}
-                                            disabled={phase === "uploading"}
+                                            disabled={phase === "uploading" || segBusy}
                                             className="px-1.5 py-0.5 text-text-muted border border-border rounded shrink-0 hover:text-primary disabled:opacity-50"
                                             title="删掉这条边界，把这一段并进上一段"
                                           >
@@ -3520,7 +3730,11 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                                             没有这个按钮，用户遇到漏切只能重跑分段（再烧 N 次 OCR） */}
                                         <button
                                           onClick={() => splitSegmentAt(i, si)}
-                                          disabled={phase === "uploading" || seg.to - seg.from < 1}
+                                          disabled={
+                                            phase === "uploading" ||
+                                            segBusy ||
+                                            seg.to - seg.from < 1
+                                          }
                                           className="px-1.5 py-0.5 text-text-muted border border-border rounded shrink-0 hover:text-primary disabled:opacity-50"
                                           title="在这一段中间加一条边界（模型漏切时用）——不重跑 OCR"
                                         >
@@ -3643,9 +3857,18 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
               {segTargets.length > 0 && !allDone && (
                 <button
                   onClick={startSegmentation}
-                  disabled={phase === "analyzing" || phase === "uploading" || segBusy}
+                  // ⚠️ **`hasAnalyzingFiles` 不能少**（2026-09-25）：切点判出后这个函数会
+                  // **自动拆行**，而拆分改变 `files` 长度 —— 逐行重试恰是「攥着下标飞行」的
+                  // 长任务，行集一平移，重试结果就写进别的行、被重试那行永远停在「分析中」
+                  // →`hasAnalyzingFiles` 恒真 →「确认上传」永久禁用。
+                  // 与「还原为一份」「确认这 N 段」两处是同一条纪律（不在注释里写行号 ——
+                  // 它们每改一次就腐烂一次，本行自己就烂过一次）。
+                  // 改动前这个按钮只写 `segState`、不动行集，所以漏了它也不会出事。
+                  disabled={
+                    phase === "analyzing" || phase === "uploading" || segBusy || hasAnalyzingFiles
+                  }
                   className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted disabled:opacity-50"
-                  title="合订谱里可能装着好几份分谱。识别出边界后可以逐段确认、再切分上传。"
+                  title="合订谱里可能装着好几份分谱。识别出边界后会直接拆成几份，各自识别、各自上传。"
                 >
                   {segTargets.some(({ f }) => f.segState === "running")
                     ? "识别分段中..."
@@ -3676,12 +3899,24 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
               ) : (
                 <button
                   onClick={confirmUpload}
+                  // ⚠️ `refiningCount` 不能漏：段级识别还在飞时上传，`uploadOne` 会按
+                  // 点击那一刻的行算出**没号**的 `file_name` / `sub_parts` 落库，
+                  // 而屏幕上那几秒后就有号了 —— 界面与库从此对不上且没人回退（见 `refiningCount`）。
                   disabled={
-                    phase === "analyzing" || uploadableCount === 0 || hasAnalyzingFiles || segBusy
+                    phase === "analyzing" ||
+                    uploadableCount === 0 ||
+                    hasAnalyzingFiles ||
+                    segBusy ||
+                    refiningCount > 0
                   }
                   className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
                 >
-                  确认上传（{uploadableCount}/{files.length}）
+                  {/* 灰着必须给理由：段级识别在飞时那几行看起来是「已识别、可直接传」的
+                      （它们继承了源行的乐器名），只灰不说是本文件明确反对的写法。
+                      同一文件里「识别分段」用的也是这个「动词中...」的写法。 */}
+                  {refiningCount > 0
+                    ? "识别各段中..."
+                    : `确认上传（${uploadableCount}/${files.length}）`}
                 </button>
               )}
             </div>

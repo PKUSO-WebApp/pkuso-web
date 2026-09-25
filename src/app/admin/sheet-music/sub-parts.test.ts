@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  fillMissingSubParts,
   formatSubParts,
   generateFileName,
   MAX_SUB_PARTS,
@@ -236,5 +237,111 @@ describe("overSubPartsCap：把「因上界被丢」这条静默路径变成可�
     for (const bad of [undefined, null, "1,2", 3, {}]) {
       expect(overSubPartsCap(bad), JSON.stringify(bad)).toBeNull();
     }
+  });
+});
+
+describe("fillMissingSubParts：段级补号", () => {
+  const src = (sourceInstrument: string, sourceSubParts: number[]) => ({
+    sourceInstrument,
+    sourceSubParts,
+  });
+
+  it("漏号的段恰好一个时，把剩下的号补给它", () => {
+    // 本 issue 要修的正型：整份 `[1,2]`，第 1 段页眉读出 `[1]`，第 2 段页眉上没印号
+    expect(
+      fillMissingSubParts({
+        ...src("长笛", [1, 2]),
+        segments: [
+          { instrument: "长笛", subParts: [1] },
+          { instrument: "长笛", subParts: [] },
+        ],
+      }),
+    ).toEqual([null, [2]]);
+  });
+
+  it("**不同乐器的段不补** —— 它那个空数组是完整答案，不是「没读出来」", () => {
+    // 短笛段自己读出 短笛/[]，那是对的（短笛没有分声部号）。补它就把对的改错了。
+    expect(
+      fillMissingSubParts({
+        ...src("长笛", [1, 2]),
+        segments: [
+          { instrument: "短笛", subParts: [] },
+          { instrument: "长笛", subParts: [1] },
+          { instrument: "长笛", subParts: [2] },
+        ],
+      }),
+    ).toEqual([null, null, null]);
+  });
+
+  it("**漏号不止一段时不补** —— 谁该拿哪个又要靠位置猜，那正是要拆掉的东西", () => {
+    expect(
+      fillMissingSubParts({
+        ...src("圆号", [1, 2, 3, 4]),
+        segments: [
+          { instrument: "圆号", subParts: [] },
+          { instrument: "圆号", subParts: [] },
+        ],
+      }),
+    ).toEqual([null, null]);
+  });
+
+  it("减完没剩余就不补", () => {
+    expect(
+      fillMissingSubParts({
+        ...src("长笛", [1, 2]),
+        segments: [
+          { instrument: "长笛", subParts: [1, 2] },
+          { instrument: "长笛", subParts: [] },
+        ],
+      }),
+    ).toEqual([null, null]);
+  });
+
+  it("源行的号不足 2 个时不补（减不出东西）", () => {
+    for (const s of [[], [1]]) {
+      expect(
+        fillMissingSubParts({
+          ...src("圆号", s),
+          segments: [{ instrument: "圆号", subParts: [] }],
+        }),
+        JSON.stringify(s),
+      ).toEqual([null]);
+    }
+  });
+
+  it("源行乐器为空（没认出来）时谁都不补", () => {
+    expect(
+      fillMissingSubParts({
+        ...src("", [1, 2]),
+        segments: [{ instrument: "长笛", subParts: [] }],
+      }),
+    ).toEqual([null]);
+  });
+
+  it("没认出乐器的段既不算「已取走号」也不算「漏号」", () => {
+    // 中间那段 instrument 为空 → 它不参与。于是「漏号」只有第 1 段一个，
+    // 而第 3 段取走的 [2] 照样算数 → 补 [1] 给第 1 段。
+    expect(
+      fillMissingSubParts({
+        ...src("长笛", [1, 2]),
+        segments: [
+          { instrument: "长笛", subParts: [] },
+          { instrument: "", subParts: [] },
+          { instrument: "长笛", subParts: [2] },
+        ],
+      }),
+    ).toEqual([[1], null, null]);
+  });
+
+  it("乐器名首尾空白不影响判定", () => {
+    expect(
+      fillMissingSubParts({
+        ...src("长笛", [1, 2]),
+        segments: [
+          { instrument: " 长笛 ", subParts: [1] },
+          { instrument: "长笛", subParts: [] },
+        ],
+      }),
+    ).toEqual([null, [2]]);
   });
 });

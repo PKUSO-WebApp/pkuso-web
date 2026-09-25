@@ -1099,3 +1099,73 @@ describe("跨声部的共用分谱：一份文件落成两行", () => {
     expect(h.fileInserts[0] as unknown[]).toHaveLength(1);
   });
 });
+
+describe("名字里的字符判据（判据本体在 unsafe-name.test.ts，这里钉的是**接上了没有**）", () => {
+  it("乐器名里藏着 NBSP：拦在落库之前，且**指出码位** —— 后端管不到用户手输的这一份", async () => {
+    // ⚠️ 理由要说准（这轮之后后端也判两种形态了，NBSP 在后端同样会被拦）：
+    // 后端拦得住**模型返回的值**，管不住**用户手输的值** —— 那个值根本不经过后端。
+    // 放过去的话，文件名与库值里就多一个看不见的字符 —— 与「F调圆号」肉眼完全同形，
+    // 而唯一约束也拦不住（两个值并不相等）。
+    h.user = { id: "u1" };
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调\u00a0圆号",
+      subParts: [1],
+      isFullScore: false,
+    };
+    await runAnalysis();
+
+    fireEvent.click(screen.getByText(/确认上传/));
+    await waitFor(() => expect(screen.getAllByText(/U\+00A0/).length).toBeGreaterThan(0), {
+      timeout: 10000,
+    });
+    // 动作要给对：那个字符用户看不见，也就删不掉
+    expect(screen.getAllByText(/重新输入/).length).toBeGreaterThan(0);
+    expect(h.fileInserts).toHaveLength(0);
+  });
+
+  it("声部名那一半也要真的判 —— 用户手输的声部同样到不了后端", async () => {
+    // 模型返回的 `section` 在后端过一遍闭集（`normalizeSection`），但**用户改过之后**
+    // 就不再经后端了，而 `sheet_music_parts.section` 是用户看得见、会落库的列。
+    // ⚠️ 这条是补的缺口：此前把 `uploadBlocker` 里声部那一半整段删掉，31 条全绿（对抗测试实测）。
+    h.user = { id: "u1" };
+    h.llmReply = {
+      success: true,
+      // 全角空格夹在中间：模型从页眉抄下来时很常见的形态（两端的会被 `editsOf` 的 trim 收掉）
+      section: "圆\u3000号",
+      instrument: "F调圆号",
+      subParts: [1],
+      isFullScore: false,
+    };
+    await runAnalysis();
+
+    fireEvent.click(screen.getByText(/确认上传/));
+    await waitFor(
+      () => expect(screen.getAllByText(/声部名里有看不见的字符/).length).toBeGreaterThan(0),
+      { timeout: 10000 },
+    );
+    expect(h.fileInserts).toHaveLength(0);
+  });
+
+  it("全角点凑出的 `..` 同样拦在落库之前 —— 它只有折叠后才现形（#303 的正题）", async () => {
+    // 同一个值在两仓曾经得到相反结论：后端判折叠后的形态（拦得住），前端判 raw（放行）。
+    // 这条从「模型给的乐器名」一路走到「点上传」，钉住前端这一侧真的接上了。
+    h.user = { id: "u1" };
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "圆号．.",
+      subParts: [1],
+      isFullScore: false,
+    };
+    await runAnalysis();
+
+    fireEvent.click(screen.getByText(/确认上传/));
+    await waitFor(
+      () => expect(screen.getAllByText(/不能用于文件名的「\.\.」/).length).toBeGreaterThan(0),
+      { timeout: 10000 },
+    );
+    expect(h.fileInserts).toHaveLength(0);
+  });
+});

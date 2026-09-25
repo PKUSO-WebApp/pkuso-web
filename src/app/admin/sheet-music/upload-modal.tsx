@@ -47,6 +47,7 @@ import {
 } from "./sections";
 import { mapLinesToPages, MOSAIC_HARD_LIMIT_BYTES, packBands } from "./mosaic";
 import { duplicateNames, openForSplit, splitRefusal } from "./split-pdf";
+import { findUnsafeInName, unsafeNameMessage } from "./unsafe-name";
 
 /**
  * 乐器名现在是**开放集**：后端 llm-analyze 直接返回中文（`木琴` / `英国管` /
@@ -75,30 +76,22 @@ function pathOf(scoreId: string, storageId: string): string {
   return `${scoreId}/${storageId}.pdf`;
 }
 
-/** 零宽字符与控制字符。`.trim()` 不管它们 —— `"​".trim() === "​"` 是 JS 规范行为。 */
+/**
+ * 零宽字符与控制字符。`.trim()` 不管它们 —— `"\u200b".trim() === "\u200b"` 是 JS 规范行为。
+ *
+ * ⚠️ 与 `unsafe-name.ts` 的 `INVISIBLE_IN_NAME` **不是一回事**（名字像、用途不同）：
+ * 这一份只回答「名字**是不是空的**」，所以只剥真正的零宽/控制字符；
+ * 那一份回答「命中的字符**是不是看不见**」（好在文案里报码位），所以还收
+ * `Cs`/`Zs`/`Zl`/`Zp` 与 `\p{Default_Ignorable_Code_Point}`。
+ * 一个只填了韩文填充符（U+3164）的名字不在这里算空 —— 它由那条判据拦下，
+ * 并给用户一句说得清的话（「有看不见的字符（U+3164），请手工重新输入」）。
+ */
 const INVISIBLE = /[\p{Cf}\p{Cc}]/gu;
 
 /** 名字是不是「空的」：只有空白、或只有不可见字符，都算空。 */
 function isBlankName(s: string): boolean {
   return s.replace(INVISIBLE, "").trim() === "";
 }
-
-/**
- * 会被当成**文件名 / DB 值**的字段里不允许出现的东西。
- *
- * ⚠️ 这条 guard 的**理由换过一次**：原写「会被当成路径段的字段」（`..` 构成路径穿越、
- * 控制字符造出「肉眼同名」的目录），那个前提**早已不成立** —— 存储键是
- * `{scoreId}/{行 id}.pdf`（见 `pathOf`），声部与乐器名都进不去。
- * 现在它守的是另外两处：`file_name`（用户下载时落到自己文件系统上的名字）
- * 与 `sheet_music_files` 的列值。后端为同一件事已经改过理由
- * （`pkuso-backend` 的 `analyze.ts`：`MAX_INSTRUMENT_CHARS` / `ILLEGAL_IN_INSTRUMENT`），
- * 前端这一份当时没跟上。
- *
- * **`/` 刻意不在此列** —— #12 明确允许「木琴/钟琴」这种合称。
- * （它现在只影响下载文件名里多一个斜杠，不再是「多一层目录」——那是上面那段
- * 已作废的存储路径前提。）
- */
-const UNSAFE_IN_PATH = /\.\.|\p{Cc}|\p{Cf}/u;
 
 /**
  * 后端返回的 `section` 是否落在项目标准的 16 声部内。
@@ -404,13 +397,16 @@ function uploadBlocker({
 }): string {
   // editsOf 用 `??` 而不是 `||` 取值，用户主动清空输入框时这里拿到的就是空串 ——
   // 空乐器名必须**拦下**（后端的「未识别」正是空串），否则会建出一个没有名字的声部/文件。
-  // 空判据还必须**连不可见字符一起算空**：`"​".trim()` 还是它自己，
-  // 放过去会建出一个肉眼看着是空、实际叫 "​" 的声部与文件。
+  // 空判据还必须**连不可见字符一起算空**：`"\u200b".trim()` 还是它自己，
+  // 放过去会建出一个肉眼看着是空、实际叫 "\u200b" 的声部与文件。
   if (isBlankName(instrument)) return "未识别的乐器名，请先填写再上传";
   if (isBlankName(section)) return "未指定声部，请先填写再上传";
-  // 后端只管得住它自己返回的值，用户手输的这一层得前端自己把关
-  if (UNSAFE_IN_PATH.test(instrument) || UNSAFE_IN_PATH.test(section))
-    return "声部或乐器名里不能有「..」或控制字符";
+  // 后端只管得住它自己返回的值，用户手输的这一层得前端自己把关。
+  // 判据（与后端逐字同一份）在 `unsafe-name.ts`；两个字段分开报，用户才知道该改哪一格。
+  const badInstrument = findUnsafeInName(instrument);
+  if (badInstrument) return unsafeNameMessage("乐器名", badInstrument);
+  const badSection = findUnsafeInName(section);
+  if (badSection) return unsafeNameMessage("声部名", badSection);
   // 分声部号非法就**别传**：文件名是前端生成的，非法输入会被原样写进文件名与库
   if (subPartsInvalid) return subPartsInvalid;
   // **模型给了号却谁都没读懂，就必须拦住。**

@@ -1433,15 +1433,6 @@ async function requestSegmentation(pageCount: number, pageTexts: PageText[]): Pr
 }
 
 /**
- * 乐器识别：文件名作为一行证据，和 OCR 文本一起交给 LLM。
- * 出版社扫描分谱的乐器名往往就写在文件名里（PMLASIA01165-13-Horn_2.pdf），
- * 而它们的页面常是扫描乐谱、OCR 读出来是乱的 —— 这种情况下文件名比 OCR 可靠得多。
- * 后端 llm-analyze 只接受 text/ocr_text 字段，因此这里合并成一段文本发送。
- *
- * ⚠️ **以上只对「整份」那次调用成立**：段级识别**不发文件名**（段行继承的是源合订本
- * 的名字，描述的是整本而不是这一段，见 `runLlmAnalysis` 的 `fileName` 参数）。
- */
-/**
  * 后端响应里**「信号类」字段的消费者清单**（pkuso-web#302）。
  *
  * 后端为了「把静默差异变成可见信号」专门发这些字段；前端不读就等于它们不存在，
@@ -1462,15 +1453,24 @@ async function requestSegmentation(pageCount: number, pageTexts: PageText[]): Pr
  * 是**逐字段**构造 `UploadFile` 的（不是 spread），中间少写一个字段，展示代码就成死代码
  * —— `subPartsOverCap` 栽过这一次（它自己的注释里记着：审查靠「提示可达性」的探针抓出来的）。
  *
- * ## 为什么这些字段都写成可选（2026-09-26，技术债 B3 之后的口径）
+ * ## 为什么这些字段都写成可选
  *
- * **不再是因为「线上可能还是旧后端」** —— 两仓现已同版本（#303 那一轮之后），那个过渡期
- * 结束了，所以下面各字段注释里那句「旧后端不返回」已经作废，一律按这一段理解：
+ * 与「线上后端是新是旧」无关：下面各字段注释里那句「旧后端不返回 → 平滑降级」**已经作废**
+ * （那是两仓字段还没对齐时留下的写法，会让人误以为这些 `undefined` 是临时兼容层），
+ * 一律按这一段理解。
  *
- * 唯一的理由是 **`data` 是 `any`**（`functions.invoke` 的返回值），谁也不能保证形状。
- * **字段缺失**时按「这一行没有这个信号」处理，而**不是**当成 `false` / 空串 —— 这两种在界面上
- * **不等价**（见 `evidence` 那条：缺字段 = 什么都没有，空串 = 模型没给引文）。
- * 所以那几处 `typeof` 判型**不是兼容层，别顺手删**。
+ * 理由是响应**是 `any`**（`functions.invoke` 的返回值），谁也不能保证形状 ——
+ * 「这个字段没来」是这条链路上一等的可能状态，代码必须活得下去。
+ *
+ * **边界上不归一**：映射那一步一律 `typeof` 判型 —— 缺字段保持 `undefined`，不在那里
+ * 顺手归一成 `false` / 空串；「这两种要不要显示成同一件事」交给界面决定。
+ * `evidence`（缺字段 = 什么都不显示 / 空串 = 提示「模型没给引文」）与 `evidenceFound`
+ * （缺字段 = 不提示 / `false` = 警示）就是**不等价**的例子，所以那几处 `typeof` 判型
+ * **不是兼容层，别顺手删** —— 归一掉之后 `undefined` 就被吃掉了，上面那两处再也分不开。
+ *
+ * ⚠️ **反方向也有例子**：`extraSections` / `UploadFile.extraSectionsGuess` 按设计就是
+ * 「缺席 ≡ 空」（缺字段 ≡ 没有额外声部），所以那两处统一 `?? []` **是对的**。
+ * 判据是「界面上等价吗」，不是「有没有判型」—— 别把这一段当口号往所有字段上套。
  */
 interface LlmAnalysis {
   section: string;
@@ -1510,8 +1510,8 @@ interface LlmAnalysis {
   /**
    * 主声部之外还要落到哪几个声部（pkuso-backend 的 `Analysis.extraSections`）。
    *
-   * ⚠️ **可选**，不是「后端一定会给」：这个字段是后加的，而线上跑着的后端可能还是旧的
-   * —— 那时它是 `undefined`，语义上等于「没有额外声部」。所以取值一律走
+   * ⚠️ **可选**：字段缺失时语义上等于「没有额外声部」—— 这是**按设计「缺席 ≡ 空」**的
+   * 那类（口径见上文的「为什么这些字段都写成可选」）。所以取值一律走
    * `editsOf().extraSections`（那里统一 `?? []`），别在调用点各写各的。
    */
   extraSections?: string[];
@@ -1546,16 +1546,23 @@ interface LlmAnalysis {
 }
 
 /**
+ * 乐器识别：文件名作为**一条证据**，和 OCR 文本一起交给 LLM。
+ * 出版社扫描分谱的乐器名往往就写在文件名里（`PMLASIA01165-13-Horn_2.pdf`），而它们的
+ * 页面常是扫描乐谱、OCR 读出来是乱的 —— 这种情况下文件名比 OCR 可靠得多。
+ *
+ * 两个字段**分开发**（pkuso-web#300）：以前文件名是拼进 `ocr_text` 第一行的，那样后端
+ * 判「引文在原文里找到」时会把文件名也算成原文（抄文件名、甚至只抄文件名里的流水号
+ * 都能让 `evidenceFound` 为真）。
+ *
  * @param fileName 文件名，或 **`null` = 不发这一行**。
  *
  * ⚠️ **段级识别一律传 `null`**（2026-09-25 改）。段行继承的是**源合订本**的文件名，
  * 它描述的是**整本**、不代表这一段 —— 而 prompt 规则 8 明写「文件名是 `Flute 1-2`
  * 这种就写 `[1,2]`」，于是**每一段**都会被填成源行那份号，盖过页眉上真正写着的那一行。
  * 后果不是「号不准」而已：各段算出的下载名会撞在一起，`duplicatedInGroup` 命中后
- * **整组都传不上去**（见 issue #304）。
+ * **整组都传不上去**（见 pkuso-web#304）。
  *
- * 整份调用照旧发文件名 —— 对**单份**分谱它常常是最可靠的线索（出版社把乐器名
- * 印在文件名里，而扫描页的 OCR 可能是乱的）。
+ * 整份调用照旧发文件名 —— 对**单份**分谱它常常是最可靠的线索。
  */
 async function runLlmAnalysis(fileName: string | null, ocrText: string): Promise<LlmAnalysis> {
   const { data, error } = await supabase.functions.invoke("llm-analyze", {
@@ -1599,8 +1606,11 @@ async function runLlmAnalysis(fileName: string | null, ocrText: string): Promise
       // 字符串 "true" / 1 都不该被当成总谱）。字段缺失时是 undefined → false。
       isFullScore: data.isFullScore === true,
       // 字段缺失 → undefined → 清洗后是 `[]` → 这一行照旧只落一个声部。
-      // ⚠️ 「缺席」与「空」同义这件事**必须由 `normalizeExtraSections` 兜住**，别指望调用点：
-      // 这是 #15 那次「必须同批上线」换来的教训（当时只在新字段的**读的一侧**兜底，不够）。
+      // ⚠️ 这里「缺席」与「空」同义 —— 这是**按设计**成立的（`LlmAnalysis` 的
+      // 「为什么这些字段都写成可选」），靠 `normalizeExtraSections` 兜住而不是靠调用点。
+      // 别处不能照抄这个写法（`evidence` 那条正好相反：缺字段 ≠ 空串）。
+      // 这是 pkuso-backend#15（subParts 契约 + sub_parts 列）那次「必须同批上线」的教训：
+      // 只在新字段的**读的一侧**兜底是不够的，还得保证「缺席」与「空」同义。
       extraSections: normalizeExtraSections(String(data.section ?? ""), data.extraSections),
       // 引文与「有没有在原文里找到」：两者一起显示给用户复核（见 evidenceLine）。
       // `typeof` 判型而不是 `??` —— 缺字段与空串在界面上**不等价**（前者什么都不显示，
@@ -3298,7 +3308,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    *
    * ⚠️ **字段缺失（`undefined`）时不显示任何东西** —— 那是「这一行没有这个信号」，
    * 与「模型没给引文」（空串）是两件事，所以判的是 `undefined` 而不是 falsy
-   * （口径见 `LlmAnalysis`：两仓现已同版本，这里留下来的**不是**兼容层）。
+   * （口径见 `LlmAnalysis` 的「为什么这些字段都写成可选」：这里的 `undefined` 判断
+   * **不是**兼容层）。
    */
   const evidenceLine = (f: UploadFile): string | null => {
     if (f.status !== "analyzed" && f.status !== "done") return null;

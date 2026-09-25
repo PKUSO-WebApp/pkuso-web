@@ -40,7 +40,7 @@ export function formatSubParts(subParts: number[]): string {
 }
 
 /**
- * 文件名：`{乐器名}[_{号,号,...}].pdf`。**声部不进文件名** —— 它存在
+ * 文件名：`{乐器名}.pdf`，有号时 `{乐器名}{号,号,...}.pdf`。**声部不进文件名** —— 它存在
  * `sheet_music_parts.section` 列里（存储键见 `upload-modal.tsx` 的 `pathOf`）。
  *
  * 例：`木琴.pdf`、`圆号1.pdf`、`圆号1,2,3,4.pdf`、`小提琴1,2.pdf`。

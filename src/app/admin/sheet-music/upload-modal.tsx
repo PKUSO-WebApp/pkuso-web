@@ -1462,15 +1462,24 @@ async function requestSegmentation(pageCount: number, pageTexts: PageText[]): Pr
  * 理由是响应**是 `any`**（`functions.invoke` 的返回值），谁也不能保证形状 ——
  * 「这个字段没来」是这条链路上一等的可能状态，代码必须活得下去。
  *
- * **边界上不归一**：映射那一步一律 `typeof` 判型 —— 缺字段保持 `undefined`，不在那里
- * 顺手归一成 `false` / 空串；「这两种要不要显示成同一件事」交给界面决定。
- * `evidence`（缺字段 = 什么都不显示 / 空串 = 提示「模型没给引文」）与 `evidenceFound`
- * （缺字段 = 不提示 / `false` = 警示）就是**不等价**的例子，所以那几处 `typeof` 判型
- * **不是兼容层，别顺手删** —— 归一掉之后 `undefined` 就被吃掉了，上面那两处再也分不开。
+ * **可选信号字段的缺失不在边界上归一**：映射那一步用 `typeof` 判型 —— 缺字段保持
+ * `undefined`，不在那里顺手归一成 `false` / 空串；「这两种要不要显示成同一件事」交给
+ * 界面决定。`evidence`（缺字段 = 什么都不显示 / 空串 = 提示「模型没给引文」）与
+ * `evidenceFound`（缺字段 = 不提示 / `false` = 警示）就是**不等价**的例子，所以那几处
+ * `typeof` 判型**不是兼容层，别顺手删** —— 归一掉之后 `undefined` 就被吃掉了，
+ * 上面那两处再也分不开。
  *
- * ⚠️ **反方向也有例子**：`extraSections` / `UploadFile.extraSectionsGuess` 按设计就是
- * 「缺席 ≡ 空」（缺字段 ≡ 没有额外声部），所以那两处统一 `?? []` **是对的**。
- * 判据是「界面上等价吗」，不是「有没有判型」—— 别把这一段当口号往所有字段上套。
+ * ⚠️ 六个 `typeof` 字段里**只有 `evidence` / `evidenceFound` 这两处是承重的**：另外四处
+ * （`subPartsRaw` / `sectionRaw` / `abstainReason` / `evidenceFromFileName`）在界面上只做真值
+ * 判断，缺字段与 `""` / `false` 落在同一支。它们仍然保持 `typeof`，是为了**别让「哪几处承重」
+ * 变成每次都要重新判断的事** —— 承重的那两处一旦被顺手归一，区别就再也回不来了。
+ *
+ * ⚠️ **别把它当普适规则：同一个 `return` 里的另一半字段是「缺失有既定含义」的**，它们归一得
+ * 理直气壮（判据是「界面上等价吗」，不是「有没有判型」）：
+ * - `section` / `instrument` / `subParts`：缺了就取默认（`String(data.x ?? …)` / `sanitizeSubParts`）；
+ * - `isFullScore`：`=== true`，缺字段 → `false` —— 「只有恰好 true 才算总谱」本身就要归一；
+ * - 反方向的 `extraSections` / `UploadFile.extraSectionsGuess`：**按设计「缺席 ≡ 空」**，
+ *   所以那两处统一 `?? []` 是**对的**。
  */
 interface LlmAnalysis {
   section: string;
@@ -1540,7 +1549,9 @@ interface LlmAnalysis {
    * 出版社扫描分谱的乐器名常印在文件名里（页面 OCR 是乱的），那时抄文件名是正当依据 ——
    * 但用户该知道该去看哪儿核对（页面上找不到，得看文件名）。
    *
-   * ⚠️ **可选**：字段缺失 → `undefined` → 显示成普通依据。
+   * ⚠️ **可选**：字段缺失 → `undefined` → **不进「来自文件名」那一支**，落到 `evidenceFound`
+   * 决定的那两句之一（所以「`evidence` 非空 + `evidenceFound === false` + 缺这个字段」时
+   * 显示的是「未在原文中找到，请核对」那一句，不是「普通依据」）。
    */
   evidenceFromFileName?: boolean;
 }
@@ -1571,8 +1582,8 @@ async function runLlmAnalysis(fileName: string | null, ocrText: string): Promise
     // 文件名里的流水号都能让 `evidenceFound` 为真，而那个字段是「让用户复核」的唯一依据
     // （实测 36 次调用里 2 次是这种情形）。
     //
-    // 段级调用（`fileName === null`）**一个字段都不发** —— 那条路本来就没有文件名
-    // （段行继承的是源合订本的名字，见 `refineSegments`）。
+    // 段级调用（`fileName === null`）**不发 `file_name`**（`ocr_text` 照发）—— 那条路本来
+    // 就没有文件名（段行继承的是源合订本的名字，见 `refineSegments`）。
     body: {
       ...(fileName ? { file_name: fileName } : {}),
       ocr_text: ocrText,

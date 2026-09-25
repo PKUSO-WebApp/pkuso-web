@@ -187,6 +187,18 @@ interface UploadFile {
    * `pageTexts` 与 `segmentStarts` 都要留着：用户改边界时**不重跑 OCR**
    *（验收标准点名的「改正后不重复 OCR」就是靠这两个字段）。
    */
+  /**
+   * **这一段自己首页**的窄带 OCR 文本（切分时从源行的 `pageTexts` 里取）。
+   *
+   * ⚠️ 只在段行上有。用途是让每段用**自己的**第一页重新识别一次 —— 合订谱恰恰是
+   * 「每段不一样」的（`Piccolo,_Flute_1,_2.pdf → [4,10]`：前 3 页短笛、中间长笛 1、
+   * 最后长笛 2），而这份文本在分段那一步**已经 OCR 过**，所以各跑一次是
+   * **N 次 LLM、0 次 OCR**。取不到（那一页 OCR 失败）时保留继承来的判断。
+   */
+  segHeadText?: string;
+  /** 模型据以判断的原文 + 它有没有在原文里找到。见 `LlmAnalysis` 里同名字段的说明。 */
+  evidence?: string;
+  evidenceFound?: boolean;
   segState?: "running" | "done" | "error";
   segError?: string;
   /**
@@ -1400,6 +1412,24 @@ interface LlmAnalysis {
    * `editsOf().extraSections`（那里统一 `?? []`），别在调用点各写各的。
    */
   extraSections?: string[];
+  /**
+   * 模型据以判断的那段原文（后端 `Analysis.evidence`）。
+   *
+   * ⚠️ **可选**：旧后端不返回它。它的用途是**让用户一眼复核模型的依据** ——
+   * prompt 里对模型的承诺就是这句（「让用户一眼就能复核你」），前端不显示的话
+   * 那个承诺是空的。它也是 `evidenceFound === false` 时用户唯一能据以判断的东西。
+   */
+  evidence?: string;
+  /**
+   * 后端在原文里**找到了**这段引文吗（`Analysis.evidenceFound`，2026-09-25 新增）。
+   *
+   * ⚠️ 这是**信号，不是门** —— `false` 时答案照用，只是要提示用户核对。
+   * **可选**：旧后端不返回 → `undefined` → 不提示（平滑降级）。
+   *
+   * ⚠️ **它必须有消费者**：后端删掉「证据弃权门」的唯一依据就是「交给前端提示用户核对」。
+   * 没人读的话，那批改动的净效果是「预填一个可能错的答案 + 显示成已识别」，**降一道防线**。
+   */
+  evidenceFound?: boolean;
 }
 
 async function runLlmAnalysis(fileName: string, ocrText: string): Promise<LlmAnalysis> {
@@ -1414,9 +1444,10 @@ async function runLlmAnalysis(fileName: string, ocrText: string): Promise<LlmAna
     throw new Error(`LLM 请求失败: ${await invokeErrorDetail(error)}`);
   }
   if (data?.success) {
-    // 响应字段平铺在顶层。`instrument` 为空串即「未识别」—— 后端把
-    // 「证据不足 / 答不出来（unknown、无法判断…）」都收敛成了空串，
-    // 所以这里**不预填**，见 startAnalysis 里的处理。
+    // 响应字段平铺在顶层。`instrument` 为空串即「未识别」。
+    // ⚠️ **2026-09-25 起空串只剩两种来源**：模型自己说不知道（prompt 规则 3），
+    // 或响应不可用（形状类）。此前「证据不足」也走这条路，后端已改成**照样采用**
+    // 并给 `evidenceFound` 信号 —— 所以别再把它当成「后端弃权」的同义词。
     return {
       section: String(data.section ?? OTHER_INSTRUMENT_GROUP),
       instrument: String(data.instrument ?? ""),
@@ -1434,6 +1465,10 @@ async function runLlmAnalysis(fileName: string, ocrText: string): Promise<LlmAna
       // 「必须同批上线」换来的教训：新字段只在**读的一侧**兜底是不够的，
       // 还得保证「缺席」与「空」同义 —— 这里靠 normalizeExtraSections 兜住）。
       extraSections: normalizeExtraSections(String(data.section ?? ""), data.extraSections),
+      // 引文与「有没有在原文里找到」：两者一起显示给用户复核（见 evidenceLine）。
+      // `typeof` 判型而不是 `??` —— undefined（旧后端）与 ""（模型没给）在界面上**不等价**。
+      evidence: typeof data.evidence === "string" ? data.evidence : undefined,
+      evidenceFound: typeof data.evidenceFound === "boolean" ? data.evidenceFound : undefined,
     };
   }
   throw new Error(`LLM 分析失败: ${data?.error || data?.message || "未知错误"}`);
@@ -1535,8 +1570,48 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const updateFile = (index: number, patch: Partial<UploadFile>) => {
-    setFiles((prev) => prev.map((f, idx) => (idx === index ? { ...f, ...patch } : f)));
+  const updateFile = (
+    index: number,
+    patch: Partial<UploadFile> | ((f: UploadFile) => Partial<UploadFile>),
+  ) => {
+    setFiles((prev) =>
+      prev.map((f, idx) => {
+        if (idx !== index) return f;
+        // 传函数时可以**按当前值**决定改什么（返回 `{}` 就是不改）——
+        // 「异步结果回来时用户已经动过手」这类判断需要它。
+        return { ...f, ...(typeof patch === "function" ? patch(f) : patch) };
+      }),
+    );
+  };
+
+  /**
+   * 按**存储键**改一行（而不是按下标）。
+   *
+   * ⚠️ 段行的「各自识别」与逐行重试都是**异步**的，而它们飞行期间用户可能点
+   * 「还原为一份」或「确认这 N 段」—— 那两个都会改变 `files` 的长度，下标随之平移，
+   * 按下标写就会**写进别的行**（重试那条路径上实测踩过同一个坑，见 `retryRow`）。
+   * `storageId` 每行生成一次、终身不变，按它找就与行集变化无关。
+   *
+   * 行已经不在了（用户还原掉了）就什么都不做 —— 这正是我们要的。
+   */
+  const updateFileByStorageId = (
+    storageId: string,
+    patch: Partial<UploadFile> | ((f: UploadFile) => Partial<UploadFile>),
+  ) => {
+    setFiles((prev) =>
+      prev.map((f) => {
+        if (f.storageId !== storageId) return f;
+        // ⚠️ **已上传的行不接受晚到的写回**（对抗测试实测）：库里的行与 storage 对象
+        // 早就落定了，而段级识别是异步的 —— 让它在 `done` 之后改写，界面会显示一个
+        // 与库**不一致**的答案，而 `done` 行不渲染编辑器（那道门是 `analyzed || error`），
+        // 用户既看不到差异也无处可改。飞行期间「确认上传」是可点的（`hasAnalyzingFiles`
+        // 只看 `status === "analyzing"`，refine 不改 status），所以这个窗口真实存在。
+        if (f.status === "done") return f;
+        // 传函数时可以**按当前值**决定改什么（返回 `{}` 就是不改）——
+        // 「异步结果回来时用户已经动过手」这类判断需要它。
+        return { ...f, ...(typeof patch === "function" ? patch(f) : patch) };
+      }),
+    );
   };
 
   /**
@@ -1661,8 +1736,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       if (!walk.contentPage && warning) updateFile(i, { ocrText: warning });
 
       // 一页有内容的都没读到（全空白 / 渲染失败 / OCR 读不出 / 读到的字太少）：
-      // 退化成只用文件名让 LLM 判断。空串是后端约定的「未识别」——
-      // 它把「证据不足」和模型答「unknown / 无法判断」都收敛成了空串。
+      // 退化成只用文件名让 LLM 判断。空串是后端约定的「未识别」，但
+      // ⚠️ **2026-09-25 起它只剩两种来源**：模型自己说不知道、或响应不可用。
+      // 「证据不足」不再走这一支（后端改成照样采用 + `evidenceFound` 信号）——
+      // 别再把空串当成「后端弃权」的同义词（同 `runLlmAnalysis` 里那句）。
       if (!analysis) {
         // ⚠️ 关掉弹窗之后**不要再补这一发**：它没有取消检查，而超时是 45s ——
         // 用户明明已经关窗走人，配额还在烧（对抗测试实测：卸载后 llm 调用 0→1，
@@ -1678,6 +1755,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         subParts,
         subPartsRaw,
         subPartsOverCap,
+        evidence,
+        evidenceFound,
         isFullScore,
         extraSections,
       } = analysis;
@@ -1687,7 +1766,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       // 总谱不是声部，而是「整份都在里面」，所以分声部号清空（`editsOf` 在总谱下也
       // 一律当空）；而且 `segEligible` 对总谱恒 false → **它不会再进分段**，
       // 那正是分段里最贵的一笔（总谱今天要靠人工标记，而人工标记只能等分段跑完才做得出）。
-      updateFile(i, {
+      updateFile(i, (cur) => ({
         status: "analyzed",
         // ⚠️ **必须清 `error`**：`updateFile` 是合并（`{...f, ...patch}`），而这一行可能是
         // 从 `error` 重试回来的 —— 不清的话「失败: …」那句红字会挂在一条**已经成功**的
@@ -1697,9 +1776,11 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           ? "识别结果: 总谱（整份）—— 不参与分段"
           : analysisSummary(section, instrument, subParts),
         sectionGuess: isFullScore ? FULL_SCORE_SECTION : section,
-        sectionEdit: isFullScore ? FULL_SCORE_SECTION : section,
         instrumentGuess: isFullScore ? FULL_SCORE_SECTION : instrument,
-        instrumentEdit: isFullScore ? FULL_SCORE_SECTION : instrument,
+        // ⚠️ **Edit 那两个字段是「用户的表态」**（本文件上面写过：一旦动过就属于用户），
+        // 而这次分析是**异步**的 —— 用户在这几秒里改过就不许覆盖。
+        // `Guess` 照写：界面取 `Edit ?? Guess`，用户没动时正好显示新结果。
+        // 判据是「还等于开工时那个值」，也就是他没动过。
         // 跨声部的共用分谱（`Violoncello e Basso` 那种）：这一行上传时要落成几行。
         // 总谱恒为空（`normalizeExtraSections` 里挡掉了），所以这里不用再判 isFullScore。
         // **不写 `extraSectionsEdit`**：`undefined` = 用户没动过 → 界面显示 Guess，
@@ -1716,12 +1797,24 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         // 但**中间没人把它写进行状态**，于是那条提示是死代码 —— 上界漂移时号被静默吞掉，
         // 一个字都不显示（审查靠「提示可达性」的探针抓出来的）。三个环节缺一不可。
         subPartsOverCap,
+        // 引文与「找没找到」：两者要一起进界面（`evidenceLine`），否则后端那批改动
+        // 唯一的补偿信号就断在这里 —— 与 subPartsOverCap 曾经漏写是同一种病。
+        evidence,
+        evidenceFound,
         // 记下页数：成本估算与「这份要不要分段」都看它（多页且非总谱才走分段）
         pageCount: walk?.pageCount,
         // 存储键要在**分析完成时**就定下来（每行一次、重试复用），
         // 而不是每次点上传现生成 —— 否则失败重传会不断产生新对象。
         storageId: crypto.randomUUID(),
-      });
+        // 「从没动过」的判据是 **Edit 仍等于 Guess** —— 不是「与开工时相同」：
+        // 用户在**点重试之前**就选好声部的情形同样要保护（合规审查实测的那个路径）。
+        ...(cur.sectionEdit === cur.sectionGuess
+          ? { sectionEdit: isFullScore ? FULL_SCORE_SECTION : section }
+          : {}),
+        ...(cur.instrumentEdit === cur.instrumentGuess
+          ? { instrumentEdit: isFullScore ? FULL_SCORE_SECTION : instrument }
+          : {}),
+      }));
     } catch (err) {
       updateFile(i, {
         status: "error",
@@ -1731,16 +1824,24 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   };
 
   /**
-   * 重试**一行**的分析（`pkuso-web#298` 的已知问题：错误行是死胡同）。
+   * 重试**一行**的分析。服务**两类**行（2026-09-25 起是两类，此前只有第一类）：
    *
-   * 只服务一种行：**首次分析就失败**的（`status === "error"` 且 `instrumentGuess === undefined`）。
-   * 这种行三处叠加成死胡同（原因本身**看得见** —— 标题行那句 `失败: …` 是红的；
-   * 缺的是**能点的东西**）：
-   *   · `uploadableCount` 按 `instrumentGuess !== undefined` 计数 → 它不进上传；
-   *   · 编辑器与那行红字都在同一道门里 → 整格控件一个都不渲染；
-   *   · 移除按钮只在 select 阶段有。
-   * 整批都是这种行时，「确认上传」会被禁用 —— 用户唯一的出路是关掉弹窗重加文件，
-   * 代价是丢掉整批已经烧掉的 OCR 配额（`uploadableCount` 上面那段注释说的就是这个）。
+   * ① **首次分析就失败**的（`status === "error"` 且 `instrumentGuess === undefined`）。
+   *    这种行三处叠加成死胡同（原因本身**看得见** —— 标题行那句 `失败: …` 是红的；
+   *    缺的是**能点的东西**）：
+   *      · `uploadableCount` 按 `instrumentGuess !== undefined` 计数 → 它不进上传；
+   *      · 编辑器与那行红字都在同一道门里 → 整格控件一个都不渲染；
+   *      · 移除按钮只在 select 阶段有。
+   *    整批都是这种行时，「确认上传」会被禁用 —— 用户唯一的出路是关掉弹窗重加文件，
+   *    代价是丢掉整批已经烧掉的 OCR 配额。
+   * ② **分析完了但没认出乐器**的（`isUnidentified`，见那边）。它不是死胡同（编辑器是
+   *    渲染着的、可上传也会被 `uploadBlocker` 拦），但**用户唯一的动作是手填**；
+   *    而同一输入两次结果不同是实测存在的，所以给他一个「再问一次」的出路。
+   *
+   * ⚠️ **段行（`splitOf` 非空）走的是另一条路**：只重跑**这一段**的识别（用切分时留下的
+   * 本段首页文本，0 次 OCR）。跑整份源文件是错的 —— 段行只有 `splitOf.from..to` 那几页，
+   * 而整份重跑会把 `pageCount` 覆盖成源文件的页数、还会去渲染不属于该段的页
+   *（实测：2 页的段点一次重试变成「未识别（3 页）」，且第 1 页被渲染）。
    *
    * 上传阶段失败的行（有 `instrumentGuess` 的那种）**不走这里**：点「确认上传」就会重传，
    * 那是既有的、有注释说明的重试路，这里再给一个按钮只会让人不知道按哪个。
@@ -1748,6 +1849,49 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   const retryRow = async (i: number) => {
     if (retryingRef.current.has(i)) return;
     retryingRef.current.add(i);
+
+    // ⚠️ **段行走另一条路**：只重跑**这一段**的识别（0 次 OCR）。见 docblock 里的实测：
+    // 让段行去跑整份源文件会把 `pageCount` 覆盖成源文件页数、还会渲染不属于该段的页。
+    const seg = files[i];
+    if (seg?.splitOf) {
+      try {
+        const head = seg.segHeadText?.trim();
+        if (!head) {
+          updateFile(i, { warning: "这一段没有可用的首页文本（那一页 OCR 没成功）—— 请手填" });
+          return;
+        }
+        const got = await runLlmAnalysis(seg.originalName, head);
+        const section = got.isFullScore ? FULL_SCORE_SECTION : got.section;
+        const instrument = got.isFullScore ? FULL_SCORE_SECTION : got.instrument;
+        updateFileByStorageId(seg.storageId ?? "", (cur) => {
+          // 同 `refineSegments`：用户已经动过的字段一个字都不覆盖
+          if (cur.sectionEdit !== seg.sectionEdit || cur.instrumentEdit !== seg.instrumentEdit) {
+            return {};
+          }
+          return {
+            sectionGuess: section,
+            sectionEdit: section,
+            instrumentGuess: instrument,
+            instrumentEdit: instrument,
+            extraSectionsGuess: normalizeExtraSections(got.section, got.extraSections),
+            llmResult: got.isFullScore
+              ? "识别结果: 总谱（整份）—— 不参与分段"
+              : analysisSummary(got.section, got.instrument, got.subParts),
+            evidence: got.evidence,
+            evidenceFound: got.evidenceFound,
+            error: undefined,
+            warning: undefined,
+          };
+        });
+      } catch (err) {
+        updateFileByStorageId(seg.storageId ?? "", {
+          warning: `这一段没能重新识别（${err instanceof Error ? err.message : String(err)}）`,
+        });
+      } finally {
+        retryingRef.current.delete(i);
+      }
+      return;
+    }
     try {
       // 清掉上一次留下的**痕迹**。`updateFile` 是合并，不清就会挂在成功后的行上。
       //
@@ -1816,6 +1960,13 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    * （三个本地判据都被否掉，见 #290 的评论），所以只能靠 `section === 总谱` 人工标记兜底。
    * 页数未知（分析失败）时不跑 —— 连成本都算不出来。
    */
+  // ⚠️ **必须定义在 `segEligible` 之前**：`segTargets`（下面几行）是**渲染期立即求值**的
+  // 语句，而声明在使用点之后的 `const` 会在那一刻撞 TDZ —— 这个文件里已经栽过一次
+  // （见上面 `segTargets` 那段注释）。
+  /** 这一行「分析完了但没认出乐器」。它与「已识别」是**两件事**：要提示、要能重试、
+   * 且**不该进分段**（见下）。总谱的 instrument 是「总谱」，不会落进来。 */
+  const isUnidentified = (f: UploadFile) => f.status === "analyzed" && !editsOf(f).instrument;
+
   const segEligible = (f: UploadFile) =>
     f.status !== "error" &&
     // **已上传成功的不算**（`status === "done"`）：分段的结果只写进组件 state，
@@ -1825,6 +1976,12 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     f.status !== "done" &&
     // **已经切出来的段不算**：它们是产物不是源，对一段再跑分段没有意义
     !f.splitOf &&
+    // **未识别的行不跑**（2026-09-25 加）：分段是**按页**烧 OCR 的动作，而这一行
+    // 「是什么」都还没定 —— 跑完也归不了声部。反过来说，未识别在这条链路里不是
+    // 「安全」而是**最贵**的那条路（这正是用户定「尽量减少弃权」的根据之一）。
+    // ⚠️ 界面**不能因此把页数藏起来**：页数是「这份文件读到几页」的事实，与要不要
+    // 分段无关 —— 有一条集成用例专门钉它不许消失（见 `upload-modal-walk.test.tsx`）。
+    !isUnidentified(f) &&
     // 「是不是总谱」只认一个判据（`isFullScoreRow` 走 editsOf）—— 同文件里已经栽过
     // 一次「三处各抄一份推导式」的跟头，不再抄第二份
     needsSegmentation(f.pageCount ?? null, isFullScoreRow(f));
@@ -2085,6 +2242,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       // 没顺手改它，是因为那要连带处理「不同源文件之间也会同名」这个**既有**的更宽缺口，
       // 属另一件事。
       pageCount: seg.to - seg.from + 1,
+      // 本段**自己首页**的窄带文本 —— 切完立刻用它各识别一次（见 `refineSegments`）。
+      // 取不到（那一页 OCR 失败）时是 undefined，那一段就保留继承来的判断。
+      segHeadText: f.pageTexts?.find((p) => p.page === seg.from)?.text,
       // 每段一个存储键：重试覆盖的是**这一段自己**，不会串到别的段
       storageId: crypto.randomUUID(),
       splitOf: {
@@ -2104,6 +2264,104 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     // 快照留给「还原为一份」：拆错了要能退回来，否则用户只能关掉弹窗重来
     splitSnapshots.current.set(groupId, { row: f, at: index });
     setFiles((prev) => [...prev.slice(0, index), ...rows, ...prev.slice(index + 1)]);
+
+    // **每段各自识别一次**（用户 2026-09-25 定）。
+    //
+    // 不这么做的话三段都继承源行**第一页**的判断，而合订谱恰恰是每段不一样的
+    // （`Piccolo,_Flute_1,_2.pdf → [4,10]`：前 3 页短笛、中间长笛 1、最后长笛 2）——
+    // 第 2、3 段要用户手改，而**改它所需的数据早就在手上了**。
+    //
+    // 成本：**N 次 LLM、0 次 OCR**（每段的首页窄带文本在分段那一步已经 OCR 过）。
+    // 刻意不 `await`：切分要立刻可见，识别结果回来再各就各位。
+    void refineSegments(rows);
+  };
+
+  /**
+   * 让每一段用**它自己的首页文本**重新识别一次。
+   *
+   * ⚠️ 写回一律走 `updateFileByStorageId`（这段是异步的，行集随时可能被用户改）。
+   *
+   * ⚠️ **号码只在模型真读出号时才覆盖**：切分时按位置预填的号（`Horn_1,2,3,4` →
+   * 第 k 段 ↔ 第 k 个号）是**猜**（依据是「合订顺序 = 页序」），但它至少给了用户一个
+   * 起点；而某一段的页眉上没印号时，模型返的是空数组 —— 直接覆盖会把那个起点**清掉**，
+   * 用户反而更没线索。所以空数组不覆盖，读到了才覆盖（页眉上的号比位置猜测更可靠）。
+   *
+   * 失败不致命：那一段保留继承来的值，只挂一句 `warning`（展开面板里能看到）。
+   */
+  const refineSegments = async (rows: UploadFile[]) => {
+    await Promise.all(
+      rows.map(async (row) => {
+        const head = row.segHeadText?.trim();
+        const id = row.storageId;
+        // 拿不到这一段的首页文本（那一页 OCR 失败/被跳过）→ 保留继承来的判断。
+        // **不挂 warning**：分段那一步已经在 `segFailedPages` 里报过了，再报一次是噪声。
+        if (!head || !id) return;
+        try {
+          const got = await runLlmAnalysis(row.originalName, head);
+          const section = got.isFullScore ? FULL_SCORE_SECTION : got.section;
+          const instrument = got.isFullScore ? FULL_SCORE_SECTION : got.instrument;
+          // ⚠️ **段级「没认出来」与段级「调用失败」对用户是同一件事**（对抗测试实测）：
+          // 空答案若照写，这一行会从「继承的整份判断、能直接传」变成「未识别、被
+          // `uploadBlocker` 拦下要逐段手填」——而它只是「模型对这一段说不出话」，
+          // 恰恰是这批改动预期会出现的形态。失败路径刻意保留继承值，成功路径
+          // 却抹掉，是不该有的不对称。所以只把识别**有内容**的结果写回。
+          if (!instrument) {
+            updateFileByStorageId(id, (cur) =>
+              cur.sectionEdit === cur.sectionGuess && cur.instrumentEdit === cur.instrumentGuess
+                ? {
+                    warning: "这一段没能单独识别（模型没给出乐器）—— 上面是整份的判断，请逐段核对",
+                  }
+                : {},
+            );
+            return;
+          }
+          updateFileByStorageId(id, (cur) => {
+            // ⚠️ **用户在这几秒里自己改过这一段的声部/乐器 → 以用户的为准，一个字都不覆盖。**
+            // 识别结果是异步回来的，而抹掉用户刚落的手是最难受的一种「智能」；
+            // 判据是「编辑框还等于切分时预填的那个值」，也就是他没动过。
+            // 两个字段**各自**判断：用户改了声部不该连带挡住模型给的乐器名
+            return {
+              sectionGuess: section,
+              instrumentGuess: instrument,
+              // 同 `analyzeOne`：判据是「Edit 仍等于 Guess」。
+              // ⚠️ 这是**值比较、不是「动过没有」的标记** —— 用户改成别的再改回来，
+              // 判据就成立、他的最后一次表态会被覆盖。取舍：加一个显式标记要新增字段
+              // （`subPartsEditText` 那种），而这条路径的收益不值那个成本。
+              ...(cur.sectionEdit === cur.sectionGuess ? { sectionEdit: section } : {}),
+              ...(cur.instrumentEdit === cur.instrumentGuess ? { instrumentEdit: instrument } : {}),
+              extraSectionsGuess: normalizeExtraSections(got.section, got.extraSections),
+              llmResult: got.isFullScore
+                ? "识别结果: 总谱（整份）—— 不参与分段"
+                : analysisSummary(got.section, got.instrument, got.subParts),
+              evidence: got.evidence,
+              evidenceFound: got.evidenceFound,
+              // 见上面那段说明：空数组不覆盖按位置预填的号
+              ...(got.subParts.length > 0
+                ? {
+                    subPartsGuess: got.subParts,
+                    subPartsRaw: got.subPartsRaw,
+                    subPartsOverCap: got.subPartsOverCap,
+                  }
+                : {}),
+              // 这一段自己识别成功了 → 清掉上一次的失败提示（可能来自更早的一次切分）
+              warning: undefined,
+            };
+          });
+        } catch (err) {
+          updateFileByStorageId(id, (cur) => {
+            // 同上：用户动过手就别再往他那一行挂「没能单独识别」的提示
+            if (cur.sectionEdit !== row.sectionEdit || cur.instrumentEdit !== row.instrumentEdit) {
+              return {};
+            }
+            return {
+              warning: `这一段没能单独识别（${
+                err instanceof Error ? err.message : String(err)
+              }）—— 上面是整份的判断，请逐段核对`,
+            };
+          });
+        }
+      }),
+    );
   };
 
   /**
@@ -2598,8 +2856,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       case "analyzing":
         return "分析中...";
       case "analyzed":
-        // 空乐器名 = 后端弃权（证据不足 / 答不出来），必须与「已识别」区分开：
-        // 输入框是空的、等用户填，不能显示成识别成功
+        // 空乐器名 = **模型自己说不知道**（或响应不可用），必须与「已识别」区分开：
+        // 输入框是空的、等用户填，不能显示成识别成功。
+        // ⚠️ 「证据不足」不再进这一支（后端已改成照样采用 + `evidenceFound` 提示）。
         return instrument ? `已识别 → ${section} / ${instrument}${sub}${also}` : "需人工确认";
       case "uploading":
         return "上传中...";
@@ -2652,7 +2911,36 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     return "";
   };
 
-  const statusColor = (status: UploadFile["status"]) => {
+  /**
+   * 模型据以判断的那段原文 —— **让用户一眼复核**。
+   *
+   * ⚠️ 这不是装饰：后端删掉「证据弃权门」的**唯一**依据就是「交给前端提示用户核对」。
+   * 不显示的话，那批改动的净效果就是「预填一个可能错的答案 + 显示成已识别」——
+   * 比原来（不预填、逼用户填）**更差**。prompt 里也向模型承诺了「让用户一眼就能复核你」。
+   *
+   * 三种状态合成一句，因为它们对用户是同一件事（「这个结论凭什么」）：
+   *   · 引文在原文里找到 → `依据：…`（muted）
+   *   · 引文**没**找到   → `依据（未在原文中找到，请核对）：…`（warning）
+   *   · 模型没给引文      → `依据：（模型没给引文，请核对）`（warning）
+   *
+   * ⚠️ **旧后端不返回 `evidence`（undefined）时不显示任何东西** —— 那是「这个字段还没上线」，
+   * 与「模型没给引文」（空串）是两件事，所以判的是 `undefined` 而不是 falsy。
+   */
+  const evidenceLine = (f: UploadFile): string | null => {
+    if (f.status !== "analyzed" && f.status !== "done") return null;
+    if (f.evidence === undefined) return null;
+    const ev = f.evidence.trim();
+    if (!ev) return "依据：（模型没给引文，请核对）";
+    return f.evidenceFound === false ? `依据（未在原文中找到，请核对）：${ev}` : `依据：${ev}`;
+  };
+
+  /** `evidenceLine` 要不要按警示色显示（没找到 / 没给）。 */
+  const evidenceWarn = (f: UploadFile) => f.evidenceFound === false || !(f.evidence ?? "").trim();
+
+  const statusColor = (f: UploadFile) => {
+    // ⚠️ 未识别行**不能是绿的**：一行「需人工确认」配上 success 色，用户扫一眼会以为没事。
+    if (isUnidentified(f)) return "text-warning";
+    const { status } = f;
     switch (status) {
       case "pending":
         return "text-text-muted";
@@ -2738,7 +3026,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                       <div className="flex items-center gap-2 flex-1 min-w-0">
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-text truncate">{f.originalName}</p>
-                          <p className={`text-xs ${statusColor(f.status)}`}>{statusText(f)}</p>
+                          <p className={`text-xs ${statusColor(f)}`}>{statusText(f)}</p>
                         </div>
                       </div>
                       <button
@@ -2845,7 +3133,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                       )}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-text truncate">{f.originalName}</p>
-                        <p className={`text-xs ${statusColor(f.status)}`}>{statusText(f)}</p>
+                        <p className={`text-xs ${statusColor(f)}`}>{statusText(f)}</p>
                       </div>
                       {f.status === "analyzing" && (
                         <span className="shrink-0 animate-spin text-primary">⏳</span>
@@ -3081,6 +3369,15 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                           {subPartsNotice(f) && (
                             <p className="text-xs text-warning">{subPartsNotice(f)}</p>
                           )}
+                          {evidenceLine(f) && (
+                            <p
+                              className={`text-xs ${
+                                evidenceWarn(f) ? "text-warning" : "text-text-muted"
+                              }`}
+                            >
+                              {evidenceLine(f)}
+                            </p>
+                          )}
                           <div className="flex items-center gap-1">
                             <span className="text-xs text-text-muted">路径：</span>
                             {previewPath(f) ? (
@@ -3102,6 +3399,27 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                               `UploadFile.segmentStartText`）：受控输入直接存派生值的话，
                               打字过程中的中间态会被当成完整值提交，而那会**静默删掉一个
                               边界**（敲 `15` 的第一个字符 `1` 就把上一段并掉了）。 */}
+                          {/* ⚠️ 未识别的**多页**文件：**页数照旧要显示**（它是「这份文件
+                              读到几页」的事实，与要不要分段无关），但不给分段按钮 ——
+                              分段是按页烧 OCR，而这一行是什么都还没定（见 `segEligible`）。
+                              这条分支是加 `!isUnidentified(f)` 时补的：不补的话整块 UI
+                              消失、页数跟着没了，而有一条集成用例专门钉它不许消失。 */}
+                          {!segEligible(f) &&
+                            isUnidentified(f) &&
+                            // ⚠️ 下面两条与 `segEligible` 同源（对抗测试实测）：
+                            // 缺了它们，**段行**（产物，永远不再分段）与**总谱行**
+                            // （用户已定不参与切分）都会看到一句做不到的指引 ——
+                            // 而照着做不到的指引去试，比不给更贵。
+                            !f.splitOf &&
+                            !isFullScoreRow(f) &&
+                            (f.pageCount ?? 0) > 1 && (
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs text-text-muted">分段：</span>
+                                <span className="text-xs text-text-muted">
+                                  未识别（{f.pageCount} 页）—— 先选定声部，再识别分段
+                                </span>
+                              </div>
+                            )}
                           {segEligible(f) && (
                             <div className="space-y-1">
                               <div className="flex items-center gap-1.5 flex-wrap">
@@ -3256,20 +3574,24 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                           `失败: <原因>`，且 `statusColor` 给 error 的是 `text-danger`。
                           所以这里**不再重复渲染一遍原因**（那会同一句话出现两次），
                           只补上原先完全缺失的东西：**一个能点的按钮**。
-                          只在**没有识别结果**的错误行上出现；有识别结果的上传失败行
-                          走「确认上传」那条重试路，这里不重复给。
+                          出现在两类行上：**首次分析就失败**的错误行（没有识别结果，
+                          有识别结果的上传失败行走「确认上传」那条路，这里不重复给），
+                          以及**分析完了但没认出乐器**的行（见 `isUnidentified`）。
+                          前者是死胡同，后者只是「模型说不知道」—— 后者编辑器是渲染着的，
+                          用户也可以直接手填。
                           `disabled` 带上 `segBusy` 与 uploading：飞行中的闭包攥着
                           `{f, i}` 下标，这时候挪动行集会把结果写进别的行（同「确认这 N 段」
                           那个按钮上写的理由。**别在这里写行号** —— 本目录既有约定
                           （见 `sub-parts.ts` 与 `sections.ts` 里都写过的那句），
                           它随改动漂走，而且本分支已经把它飘错过一次）。 */}
-                    {f.status === "error" && f.instrumentGuess === undefined && (
+                    {((f.status === "error" && f.instrumentGuess === undefined) ||
+                      isUnidentified(f)) && (
                       <div className="flex justify-end">
                         <button
                           onClick={() => retryRow(i)}
                           disabled={phase === "uploading" || segBusy}
                           className="px-2 py-0.5 text-xs border border-border rounded shrink-0 hover:text-primary disabled:opacity-50"
-                          title="重新跑这一份的分析（取页 → OCR → 识别）。只重烧这一份的配额，其余行不受影响。"
+                          title="重新跑这一份的分析（取页 → OCR → 识别）。只重烧这一份的配额，其余行不受影响。同一输入两次结果不同时也可以点它。"
                         >
                           重试
                         </button>

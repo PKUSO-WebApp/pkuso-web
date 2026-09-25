@@ -1469,19 +1469,19 @@ async function requestSegmentation(pageCount: number, pageTexts: PageText[]): Pr
  * `typeof` 判型**不是兼容层，别顺手删** —— 归一掉之后 `undefined` 就被吃掉了，
  * 上面那两处再也分不开。
  *
- * ⚠️ 六个 `typeof` 字段里**只有 `evidence` / `evidenceFound` 这两处是承重的**：另外四处
+ * ⚠️ 那些 `typeof` 字段里**只有 `evidence` / `evidenceFound` 这两处是承重的**：其余几处
  * （`subPartsRaw` / `sectionRaw` / `abstainReason` / `evidenceFromFileName`）在界面上只做真值
  * 判断，缺字段与 `""` / `false` 落在同一支。它们仍然保持 `typeof`，是为了**别让「哪几处承重」
  * 变成每次都要重新判断的事** —— 承重的那两处一旦被顺手归一，区别就再也回不来了。
  *
- * ⚠️ **别把它当普适规则：同一个 `return` 里的另一半字段是「缺失有既定含义」的**，它们归一得
- * 理直气壮（判据是「界面上等价吗」，不是「有没有判型」）：
+ * ⚠️ **别把它当普适规则：同一个 `return` 里的其余字段各有既定含义**（判据是「界面上等价吗」，
+ * 不是「有没有判型」）—— 多数是「缺了就归一」，也有像 `subPartsOverCap` 那样本就不归一的：
  * - `section` / `instrument` / `subParts`：缺了就取默认（`String(data.x ?? …)` / `sanitizeSubParts`）；
  * - `isFullScore`：`=== true`，缺字段 → `false` —— 「只有恰好 true 才算总谱」本身就要归一；
  * - 反方向的 `extraSections` / `UploadFile.extraSectionsGuess`：**按设计「缺席 ≡ 空」**，
  *   所以那两处统一 `?? []` 是**对的**；
  * - `subPartsOverCap`：判据在函数里（`overSubPartsCap(…) ?? undefined`）—— 缺字段同样是
- *   `undefined`，与上面六个同类，只是写法不是 `typeof`（可选信号字段一共七个，别漏数这一个）。
+ *   `undefined`（与那六个同类，只是写法不是 `typeof`；它**不**归一到某个值）。
  */
 interface LlmAnalysis {
   section: string;
@@ -1632,7 +1632,8 @@ async function runLlmAnalysis(fileName: string | null, ocrText: string): Promise
       evidenceFound: typeof data.evidenceFound === "boolean" ? data.evidenceFound : undefined,
       // 引文**只在文件名里**找得到（`Analysis.evidenceFromFileName`，2026-09-26 新增）。
       // 字段缺失 → undefined → 不进「来自文件名」那一支 —— 落到 `evidenceFound` 决定的那两句
-      // 之一（所以「`evidenceFound === false` + 缺这个字段」显示的是警示那一句，见上面接口处）。
+      // 之一（所以「`evidence` 非空 + `evidenceFound === false` + 缺这个字段」显示的是警示那一句，
+      // 见上面接口处；`evidence` 是空串时会更早返回「模型没给引文」）。
       evidenceFromFileName:
         typeof data.evidenceFromFileName === "boolean" ? data.evidenceFromFileName : undefined,
     };

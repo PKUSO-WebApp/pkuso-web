@@ -26,7 +26,7 @@
  * 从 canvas 取像素的那一步留在调用方。
  */
 
-/** 判定「非白」的通道阈值，与 upload-modal 的 hasVisibleContent 保持一致 */
+/** 判定「非白」的通道阈值，与  的 hasVisibleContent 保持一致（两处必须同步改） */
 const INK_THRESHOLD = 240;
 
 /** 一行里最长连续暗段达到页宽的此比例，才算「长横线」候选 */

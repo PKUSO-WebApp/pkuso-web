@@ -27,7 +27,7 @@ import { MOSAIC_PAGES_PER_CALL } from "./mosaic";
  *
  * ⚠️ 这是**估算**，不是上界也不是下界：单张拼图装多少页取决于每页窄带的真实大小
  * （40KB/页与 21KB/页差一倍）。另外每张拼图在瞬时故障时会重试（次数见 `upload-modal.tsx` 的
- * `OCR_RETRY_DELAYS`），所以真实调用数可能超过它 —— 界面上写的是「约 N 次」，拿它当承诺就是错的。
+ * `OCR_RETRY_DELAYS`，在 `ocr-client.ts`），所以真实调用数可能超过它 —— 界面上写的是「约 N 次」，拿它当承诺就是错的。
  */
 export function estimateOcrCalls(pageCount: number, done = 0): number {
   if (!Number.isSafeInteger(pageCount) || pageCount < 1) return 0;

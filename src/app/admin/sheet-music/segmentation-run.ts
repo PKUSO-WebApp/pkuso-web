@@ -121,7 +121,7 @@ async function ocrMosaic(
 /**
  * 逐页渲染顶部等高窄带（#290 Step 1 的输入）。
  *
- * 与 `renderPagesForAnalysis` **刻意分开**：那个的职责是「从第一张有内容的页起往后走、
+ * 与 `pdf-render.ts` 的 `renderPagesForAnalysis` **刻意分开**：那个的职责是「从第一张有内容的页起往后走、
  * 决定每页裁到哪」，这个的职责是「每一页都取一条等高的窄带」—— 两者的裁切逻辑必须不同
  * （见 BAND_PCT）。代价是分析阶段看过的页会被渲染第二次（与 N 次 OCR 相比可忽略），
  * 换来的是两条路径互不牵制。
@@ -319,7 +319,7 @@ export async function ocrBandsForSegmentation(
   return { pageCount, pageTexts, failedPages };
 }
 
-/** 分段第二步：把页文本交给 `segment-parts`，拿回原始 `cuts`（校验交给 `startsFromResponse`） */
+/** 分段第二步：把页文本交给 `segment-parts`，拿回原始 `cuts`（校验交给 `segmentation.ts` 的 `startsFromResponse`） */
 export async function requestSegmentation(
   pageCount: number,
   pageTexts: PageText[],

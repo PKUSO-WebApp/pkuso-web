@@ -49,10 +49,9 @@ const h = vi.hoisted(() => ({
    *
    * ⚠️ **它买不到「确定地走逐页 OCR」**：`composeMosaic` 在 jsdom 里第一句就走不通
    * （`createImageBitmap` 是 undefined）→ 抛在「本组必须等高」那条判据**之前**，被
-   * `requestSegmentation` 的逐组 catch 吞掉、退回逐页（两者都在 `segmentation-run.ts`）。
-   * 所以给不等高的页高什么也换不来 —— 本次改动删掉了原先那几处 `h.pageHeights = [100, 120]`，
-   * 它们当时的注释写着「不等高 → 抛错 → 确定回退」，而实测改成等高后相关用例**照样全绿**。
-   * 要把拼图那条路真正点亮，得先给 jsdom 桩上 `createImageBitmap`（见 pkuso-web#317）。
+   * `ocrBandsForSegmentation` 的逐组 catch 吞掉、退回逐页（两者都在 `segmentation-run.ts`）。
+   * 所以**不等高的页高在这里换不到任何东西** —— 那条等高判据在测试环境里不可达。
+   * 怎么复现、以及要真正点亮拼图那条路得先给 jsdom 桩什么，见 pkuso-web#317。
    */
   pageHeights: [100, 100, 100] as number[],
   /**

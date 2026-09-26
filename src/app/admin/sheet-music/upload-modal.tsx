@@ -397,10 +397,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
               continue;
             }
             analysis = got;
-            // 「定了就停」这条判据只有一份，见 `analysisSettled`。
+            // 「定了就停」这条判据只有一份，见 `analysis.ts` 的 `analysisSettled`。
             if (analysisSettled(got)) return true;
             // ⚠️ **这里必须是「继续循环」而不是 `return`**：这一页还剩一张图（整页）没试。
-            // 早先写成 `return analysisSettled(got)`，直接退出了整个 attempt 循环 ——
+            // 早先写成 `return analysisSettled(got)`（`analysis.ts`），直接退出了整个 attempt 循环 ——
             // 于是「LLM 未识别 → 回退整页」那条回退成了**死代码**（只有「标题区字太少」
             // 或「标题区抛错」才走得到它），而那正是加总谱分析**之前**就有的行为。
           }
@@ -418,7 +418,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       // 退化成只用文件名让 LLM 判断。空串是后端约定的「未识别」，但
       // ⚠️ **2026-09-25 起它只剩两种来源**：模型自己说不知道、或响应不可用。
       // 「证据不足」不再走这一支（后端改成照样采用 + `evidenceFound` 信号）——
-      // 别再把空串当成「后端弃权」的同义词（同 `runLlmAnalysis` 里那句）。
+      // 别再把空串当成「后端弃权」的同义词（同 `analysis.ts` 的 `runLlmAnalysis` 里那句）。
       if (!analysis) {
         // ⚠️ 关掉弹窗之后**不要再补这一发**：它没有取消检查，而超时是 45s ——
         // 用户明明已经关窗走人，配额还在烧（对抗测试实测：卸载后 llm 调用 0→1，
@@ -475,7 +475,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         // 「模型给了号但没读懂」时 subParts 是空数组，输入框自然留空，
         // 配合下面的 subPartsRaw 提示，用户知道这一格需要他填。
         subPartsRaw,
-        // ⚠️ 这一行曾经漏掉：`runLlmAnalysis` 算出了 overCap、`subPartsNotice` 也写了那一支，
+        // ⚠️ 这一行曾经漏掉：`analysis.ts` 的 `runLlmAnalysis` 算出了 overCap、`subPartsNotice` 也写了那一支，
         // 但**中间没人把它写进行状态**，于是那条提示是死代码 —— 上界漂移时号被静默吞掉，
         // 一个字都不显示（审查靠「提示可达性」的探针抓出来的）。三个环节缺一不可。
         subPartsOverCap,
@@ -1958,7 +1958,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                   {/*
                    * 点火前的代价（#290 的验收标准之一：调用次数在导入前可见）。
                    *
-                   * **报上界而不是「约」** —— 这个数由 `estimateAnalysisOcrCalls` 按常量算出、
+                   * **报上界而不是「约」** —— 这个数由 `analysis.ts` 的 `estimateAnalysisOcrCalls` 按常量算出、
                    * 不依赖语料，写成确定的数才是真的；分段那边报「约」是因为每页窄带多大
                    * 要渲染完才知道（见 segmentation.ts 的 `estimateOcrCalls`，那是另一件事）。
                    */}

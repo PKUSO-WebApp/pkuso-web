@@ -19,7 +19,7 @@ export const LLM_TIMEOUT_MS = 45000;
  *
  * 早先叫 `MAX_BLANK_PAGES_TRIED`，只用来跳过出版社分谱常见的空白扉页。总谱分析把这个数
  * 扩成了两个含义 —— 「最多跳几页空白」与「最多升几页」—— 因为两者现在是**同一个循环**
- * （见 `renderPagesForAnalysis`），一个上界同时管住它们。
+ * （见 `pdf-render.ts` 的 `renderPagesForAnalysis`），一个上界同时管住它们。
  *
  * 它也是**配额上界**：每页最多 `MAX_OCR_IMAGES_PER_PAGE` 次 OCR（标题区 + 整页）。改大它
  * 等于改一份文件的最坏成本，界面上的数字（`estimateAnalysisOcrCalls`）跟着变。

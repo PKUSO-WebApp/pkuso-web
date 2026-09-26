@@ -1439,10 +1439,11 @@ describe("名字里的字符判据（判据本体在 unsafe-name.test.ts，这�
   });
 });
 
-describe("「没有号」逃生口（那条判据有三份拷贝，这里驱动真组件把另外两份一起钉住）", () => {
+describe("「没有号」逃生口（那条判据在组件里被重推了好几处，这里驱动真组件钉住它们）", () => {
   it("模型给了号但谁都没读懂：**被拦 → 点逃生口 → 真的传出去**（否则是死胡同）", async () => {
     h.user = { id: "u1" }; // 不置的话 confirmUpload 会 alert("请先登录") 并原样返回
-    // ⚠️ 判据在仓库里有三份拷贝：`row-text.ts` 的 `subPartsUnread`、下面这个按钮的渲染条件、
+    // ⚠️ 判据在组件里被**重推了好几处**（`grep -n subPartsRaw src/app/admin/sheet-music/upload-modal.tsx`
+    // 能看到全部）：`row-text.ts` 的 `subPartsUnread`、下面这个按钮的渲染条件、
     // `subPartsNotice` 的行内提示 —— 注释写着「必须完全同源」，但另外两份此前**零覆盖**
     // （这个文件里搜不到「没有号」）。单测那条钉的是**状态契约**，钉不到「按钮写什么、什么时候出现」。
     h.llmReply = {
@@ -1496,6 +1497,9 @@ describe("「没有号」逃生口（那条判据有三份拷贝，这里驱动�
     };
     await runAnalysis();
     fireEvent.click(screen.getByLabelText("查看详情"));
+    // ⚠️ 先证明面板**真的渲染了**、号真的在框里 —— 否则下面两句 null 会静默变成空转
+    //（「确认上传」是弹窗外层的按钮，面板整个消失时它照样在、上传照样成功）。
+    expect((screen.getByPlaceholderText("号，如 1,2") as HTMLInputElement).value).toBe("1");
     expect(screen.queryByText("没有号")).toBeNull();
     expect(screen.queryByText(/没读懂/)).toBeNull();
     // 对照组：它本来就该能直接传（不是「所有行都拦」）
@@ -1518,5 +1522,138 @@ describe("「没有号」逃生口（那条判据有三份拷贝，这里驱动�
     fireEvent.click(screen.getByLabelText("查看详情"));
     expect(screen.queryByText("没有号")).toBeNull();
     expect(screen.queryByText(/没读懂/)).toBeNull();
+  });
+});
+
+describe("同一判据的**反面**拷贝（补号守卫 / 段行不继承 raw）", () => {
+  // 对抗测试指出：`subPartsRaw` 那条判据在组件里还有两处**取反**的用法，两处都能改坏而全绿。
+  // 它们就是 `grep -n subPartsRaw src/app/admin/sheet-music/upload-modal.tsx` 里剩下的两处。
+  it("段行**不继承**源行那句「没读懂」—— 继承下去会让**每一段**都被拦下", async () => {
+    // 源行「模型给了号但没读懂」（带 raw、号为空）→ 拆段后每段各识别一次；
+    // 若段行继承了 raw，而段自己又没读出号，则每一段的 `subPartsUnread` 都为真 →
+    // 每段都被 `uploadBlocker` 拦下（连用户没做错什么的那几段一起）。
+    h.segmentCuts = [2];
+    h.llmReplies = [
+      // #1 整份：模型给了号但没读懂
+      {
+        success: true,
+        section: "长笛",
+        instrument: "长笛",
+        subParts: [],
+        subPartsRaw: "1,2",
+        isFullScore: false,
+      },
+      // #2/#3 两段：页眉上都没印号（也是「不猜」那条取舍的形态，不会把号补回来）
+      { success: true, section: "长笛", instrument: "长笛", subParts: [], isFullScore: false },
+      { success: true, section: "长笛", instrument: "长笛", subParts: [], isFullScore: false },
+    ];
+    await runAnalysis({ names: ["短笛长笛.pdf"] });
+    await waitFor(() => expect(screen.getByText(/^已识别 → 长笛/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    // 源行这一刻**是**被拦的那一行（带 raw、号为空）—— 这也是这条用例的对照组
+    fireEvent.click(screen.getByLabelText("查看详情"));
+    expect(screen.getByText(/没读懂/)).toBeTruthy();
+
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+
+    // 两段都不该带着源行那句「没读懂」——段自己没读出号是**另一回事**（不猜，留空手填）
+    await waitFor(
+      () => {
+        const vals = screen
+          .getAllByPlaceholderText("号，如 1,2")
+          .map((el) => (el as HTMLInputElement).value);
+        expect(vals).toEqual(["", ""]);
+      },
+      { timeout: 10000 },
+    );
+    // ⚠️ **必须逐段展开再看**：那句提示只在展开面板里渲染，折叠态下断言「不出现」是**空转**
+    //（我第一版就是那么写的，变异 W8 照样绿 —— 这是我自己抓到的第二个空转断言）。
+    for (const i of [0, 1]) {
+      fireEvent.click(screen.getAllByLabelText(/详情/)[i]);
+      expect(screen.queryByText(/没读懂/)).toBeNull();
+    }
+  });
+
+  it("段级识别**失败**的段不该继承源行那句「没读懂」（稳态下会被段自己的答案覆盖，失败时不会）", async () => {
+    // ⚠️ 这条钉的是上一条**钉不到**的那一格：段级识别落地时会把 `subPartsRaw` **显式写回**
+    // `undefined`，所以「继承」在稳态下观察不到（等价变异）；但**识别失败**的那一段不会走写回，
+    // 继承来的 raw 会留在行上 → 那一段平白多一句「没读懂」并要求用户多点一次逃生口。
+    h.segmentCuts = [2];
+    h.llmReplies = [
+      // #1 整份：模型给了号但没读懂（源行带 raw）
+      {
+        success: true,
+        section: "长笛",
+        instrument: "长笛",
+        subParts: [],
+        subPartsRaw: "1,2",
+        isFullScore: false,
+      },
+      // #2 第 1 段：识别**失败**（不会写回 → 继承来的 raw 会留下来）
+      { success: false, error: "上游 500" },
+      // #3 第 2 段：正常但页眉没印号
+      { success: true, section: "长笛", instrument: "长笛", subParts: [], isFullScore: false },
+    ];
+    await runAnalysis({ names: ["短笛长笛.pdf"] });
+    await waitFor(() => expect(screen.getByText(/^已识别 → 长笛/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+
+    // 逐段展开：失败的那一段也不该冒出源行那句「没读懂」
+    for (const i of [0, 1]) {
+      fireEvent.click(screen.getAllByLabelText(/详情/)[i]);
+      expect(screen.queryByText(/没读懂/)).toBeNull();
+    }
+  });
+
+  it("补号**不碰**带 `subPartsRaw` 的段行 —— 补一个号会让拦截与提示同时消失（静默丢号的镜像）", async () => {
+    // 源行读出 `[1,2]`（供补号做减法）；第 1 段读出 `[1]`；第 2 段「模型给了号但没读懂」。
+    // 若补号把减出来的 `[2]` 写进第 2 段：`subPartsUnread` 变假 → 拦截与黄色提示**同时消失**，
+    // 用户拿到一个从没确认过的号，而 `subPartsRaw` 还留在行上、再没有渲染路径读它。
+    h.segmentCuts = [2];
+    h.llmReplies = [
+      { success: true, section: "长笛", instrument: "长笛", subParts: [1, 2], isFullScore: false },
+      { success: true, section: "长笛", instrument: "长笛", subParts: [1], isFullScore: false },
+      {
+        success: true,
+        section: "长笛",
+        instrument: "长笛",
+        subParts: [],
+        subPartsRaw: "2-3",
+        isFullScore: false,
+      },
+    ];
+    await runAnalysis({ names: ["短笛长笛.pdf"] });
+    await waitFor(() => expect(screen.getByText(/^已识别 → 长笛/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+
+    // 第 1 段：页眉读出 `1`。第 2 段：**必须留空** —— 补号不许碰它。
+    await waitFor(
+      () => {
+        const vals = screen
+          .getAllByPlaceholderText("号，如 1,2")
+          .map((el) => (el as HTMLInputElement).value);
+        expect(vals).toEqual(["1", ""]);
+      },
+      { timeout: 10000 },
+    );
+    // 而且那句「没读懂」还在（拦下 + 提示，两条路都没被补号抹掉）
+    expect(screen.getByText(/没读懂/)).toBeTruthy();
   });
 });

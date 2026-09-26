@@ -1458,10 +1458,18 @@ describe("「没有号」逃生口（那条判据有三份拷贝，这里驱动�
     expect(screen.getByText(/没读懂/)).toBeTruthy(); // 黄提示在
     expect(screen.getByText("没有号")).toBeTruthy(); // 逃生口在
 
-    // 先点上传：被拦（红字落在行上），而且**什么都没传出去**
+    // 先点上传：被拦 —— 判据生效的红字落在行上。
+    // ⚠️ 用 **className** 钉「红」而不是只看文案：黄提示说的是**同一句话**（让位守卫靠
+    // `f.error === msg`），只匹配文本的话红黄不分（本仓既有写法见「状态色」那两条）。
+    // ⚠️ `h.uploaded.length === 0` 单独用会**空转**：上传是异步的，断言跑在 `storage.upload`
+    // 之前，**把 `uploadBlocker` 改成恒不拦它照样绿**。真正钉「没进入上传态」的是下面那句
+    // 「上传中...」不出现（`statusText` 的 uploading 分支）。
     fireEvent.click(screen.getByText(/确认上传/));
-    await waitFor(() => expect(h.uploaded.length).toBe(0));
-    expect(screen.getByText(/没读懂/)).toBeTruthy();
+    // 拦截是**异步**落下的（`confirmUpload` 先 `await getUser()`），所以这里要等红字出现 ——
+    // 同步断言会先抓到那条**黄**提示（`text-warning`），而红黄之分正是这条断言的全部意义。
+    await waitFor(() => expect(screen.getByText(/没读懂/).className).toContain("text-danger"));
+    expect(screen.queryByText(/上传中/)).toBeNull();
+    expect(h.uploaded.length).toBe(0);
 
     // 走逃生口 = 用户显式表态「本谱没有分声部」：按钮立刻消失。
     // ⚠️ 行上的红字**不会**当场清掉 —— 组件明写清红字的时机是「下一次点确认上传且通过判据」，
@@ -1493,5 +1501,22 @@ describe("「没有号」逃生口（那条判据有三份拷贝，这里驱动�
     // 对照组：它本来就该能直接传（不是「所有行都拦」）
     fireEvent.click(screen.getByText(/确认上传/));
     await waitFor(() => expect(h.uploaded.length).toBeGreaterThan(0), { timeout: 10000 });
+  });
+
+  it("**模型没给号**的行不出现这个按钮（三个条件里 `subPartsRaw` 那一格也要钉）", async () => {
+    // 删掉按钮条件里 `f.subPartsRaw &&` 那一格，上面两条用例照样绿（一条有 raw、一条被
+    // `guess 为空` 挡住），而那个 docblock 写着「三个条件缺一不可」—— 后果是「模型没给号、
+    // 号也为空」的行会冒出一个多余的「没有号」（功能无害，但是噪声）。
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [],
+      isFullScore: false,
+    };
+    await runAnalysis();
+    fireEvent.click(screen.getByLabelText("查看详情"));
+    expect(screen.queryByText("没有号")).toBeNull();
+    expect(screen.queryByText(/没读懂/)).toBeNull();
   });
 });

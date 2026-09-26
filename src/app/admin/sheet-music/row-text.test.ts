@@ -159,6 +159,9 @@ describe("uploadBlocker：这一行为什么不能上传", () => {
     expect(uploadBlocker({ section: bad, instrument: "F调圆号" })).toBe(
       "声部名里有不能用于文件名的「:」，请改掉",
     );
+    // ⚠️ 名字类**内部**的顺序也要钉：两格都非法时要先报乐器名（上面两条各只喂了一格非法，
+    // 把两处 `findUnsafeInName` 对调照样绿）。号类判据与名字类的边界由 walk 测试那条钉。
+    expect(uploadBlocker({ section: "圆号:1", instrument: "F调圆号:2" })).toContain("乐器名");
   });
 
   it("号非法 / 模型给的号没读懂 → 各自的文案（后者是统一的 unreadMessage）", () => {

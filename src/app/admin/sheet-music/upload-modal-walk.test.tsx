@@ -1438,3 +1438,60 @@ describe("名字里的字符判据（判据本体在 unsafe-name.test.ts，这�
     expect(h.fileInserts).toHaveLength(0);
   });
 });
+
+describe("「没有号」逃生口（那条判据有三份拷贝，这里驱动真组件把另外两份一起钉住）", () => {
+  it("模型给了号但谁都没读懂：**被拦 → 点逃生口 → 真的传出去**（否则是死胡同）", async () => {
+    h.user = { id: "u1" }; // 不置的话 confirmUpload 会 alert("请先登录") 并原样返回
+    // ⚠️ 判据在仓库里有三份拷贝：`row-text.ts` 的 `subPartsUnread`、下面这个按钮的渲染条件、
+    // `subPartsNotice` 的行内提示 —— 注释写着「必须完全同源」，但另外两份此前**零覆盖**
+    // （这个文件里搜不到「没有号」）。单测那条钉的是**状态契约**，钉不到「按钮写什么、什么时候出现」。
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [],
+      subPartsRaw: "1,2",
+      isFullScore: false,
+    };
+    await runAnalysis();
+    fireEvent.click(screen.getByLabelText("查看详情"));
+    expect(screen.getByText(/没读懂/)).toBeTruthy(); // 黄提示在
+    expect(screen.getByText("没有号")).toBeTruthy(); // 逃生口在
+
+    // 先点上传：被拦（红字落在行上），而且**什么都没传出去**
+    fireEvent.click(screen.getByText(/确认上传/));
+    await waitFor(() => expect(h.uploaded.length).toBe(0));
+    expect(screen.getByText(/没读懂/)).toBeTruthy();
+
+    // 走逃生口 = 用户显式表态「本谱没有分声部」：按钮立刻消失。
+    // ⚠️ 行上的红字**不会**当场清掉 —— 组件明写清红字的时机是「下一次点确认上传且通过判据」，
+    // 所以这里只钉按钮，把「真的能传」交给下面那一步（那才是用户看得见的结果）。
+    fireEvent.click(screen.getByText("没有号"));
+    await waitFor(() => expect(screen.queryByText("没有号")).toBeNull());
+
+    // 再点上传：这次真的传出去（这条同时证明「空串 = 用户表态」被认下了，而不是「清不掉」）
+    fireEvent.click(screen.getByText(/确认上传/));
+    await waitFor(() => expect(h.uploaded.length).toBeGreaterThan(0), { timeout: 10000 });
+  });
+
+  it("**有号**的行不能出现这个按钮（小提琴那条推导路：号是声部推导补出来的）", async () => {
+    h.user = { id: "u1" }; // 同上
+    // 漏掉 `guess 为空` 这条守卫时，按钮与黄提示都会出现在**有号**的行上，
+    // 点一下就把那个号静默抹掉（落库 `sub_parts = {}`）—— 与「消灭静默丢号」正好相反。
+    h.llmReply = {
+      success: true,
+      section: "小提琴",
+      instrument: "小提琴",
+      subParts: [1],
+      subPartsRaw: "1,2",
+      isFullScore: false,
+    };
+    await runAnalysis();
+    fireEvent.click(screen.getByLabelText("查看详情"));
+    expect(screen.queryByText("没有号")).toBeNull();
+    expect(screen.queryByText(/没读懂/)).toBeNull();
+    // 对照组：它本来就该能直接传（不是「所有行都拦」）
+    fireEvent.click(screen.getByText(/确认上传/));
+    await waitFor(() => expect(h.uploaded.length).toBeGreaterThan(0), { timeout: 10000 });
+  });
+});

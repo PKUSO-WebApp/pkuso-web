@@ -228,6 +228,9 @@ describe("isKnownSection / isFullScoreRow / canHaveExtraSections", () => {
     expect(isFullScoreRow(row({ sectionGuess: "总谱" }))).toBe(true);
     expect(isFullScoreRow(row({ sectionEdit: "", sectionGuess: "总谱" }))).toBe(false);
     expect(isFullScoreRow(row({ sectionGuess: "圆号" }))).toBe(false);
+    // 与 canHaveExtraSections 是同一条：抄一份**不带 trim** 的推导式时，模型给的「 总谱 」
+    // 会被判成非总谱 → 那一行**会进分段**（docblock 自己写着这个后果）。
+    expect(isFullScoreRow(row({ sectionGuess: " 总谱 " }))).toBe(true);
   });
 
   it("能不能有额外声部：总谱与「其他」都不行（与 normalizeExtraSections 同源）", () => {

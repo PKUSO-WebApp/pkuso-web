@@ -1526,9 +1526,10 @@ describe("「没有号」逃生口（那条判据在组件里被重推了好几�
 });
 
 describe("同一判据的**反面**拷贝（补号守卫 / 段行不继承 raw）", () => {
-  // 对抗测试指出：`subPartsRaw` 那条判据在组件里还有两处**取反**的用法，两处都能改坏而全绿。
-  // 它们就是 `grep -n subPartsRaw src/app/admin/sheet-music/upload-modal.tsx` 里剩下的两处。
-  it("段行**不继承**源行那句「没读懂」—— 继承下去会让**每一段**都被拦下", async () => {
+  // 对抗测试指出：`subPartsRaw` 那条判据在组件里还有两处**取反**的用法，两处都能改坏而全绿：
+  // ① 补号守卫的 `!cur.subPartsRaw`（不许把号补进「有号但没读懂」的行）；
+  // ② `splitIntoSegments` 的段行 seed（不许继承源行的 `subPartsRaw`）。
+  it("段行在稳态下**不带**源行那句「没读懂」（「继承 raw」那一格由下面两条钉）", async () => {
     // 源行「模型给了号但没读懂」（带 raw、号为空）→ 拆段后每段各识别一次；
     // 若段行继承了 raw，而段自己又没读出号，则每一段的 `subPartsUnread` 都为真 →
     // 每段都被 `uploadBlocker` 拦下（连用户没做错什么的那几段一起）。
@@ -1571,12 +1572,12 @@ describe("同一判据的**反面**拷贝（补号守卫 / 段行不继承 raw�
       },
       { timeout: 10000 },
     );
-    // ⚠️ **必须逐段展开再看**：那句提示只在展开面板里渲染，折叠态下断言「不出现」是**空转**
-    //（我第一版就是那么写的，变异 W8 照样绿 —— 这是我自己抓到的第二个空转断言）。
-    for (const i of [0, 1]) {
-      fireEvent.click(screen.getAllByLabelText(/详情/)[i]);
-      expect(screen.queryByText(/没读懂/)).toBeNull();
-    }
+    // ⚠️ 「继承 raw」那个变异在这一条上**是绿的** —— 不是断言写法问题，而是它**稳态等价**：
+    // 段级识别落地时会把 `subPartsRaw` 显式写回 `undefined`（下一条用例有完整说明），
+    // 所以只有**识别失败**的那一段才留下后果，那一格由下一条钉。
+    // 这一条钉的是稳态本身：两段各识别一次之后，谁都不带那句提示。
+    // （那句提示渲染在**折叠态**就能看到，与展开无关 —— 我一度以为要展开才看得到，写错过一次。）
+    expect(screen.queryByText(/没读懂/)).toBeNull();
   });
 
   it("段级识别**失败**的段不该继承源行那句「没读懂」（稳态下会被段自己的答案覆盖，失败时不会）", async () => {
@@ -1609,11 +1610,14 @@ describe("同一判据的**反面**拷贝（补号守卫 / 段行不继承 raw�
       timeout: 10000,
     });
 
-    // 逐段展开：失败的那一段也不该冒出源行那句「没读懂」
-    for (const i of [0, 1]) {
-      fireEvent.click(screen.getAllByLabelText(/详情/)[i]);
-      expect(screen.queryByText(/没读懂/)).toBeNull();
-    }
+    // 失败的那一段也不该冒出源行那句「没读懂」
+    expect(screen.queryByText(/没读懂/)).toBeNull();
+    // 号框必须是**空**的：这条钉住 seed 的「不按位置预填」那一半（seed 写成 `[k + 1]` 时
+    // 这里会变成 "1"，而失败段不走写回，所以观察得到）。
+    // ⚠️ seed 的另一半「不继承源行的号」在这条夹具里**观察不到**（源行没有号可继承；
+    // 源行有号时补号又会把减出来的号填上，两个世界都非空）—— 那一半不假装覆盖，
+    // 它由 `splitIntoSegments` 里那段注释交代。
+    expect((screen.getAllByPlaceholderText("号，如 1,2")[0] as HTMLInputElement).value).toBe("");
   });
 
   it("补号**不碰**带 `subPartsRaw` 的段行 —— 补一个号会让拦截与提示同时消失（静默丢号的镜像）", async () => {

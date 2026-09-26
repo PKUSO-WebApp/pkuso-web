@@ -7,6 +7,8 @@ import type { AttendanceRowWithUser, AttendanceStatus } from "@/types/database";
 
 type Props = {
   open: boolean;
+  /** 当前编辑的排练 id（null = 未打开）。本地覆盖按它重置，见下方注释 */
+  rehearsalId: number | null;
   title: string;
   loading: boolean;
   list: AttendanceRowWithUser[];
@@ -22,12 +24,14 @@ const STATUS_ICON: Record<AttendanceStatus, string> = {
   late: "➖",
   absent: "❌",
   excused: "⭕",
+  exempt: "🚫",
 };
 
-const STATUS_OPTIONS: AttendanceStatus[] = ["present", "late", "absent", "excused"];
+const STATUS_OPTIONS: AttendanceStatus[] = ["present", "late", "absent", "excused", "exempt"];
 
 export function AttendanceModal({
   open,
+  rehearsalId,
   title,
   loading,
   list,
@@ -40,6 +44,17 @@ export function AttendanceModal({
   const [localOverrides, setLocalOverrides] = React.useState<Map<string, AttendanceStatus>>(
     new Map(),
   );
+
+  // 本地覆盖的生命周期必须绑定「哪一场」，而不是「弹窗开没开」：Modal 常驻挂载、关闭不卸载
+  // 组件，若不关弹窗直接切场，按 user_id 存放的覆盖会串到新一场的同名成员上，而待保存集合
+  // 已在换场时清空——界面就会显示一个既不在库里、也不在待保存集合里的值，点保存毫无反应
+  // （Issue #188 守则的对抗返工）。绑定排练 id 同时覆盖「关闭」：关闭时 id 变为 null。
+  // 渲染期重置是 React 官方「props 变化时调整 state」模式（effect 内 setState 会被 lint 拦）
+  const [prevRehearsalId, setPrevRehearsalId] = React.useState(rehearsalId);
+  if (prevRehearsalId !== rehearsalId) {
+    setPrevRehearsalId(rehearsalId);
+    setLocalOverrides(new Map());
+  }
 
   const handleLocalChange = (userId: string, status: AttendanceStatus) => {
     setLocalOverrides((prev) => new Map(prev).set(userId, status));
@@ -88,10 +103,11 @@ export function AttendanceModal({
                   {editable ? (
                     <select
                       value={status}
+                      disabled={saving || loading}
                       onChange={(e) =>
                         handleLocalChange(row.user_id, e.target.value as AttendanceStatus)
                       }
-                      className="rounded-lg border border-border bg-surface px-2 py-1 text-xs text-text focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      className="rounded-lg border border-border bg-surface px-2 py-1 text-xs text-text focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
                     >
                       {STATUS_OPTIONS.map((s) => (
                         <option key={s} value={s}>

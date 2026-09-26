@@ -37,12 +37,12 @@ export function judgeAttendanceStatus(signInAt: Date, start: Date, end: Date): A
 }
 
 /**
- * 签到窗口判定（供卡片/详情弹窗复用，Issue #173）：
+ * 签到窗口判定（Issue #173）：
  * - 已过结束时间（now > end）→ "ended"（排练已结束）
  * - 提前超过 30 分钟（now < start - 30min）→ "not-started"（排练尚未开始）
  * - 其余（含 start_time 缺失或无法解析）→ null（签到窗口内，或无法判定）
  *
- * 原为卡片私有逻辑，详情弹窗（出勤状态判定）复用后上提至此（Issue #173 重构）。
+ * 现由同文件 isAbsentPlaceholder 调用，用于判定排练是否已结束（占位解除条件）。
  */
 export function getSignBlockReason(
   startTime: string | null,
@@ -78,7 +78,7 @@ export const UNSIGNED_LABEL = "未签到";
 
 /**
  * 是否为 absent 占位行（Issue #213 对抗返工）：absent + 未签到 + 排练未结束。
- * 与列表展示口径同源（getAttendanceDisplay 复用本函数，见 profile 页）：
+ * 与列表展示口径同源（列表口径的判据即本函数）：
  * 占位行是新建排练的默认预生成，不构成缺勤——列表展示「未签到」；统计中仅计入
  * total、不计入任何栏目（用户指示「未签到不统计」）；排练已结束（或已签到补签）
  * 才解除占位、按原始 status 计缺勤。

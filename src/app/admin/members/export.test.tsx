@@ -74,6 +74,16 @@ const mocks = vi.hoisted(() => {
       status: "present",
       sign_in_time: "2026-08-20T19:05:00",
     },
+    {
+      user_id: "u2",
+      status: "exempt",
+      sign_in_time: null,
+    },
+    {
+      user_id: "u3",
+      status: "absent",
+      sign_in_time: null,
+    },
   ];
 
   const mockRosterRows = [
@@ -218,6 +228,31 @@ describe("AdminMembersPage 导出功能", () => {
     expect(mocks.mockWriteFile).toHaveBeenCalledWith(expect.anything(), "考勤记录_全部_全部.xlsx");
   });
 
+  it("导出全部：区间映射含 exempt 显示「无需出勤」（与单场导出是两条独立路径）", async () => {
+    mocks.mockThen.mockImplementation((resolve: (v: unknown) => void) => {
+      const lastFrom = mocks.mockFrom.mock.calls.at(-1)?.[0];
+      if (lastFrom === "profiles_roster") {
+        resolve({ data: mocks.mockRosterRows, error: null });
+      } else {
+        resolve({
+          data: [{ rehearsal_id: 1, user_id: "u2", status: "exempt", sign_in_time: null }],
+          error: null,
+        });
+      }
+    });
+
+    renderWithProviders(<MembersPage />);
+    fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
+
+    await waitFor(() => {
+      expect(mocks.mockWriteFile).toHaveBeenCalled();
+    });
+    expect(mocks.mockAoaToSheet).toHaveBeenCalledWith([
+      ["姓名", "邮箱", "出勤情况", "在团情况", "签到时间"],
+      ["李小四", "lisi@example.com", "无需出勤", "不在团", "—"],
+    ]);
+  });
+
   it("导出全部：区间为空时 alert 提示", async () => {
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     mocks.mockRehearsals.splice(0, mocks.mockRehearsals.length);
@@ -273,10 +308,13 @@ describe("AdminMembersPage 导出功能", () => {
       expect(mocks.mockWriteFile).toHaveBeenCalled();
     });
     expect(mocks.mockFrom).toHaveBeenCalledWith("profiles_roster");
-    // 单场导出只有 mockSingleAttendanceRows 的 1 条记录（u1 present）
+    // 单场导出 = mockSingleAttendanceRows 的 3 条记录。两处导出映射红线都在本条上：
+    // exempt 漏加会退化成裸英文，absent 文案（本分支统一为「缺勤」）改字面也会红
     expect(mocks.mockAoaToSheet).toHaveBeenCalledWith([
       ["姓名", "邮箱", "出勤情况", "在团情况", "签到时间"],
       ["张小三", "zhangsan@example.com", "出席", "在团", "2026-08-20T19:05:00"],
+      ["李小四", "lisi@example.com", "无需出勤", "不在团", "—"],
+      ["王小五", "wangwu@example.com", "缺勤", "—", "—"],
     ]);
     expect(mocks.mockBookAppendSheet).toHaveBeenCalledTimes(1);
     expect(mocks.mockBookAppendSheet.mock.calls[0][2]).toBe("考勤记录");
@@ -298,14 +336,35 @@ describe("AdminMembersPage 导出功能", () => {
     expect(mocks.mockWriteFile).toHaveBeenCalledWith(expect.anything(), "考勤记录_全部_全部.xlsx");
   });
 
-  it("导出全部：setDateRange 后文件名包含日期区间", async () => {
+  it("导出全部：设置日期区间后只导出区间内的排练，文件名含区间", async () => {
+    // 再添一场落在区间之前的排练：区间取中间那天，两端边界才各自承重——
+    // 只有两场且区间贴着一端时，单侧过滤就能挡住另一场，另一端被架空（对抗返工）
+    mocks.mockRehearsals.push({
+      id: 3,
+      repertoire: "勃拉姆斯第四交响曲",
+      start_time: "2026-08-19T19:00:00",
+      end_time: "2026-08-19T21:00:00",
+      location: "新太阳活动中心",
+    });
+
     renderWithProviders(<MembersPage />);
-    fireEvent.click(screen.getByText("📥 导出区间全部考勤（2 场排练）"));
+    const [startInput, endInput] = screen.getAllByPlaceholderText("选择日期");
+    // 区间取中间的 2026-08-20：19 日要靠开始边界挡、21 日要靠结束边界挡
+    fireEvent.change(startInput, { target: { value: "2026-08-20" } });
+    fireEvent.keyDown(startInput, { key: "Enter" });
+    fireEvent.change(endInput, { target: { value: "2026-08-20" } });
+    fireEvent.keyDown(endInput, { key: "Enter" });
+
+    fireEvent.click(await screen.findByText("📥 导出区间全部考勤（1 场排练）"));
 
     await waitFor(() => {
       expect(mocks.mockWriteFile).toHaveBeenCalled();
     });
-    // 未设置日期区间时文件名区间为「全部」
-    expect(mocks.mockWriteFile).toHaveBeenCalledWith(expect.anything(), "考勤记录_全部_全部.xlsx");
+    expect(mocks.mockBookAppendSheet).toHaveBeenCalledTimes(1);
+    expect(mocks.mockBookAppendSheet.mock.calls[0][2]).toBe("贝多芬第五交响曲_2026-08-20");
+    expect(mocks.mockWriteFile).toHaveBeenCalledWith(
+      expect.anything(),
+      "考勤记录_2026-08-20_2026-08-20.xlsx",
+    );
   });
 });

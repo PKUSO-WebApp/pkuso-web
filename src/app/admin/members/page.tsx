@@ -7,6 +7,7 @@ import { useRehearsals } from "@/hooks/useRehearsals";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useAttendanceEditor } from "@/hooks/useAttendanceEditor";
 import { AttendanceModal } from "@/components/attendance-modal";
+import { STATUS_LABEL } from "@/lib/attendance-status";
 import { Toggle } from "@/components/ui/Toggle";
 import { parseLocalISO, getLocalDateString } from "@/lib/date-utils";
 import { groupProfilesByInstrument } from "@/lib/roster-utils";
@@ -171,7 +172,7 @@ export default function MembersPage() {
   const [exportingId, setExportingId] = React.useState<number | null>(null);
   const [exportingAll, setExportingAll] = React.useState(false);
 
-  // 考勤查看/编辑弹窗（点击排练行打开，与 admin/rehearsals 共享同一套状态逻辑）
+  // 考勤查看/编辑弹窗（点击排练行打开，与 admin/attendance 共享同一套状态逻辑）
   const {
     attendanceRehearsal,
     attendanceLoading,
@@ -199,13 +200,6 @@ export default function MembersPage() {
       })
       .sort((a, b) => (a.start_time! < b.start_time! ? 1 : -1));
   }, [allRehearsals, attendanceStartDate, attendanceEndDate]);
-
-  const STATUS_LABEL: Record<string, string> = {
-    present: "出席",
-    late: "迟到",
-    absent: "缺席",
-    excused: "请假",
-  };
 
   // 导出单场排练出勤记录
   const exportSingleRehearsal = async (rehearsal: RehearsalRow) => {
@@ -517,6 +511,7 @@ export default function MembersPage() {
 
       <AttendanceModal
         open={!!attendanceRehearsal}
+        rehearsalId={attendanceRehearsal?.id ?? null}
         title={attendanceRehearsal?.repertoire ?? ""}
         loading={attendanceLoading}
         list={attendanceList}

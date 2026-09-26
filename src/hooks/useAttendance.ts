@@ -7,7 +7,7 @@ import type { AttendanceRowWithUser, AttendanceStatus } from "@/types/database";
 export type AttendanceEntry = {
   rehearsal_id: number;
   user_id: string;
-  status: "present" | "late" | "absent" | "excused";
+  status: AttendanceStatus;
   sign_in_time?: string | null;
 };
 
@@ -21,6 +21,9 @@ export function useAttendance(client: typeof defaultClient = defaultClient) {
   // 调用方会把「未加载到记录」误判为「无考勤」（闪现缺勤 chip / 错误显示签到按钮），
   // 初始 true 让调用方在首次 fetch 完成前统一走「加载中」分支（Issue #141 对抗返工）
   const [loading, setLoading] = React.useState(true);
+  // 名单拉取的递增序号（CLAUDE.md「竞态守卫用递增序号」）：管理员快速切换排练时，
+  // 先发的请求可能后返回；只有最新一轮的响应才允许写 state / loading / 返回值
+  const listSeqRef = React.useRef(0);
 
   /** 团员: 加载自己在当前排练池中的考勤 */
   const fetchMyAttendances = React.useCallback(
@@ -55,14 +58,23 @@ export function useAttendance(client: typeof defaultClient = defaultClient) {
     [client],
   );
 
-  /** 管理员: 查看某场排练的考勤名单（含 profiles） */
+  /**
+   * 管理员: 查看某场排练的考勤名单（含 profiles）
+   * 返回 null = 本轮响应已过期（期间又发起了新一轮拉取），调用方须忽略、不得写自己的名单状态。
+   */
   const fetchByRehearsal = React.useCallback(
     async (rehearsalId: number) => {
+      const seq = ++listSeqRef.current;
       setLoading(true);
+      // 切换排练即清空本 hook 的名单。渲染方（useAttendanceEditor）另有一份名单，
+      // 那一份在渲染期重置，不依赖这里的写入。
+      setList([]);
       const { data, error } = await client
         .from("attendances")
         .select("*, profiles!inner(full_name, instrument)")
         .eq("rehearsal_id", rehearsalId);
+      // 过期响应：一个 state 都不写（否则会把上一场的名单与 loading=false 盖到新一轮上）
+      if (seq !== listSeqRef.current) return null;
       setLoading(false);
       if (error) {
         setList([]);

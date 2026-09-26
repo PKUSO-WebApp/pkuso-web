@@ -1,4 +1,6 @@
-import type { UploadFile } from "../upload-modal.types";
+"use client";
+
+import type { UploadFile, UploadPhase } from "../upload-modal.types";
 
 /**
  * 弹窗底部的操作行（「识别分段 / 取消 / 确认上传」那一排）。
@@ -9,8 +11,9 @@ import type { UploadFile } from "../upload-modal.types";
  * 这里只负责**渲染**：给什么值就画什么。
  */
 type FooterBarProps = {
-  phase: "select" | "analyzing" | "confirm" | "uploading";
-  /** 行数。按钮文案里的分母（`确认上传（N/总数）`） */
+  /** 弹窗阶段（`UploadPhase`，定义在 `../upload-modal.types`）—— 与父组件共用一份，别再抄字面量 */
+  phase: UploadPhase;
+  /** 行数。本组件里「确认上传」按钮文案的分母（`确认上传（N/总数）`） */
   totalCount: number;
   /** 能上传的行数：既是分子，也是「确认上传」能不能点的判据之一 */
   uploadableCount: number;

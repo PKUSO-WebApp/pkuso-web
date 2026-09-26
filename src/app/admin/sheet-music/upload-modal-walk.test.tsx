@@ -7,14 +7,14 @@ import { UploadModal } from "./upload-modal";
 vi.setConfig({ testTimeout: 20000 });
 
 /**
- * 升级链的**集成**测试 —— 真的跑 `renderPagesForAnalysis` 那个循环和 `analyzeOne` 的
+ * 升级链的**集成**测试 —— 真的跑 `pdf-render.ts` 的 `renderPagesForAnalysis` 那个循环和 `analyzeOne` 的
  * `tryPage`，用假 pdfjs + 假 canvas 像素 + 假 Edge Function 驱动。
  *
  * ## 为什么必须有这一个文件
  *
  * 对抗测试用变异证明了**只钉两个纯函数不够**：把 `analyzeOne` 里那句
  * `if (analysisSettled(got)) return true;` 改回 `return analysisSettled(got)`
- * （后果是「整页」那张图变成死代码、旧版那条回退静默消失），
+ *（后者的判据在 `analysis.ts`；后果是「整页」那张图变成死代码、旧版那条回退静默消失），
  * **原有那套测试全绿、一条都不红** —— 因为没有任何测试执行到 `tryPage` 或那个循环。
  * 这个文件补的就是它：断言的是「**哪几张图真的被送出去了**」，不是判据本身。
  *
@@ -62,6 +62,12 @@ const h = vi.hoisted(() => ({
   bandTexts: [] as string[],
   /** 登录用户。`null` = 未登录（`confirmUpload` 会 alert 并返回） */
   user: null as { id: string } | null,
+  /**
+   * 弹窗的「关闭」回调。**用 spy 而不是 `() => {}`**（#317）：此前一律传空函数，于是
+   * 「取消接错成别的动作」这类改动全套全绿（对抗测试实测：`onClose={startSegmentation}`
+   * 会让点「取消」真的去烧 OCR，而那一批里一条都不红）。
+   */
+  onClose: vi.fn(),
   /** LLM 成功时回什么。默认「一律未识别」—— 那正是要逼出回退/升级的那种输入 */
   llmReply: {
     success: true,
@@ -82,7 +88,8 @@ const h = vi.hoisted(() => ({
   llmFailFor: [] as string[],
   /**
    * 非 null 时所有 LLM 调用都挂在这里，直到测试放行。
-   * 用途是**造出「分析还在飞」的窗口** —— 真实的一次 LLM 调用要几秒到几十秒（前端 LLM_TIMEOUT_MS 45s 是它的上限），而
+   * 用途是**造出「分析还在飞」的窗口** —— 真实的一次 LLM 调用要几秒到几十秒
+   *（`analysis.ts` 的 `LLM_TIMEOUT_MS` 是它的上限），而
    * 「飞行中能不能改行集」这个判据只在那段窗口里才存在（对抗测试实测出来的缺口）。
    */
   llmGate: null as null | Promise<void>,
@@ -189,7 +196,7 @@ vi.mock("@/lib/supabase", () => {
             h.llmFileNames.push(fileName);
             // 需要「分析还在飞」的窗口时挂在这里（真实 LLM 要几秒到几十秒）
             if (h.llmGate) await h.llmGate;
-            // LLM 失败走 `error` 那条路：`runLlmAnalysis` 会抛，而**抛出来的异常该让整行
+            // LLM 失败走 `error` 那条路：`analysis.ts` 的 `runLlmAnalysis` 会抛，而**抛出来的异常该让整行
             // 落 `status: "error"`**，不该被降级 catch 吞掉再补一次「只凭文件名」的调用
             if (h.llmFail || h.llmFailFor.some((n) => text.includes(n) || fileName.includes(n))) {
               return { data: null, error: { message: "boom" } };
@@ -265,6 +272,7 @@ beforeEach(() => {
   h.renderFailPages = [];
   h.pages = 3;
   h.user = null;
+  h.onClose.mockClear();
   h.llmReply = { success: true, section: "", instrument: "", subParts: [], isFullScore: false };
   h.fileInserts.length = 0;
   h.upsertOnConflict = null;
@@ -310,7 +318,7 @@ async function runAnalysis({
   h.loadFail = loadFail;
   h.renderFailPages = renderFailPages;
   const { container } = render(
-    <UploadModal open onClose={() => {}} scoreId="score-1" onUploaded={() => {}} />,
+    <UploadModal open onClose={h.onClose} scoreId="score-1" onUploaded={() => {}} />,
   );
   fireEvent.change(container.querySelector('input[type="file"]')!, {
     target: {
@@ -504,7 +512,7 @@ describe("错误行不再是死胡同：重试", () => {
     });
     expect(screen.getAllByText("还原为一份").length).toBeGreaterThan(0);
 
-    // 让重试挂住 —— 真实的一次 LLM 调用要几秒到几十秒（前端 LLM_TIMEOUT_MS 45s 是它的上限），判据只在那段窗口里才有意义
+    // 让重试挂住 —— 真实的一次 LLM 调用要几秒到几十秒（`analysis.ts` 的 `LLM_TIMEOUT_MS` 是它的上限），判据只在那段窗口里才有意义
     let release: () => void = () => {};
     h.llmGate = new Promise<void>((r) => {
       release = r;
@@ -1254,6 +1262,14 @@ describe("后端信号字段的消费者（#302：发了没人读，就等于不
       isFullScore: false,
     };
     await runAnalysis();
+    // ⚠️ **必须先展开**（#317 补）：不展开的话面板根本没渲染，下面那条断言**恒真** ——
+    // 把 `f.abstainReason &&` 整条删掉它照样绿（对抗测试实测）。这一条此前自称测「字段缺席」，
+    // 实际测的是「没有面板」。
+    fireEvent.click(screen.getByLabelText("查看详情"));
+    // ⚠️ 前提必须用**面板里的东西**，不能用 toggle 的 aria-label：`收起详情` 只说明 toggle 翻了、
+    // 不说明 `DetailsPanel` 渲染了 —— 把 `{expanded && hasDetails(f) && <DetailsPanel …/>}` 改成
+    // 恒假，这条用例**照样绿**（对抗测试实测）。下面这一行才是「面板真的开了」。
+    expect(screen.getByText("OCR 文本：")).toBeTruthy();
     expect(screen.queryByText(/后端弃权/)).toBeNull();
   });
 
@@ -1665,5 +1681,163 @@ describe("同一判据的**反面**拷贝（补号守卫 / 段行不继承 raw�
     );
     // 而且那句「没读懂」还在（拦下 + 提示，两条路都没被补号抹掉）
     expect(screen.getByText(/没读懂/)).toBeTruthy();
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * #317 补的一批：门（对抗测试）报「改坏能全套全绿」的判据，逐条钉住。
+ * 每条都注明了**哪个变异会让它变红** —— 那是它存在的理由，别当成冗余删掉。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 「识别分段（N 份，约 M 次 OCR）」里的 N */
+function segButtonCount(): number {
+  const btn = screen.getByText(/^识别分段（/).textContent ?? "";
+  const m = /（(\d+) 份/.exec(btn);
+  if (!m) throw new Error("按钮文案里读不出份数: " + JSON.stringify(btn));
+  return Number(m[1]);
+}
+
+/** 一段 LLM 回复的默认形状。`section === "总谱"` 才算总谱 —— 与后端同一条判据 */
+const okReply = (section = "圆号", instrument = "圆号") => ({
+  success: true,
+  section,
+  instrument,
+  subParts: [] as number[],
+  isFullScore: section === "总谱",
+});
+
+describe("segEligible 的排除（#317：分段资格只走它，其中几条此前零测试）", () => {
+  it("上传失败（error）的行不进分段池 —— 它的 pageCount 还在，别按它计费", async () => {
+    h.pages = 3;
+    h.user = { id: "u1" };
+    h.llmReply = okReply();
+    h.upsertError = { code: "42501", message: "permission denied for table sheet_music_files" };
+    await runAnalysis({ names: ["a.pdf"] });
+    expect(segButtonCount()).toBe(1); // 前提：上传之前它是候选（多页、非总谱、认得出乐器）
+
+    fireEvent.click(screen.getByText(/确认上传/));
+    await waitFor(
+      () =>
+        expect(
+          screen.getAllByText(/permission denied for table sheet_music_files/).length,
+        ).toBeGreaterThan(0),
+      { timeout: 10000 },
+    );
+
+    // ★ 变异：删掉 `segEligible` 的 `f.status !== "error" &&` → 按钮又出现（按 1 份计费）⇒ 变红。
+    // ⚠️ 这条排除是**可达**的，不是死条款：error 行保留着 `pageCount`（那几处都是
+    // 「先分析成功、再落 error」），所以删掉它会被算进分段池。
+    expect(screen.queryByText(/^识别分段（/)).toBeNull();
+  });
+
+  it("已上传成功的行不再进分段池（否则按钮按它计费、点下去白烧配额）", async () => {
+    h.user = { id: "u1" };
+    // 两份都返回非空乐器名（segEligible 为真），其中一份的乐器名**中间**塞一个 NBSP：
+    // `findUnsafeInName` 会在落库前拦下它。两个顺序都恰好得到「一行 done + 一行被拦」。
+    // ⚠️ NBSP 必须夹在**中间**：`.trim()` 会剥掉首尾的 U+00A0（它在 ECMAScript 的
+    // WhiteSpace 里），所以 "圆号" + NBSP 会被 trim 成 "圆号"、根本拦不住。
+    const NBSP = String.fromCharCode(160);
+    h.llmReplies = [okReply(), okReply("圆号", "圆" + NBSP + "号")];
+    await runAnalysis({ names: ["a.pdf", "b.pdf"] });
+
+    expect(segButtonCount()).toBe(2); // 前提：上传前两行都合格
+
+    fireEvent.click(screen.getByText(/确认上传/));
+    await waitFor(() => expect(h.uploaded.length).toBeGreaterThan(0), { timeout: 10000 });
+    await waitFor(() => expect(screen.queryByText(/^确认上传（/)).toBeTruthy(), { timeout: 10000 });
+
+    expect(h.uploaded).toHaveLength(1);
+    // ★ 变异：删掉 `segEligible` 里的 `f.status !== "done" &&` → 这一条变红（份数变 2）
+    expect(segButtonCount()).toBe(1);
+  });
+
+  it("标成总谱的行不进分段池（用户定的那笔省 OCR 不能被默默取消）", async () => {
+    h.pages = 3;
+    h.llmReplies = [okReply(), okReply("总谱", "总谱")];
+    await runAnalysis({ names: ["a.pdf", "b.pdf"] });
+
+    expect(screen.getByText(/^识别分段（/)).toBeTruthy(); // 按钮在（a 仍是候选）
+    // ★ 变异：`isFullScoreRow(f)` → `false` → 这一条变红（份数变 2）
+    expect(segButtonCount()).toBe(1);
+  });
+
+  it("单页文件不进分段池（没有边界可言，跑它白烧一次 OCR）", async () => {
+    h.pages = 1;
+    h.llmReply = okReply();
+    await runAnalysis({ names: ["a.pdf"] });
+
+    // ★ 变异：`needsSegmentation(...)` → `true` → 这一条变红（按钮出现）
+    expect(screen.queryByText(/^识别分段（/)).toBeNull();
+  });
+
+  it("切出来的段不再进分段池（对产物再跑一次分段没有意义）", async () => {
+    h.pages = 3;
+    h.segmentCuts = [2]; // 3 页 → 2 段：第 1 段占 2 页、第 2 段占 1 页
+    h.llmReply = okReply();
+    await runAnalysis({ names: ["a.pdf"] });
+    expect(segButtonCount()).toBe(1);
+
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+
+    // ★ 变异：删掉 `segEligible` 里的 `!f.splitOf &&` → 第 1 段（2 页）会重新成为候选、
+    // 按钮又出现 → 这一条变红
+    expect(screen.queryByText(/^识别分段（/)).toBeNull();
+  });
+});
+
+describe("只钉了半边的交互（#317）", () => {
+  it("展开面板点开之后**还能收回去**（此前没有用例点过第二次）", async () => {
+    h.llmReply = okReply();
+    await runAnalysis();
+    await waitFor(() => expect(screen.getByLabelText("查看详情")).toBeTruthy(), { timeout: 10000 });
+
+    fireEvent.click(screen.getByLabelText("查看详情"));
+    expect(screen.getByLabelText("收起详情")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("收起详情"));
+    // ★ 变异：`onToggleExpand={() => setExpandedIdx(i)}`（只开不合）→ 这里还是「收起详情」→ 变红
+    expect(screen.getByLabelText("查看详情")).toBeTruthy();
+  });
+
+  it("「取消」接的是 onClose，不是别的动作", async () => {
+    h.llmReply = okReply();
+    await runAnalysis(); // 走到 confirm 阶段：这一步底部那个按钮的文案是「取消」
+    h.onClose.mockClear();
+
+    fireEvent.click(screen.getByText("取消"));
+    // ★ 变异：`onClose={startSegmentation}` 之类 → onClose 一次都不会被调 → 变红
+    //（对抗测试实测：那个接错会让点「取消」真的去烧 OCR，而那一批里一条都不红）
+    expect(h.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("段级识别在飞时「确认上传」禁用、文案是「识别各段中...」（否则按没号的快照落库）", async () => {
+    h.user = { id: "u1" };
+    h.llmReply = okReply();
+    await runAnalysis({ names: ["a.pdf"] }); // 先用**不带门**的 LLM 跑完整份分析
+    expect(screen.getByText(/确认上传（1\/1）/)).toBeTruthy();
+
+    // 之后唯一的 LLM 调用就是段级那两次 ⇒ 挂住它，就能停在「识别各段中...」那个窗口
+    let release: () => void = () => {};
+    h.llmGate = new Promise<void>((r) => {
+      release = r;
+    });
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+
+    // ★ 变异：`refiningCount={refiningCount}` → `{0}` → 文案与禁用**一起**失效 ⇒ 变红。
+    // 它守的是数据一致性：段级识别还在飞时上传，`uploadOne` 会按点击那一刻的行算出
+    // **没号**的 `file_name` / `sub_parts` 落库，而屏幕上那几秒后就有号了 —— 界面与库从此对不上。
+    const btn = screen.getByText(/识别各段中/).closest("button") as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+
+    // 放行，让这次分段跑完（不留悬挂的 promise）
+    release();
+    h.llmGate = null;
+    await waitFor(() => expect(screen.queryByText(/识别各段中/)).toBeNull(), { timeout: 10000 });
   });
 });

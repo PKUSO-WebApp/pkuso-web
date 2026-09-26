@@ -1733,7 +1733,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                    *
                    * **报上界而不是「约」** —— 这个数由 `analysis.ts` 的 `estimateAnalysisOcrCalls` 按常量算出、
                    * 不依赖语料，写成确定的数才是真的；分段那边报「约」是因为每页窄带多大
-                   * 要渲染完才知道（见 segmentation.ts 的 `estimateOcrCalls`，那是另一件事）。
+                   * 要渲染完才知道（见 `segmentation.ts` 的 `estimateOcrCalls`，那是另一件事）。
                    */}
                   <p className="text-label text-text-muted" data-testid="analysis-ocr-cost">
                     分析最多 {estimateAnalysisOcrCalls(files.length, analyzeFullScore)} 次 OCR

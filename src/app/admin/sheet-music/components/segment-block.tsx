@@ -1,3 +1,5 @@
+"use client";
+
 import { boundarySpan, parseBoundaryText } from "../segmentation";
 import type { UploadFile, UploadPhase } from "../upload-modal.types";
 
@@ -23,7 +25,7 @@ type SegmentBlockProps = {
   segBusy: boolean;
   hasAnalyzingFiles: boolean;
   /* ↓↓ 纯 helper（都是 `(f) => …`）：由父组件传进来，而不是在这里重写 —— */
-  /** 这一行跑分段要几次 OCR（`estimateOcrCalls`） */
+  /** 这一行跑分段要几次 OCR（`segmentation.ts` 的 `estimateOcrCalls`） */
   costOf: (f: UploadFile) => number;
   /** 归一化后的段列表 */
   segmentsOf: (f: UploadFile) => { from: number; to: number }[];
@@ -31,7 +33,8 @@ type SegmentBlockProps = {
   startsOf: (f: UploadFile) => number[];
   /** 输入框原文数组（缺字段时按起点回填） */
   startTextOf: (f: UploadFile) => string[];
-  /** **识别出多段、却还没拆** —— 显示条件与上传拦截同一份判据（见它的 docblock） */
+  /** **识别出多段、却还没拆** —— 显示条件与上传拦截同一份判据
+   *（见 `../row-text.ts` 的 `unsplitSegments` 的 docblock；拦截点在 `upload-modal.tsx` 的 `confirmUpload`） */
   unsplitSegments: (f: UploadFile) => boolean;
   /* ↓↓ handler */
   onSegmentStartRawChange: (i: number, si: number, text: string) => void;

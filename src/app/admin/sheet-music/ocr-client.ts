@@ -73,7 +73,8 @@ function base64Kb(base64: string): number {
  * 拆出这一层是为了让**拼图**那条路复用同一套重试/超时/错误文案 —— 它要多拿
  * `pages[0].lines`（带坐标的行），而首页那条路只要 `text`。
  *
- * `overlay: true` 时上游才会回坐标；`shape.ts` 明确说过坐标的**量纲由调用方判定**
+ * `overlay: true` 时上游才会回坐标；`pkuso-backend` 的
+ * `supabase/functions/ocr-analyze/shape.ts` 明确说过坐标的**量纲由调用方判定**
  * （见 `mosaic.ts` 的 `mapLinesToPages`），所以这里原样透传，不做任何猜测。
  */
 export async function invokeOcr(

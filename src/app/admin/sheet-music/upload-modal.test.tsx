@@ -1,12 +1,8 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import {
-  analysisSettled,
-  estimateAnalysisOcrCalls,
-  pageAttempts,
-  UploadModal,
-} from "./upload-modal";
+import { UploadModal } from "./upload-modal";
+import { analysisSettled, estimateAnalysisOcrCalls, pageAttempts } from "./analysis";
 
 /**
  * 渲染冒烟测试。**存在的理由是两次真实的漏网**：

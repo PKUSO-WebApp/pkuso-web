@@ -13,6 +13,7 @@ import {
   cropNoteOf,
   describeInsertError,
   editsOf,
+  hasDetails,
   isBlankName,
   isFullScoreRow,
   isKnownSection,
@@ -307,5 +308,21 @@ describe("文案", () => {
     expect(describeInsertError({ code: "23505", message: "dup" }, targets)).toBe(
       "这一声部下已经有同名文件（F调圆号1.pdf、低音提琴1.pdf）—— 请改乐器名或分声部号，或先删掉详情页里那份",
     );
+  });
+});
+
+describe("hasDetails：展开键认哪些字段（#326 第 1 条）", () => {
+  it("只有弃权原因也算「有详情」—— 面板里渲染着它", () => {
+    // ⚠️ **这个行状态在今天的链路里到不了**：写 `abstainReason` 的每条路（`analyzeOne`
+    // 的成功回写、`retryRow`、段级识别的两个分支）都**同时**写了 `llmResult` 或
+    // `warning`，旧判据本来就为真 —— 所以这条**不是一次复现**（议题正文里那句后果的说法
+    // 不成立，写点穷举见 `row-text.ts` 里 `hasDetails` 的 docblock）。
+    //
+    // 钉的是**判据与面板的契约**：`components/details-panel.tsx` 会渲染这条原因，
+    // 而 `hasDetails` 是那个展开键的开关 —— 两者必须认同一组字段，否则下一个
+    // 「只写 abstainReason、不再顺带写 llmResult」的写者就会做出一个**有内容却打不开**的行。
+    expect(hasDetails(row({ abstainReason: "empty-instrument" }))).toBeTruthy();
+    // 对照组：一个详情字段都没有 → 不给展开键（点了只会开出空面板）
+    expect(hasDetails(row())).toBeFalsy();
   });
 });

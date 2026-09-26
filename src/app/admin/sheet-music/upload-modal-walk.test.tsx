@@ -93,6 +93,19 @@ const h = vi.hoisted(() => ({
    * 「飞行中能不能改行集」这个判据只在那段窗口里才存在（对抗测试实测出来的缺口）。
    */
   llmGate: null as null | Promise<void>,
+  /** 同 llmGate，但挂在 storage.upload 上 —— 「上传飞行中」那个相位只有挂住它才到得了 */
+  uploadGate: null as null | Promise<void>,
+  /** 同 llmGate，但挂在 ocr-analyze 上 —— `segState === "running"` 那个相位只有挂住它才到得了 */
+  ocrGate: null as null | Promise<void>,
+  /**
+   * `segment-parts` 的失败形态：`"error"` = 传输层报错，`"soft"` = 回了 `success: false`。
+   * 两条都是 `requestSegmentation` 的抛错分支（#317 实测：这个桩此前**只会成功**）。
+   */
+  segmentFail: null as null | "error" | "soft",
+  /** 让**第 N 页**的窄带 OCR 失败（页序 = 调用序，见 `bandCalls`）—— 造「有几页没读到」 */
+  bandFailFor: [] as number[],
+  /** 窄带 OCR 的调用计数。**不能拿 `bandTexts.length` 当页号**：失败的那页不入数组，会错位 */
+  bandCalls: 0,
   /** `segment-parts` 回什么 cuts（3 页 → `[2]` 即两段） */
   segmentCuts: [2] as number[],
   /**
@@ -103,6 +116,18 @@ const h = vi.hoisted(() => ({
    * 用它复刻真机上出问题的那份：整份 `[1,2]`、第 1 段 `[1]`、第 2 段 `[2]`。
    */
   llmReplies: [] as Record<string, unknown>[],
+  /**
+   * 按**文件名**给不同答案（优先于 `llmReplies` / `llmReply`）。
+   *
+   * ⚠️ 匹配口径是 `fileName.includes(键)`，三个坑：① 只匹配文件名，不像 `llmFailFor` 那样
+   * 还看 OCR 文本；② `Object.entries` 的**首个命中胜出** —— 键互为前缀时（`a.pdf` 与
+   * `1a.pdf`）先插的那个会劫持；③ **空串键会匹配所有调用**（段级调用不带文件名 ⇒
+   * `fileName === ""`，而 `"".includes("")` 为真）。键取有区分度的整名即可。
+   *
+   * 需要它是因为「同一次分析里两份文件状态不同」**不能**靠 `llmReplies` —— 那个队列按
+   * **调用顺序**取，而哪一份先跑完 OCR 是不受控的。这里按名字取，与顺序无关。
+   */
+  llmReplyFor: {} as Record<string, Record<string, unknown>>,
   /**
    * 每次 `llm-analyze` 调用带的 `file_name`（与 `llm` 逐位对应；空串 = 没带）。
    *
@@ -160,6 +185,8 @@ vi.mock("@/lib/supabase", () => {
       storage: {
         from: vi.fn(() => ({
           upload: async (path: string) => {
+            // 需要「上传还在飞」的窗口时挂在这里（phase === "uploading" 的禁用态要用它）
+            if (h.uploadGate) await h.uploadGate;
             h.uploaded.push(path);
             return { error: null };
           },
@@ -168,6 +195,8 @@ vi.mock("@/lib/supabase", () => {
       functions: {
         invoke: vi.fn(async (name: string, opts: { body: Record<string, unknown> }) => {
           if (name === "ocr-analyze") {
+            // 需要「分段还在飞」的窗口时挂在这里（`segState === "running"` 的文案要用它）
+            if (h.ocrGate) await h.ocrGate;
             const size = Buffer.from(String(opts.body.file_base64 ?? ""), "base64").toString();
             h.ocr.push(size);
             // success:false 那条路**不重试**（见 invokeOcr：「重试无意义」）—— 用它模拟
@@ -180,6 +209,11 @@ vi.mock("@/lib/supabase", () => {
             // 这条分支就不再命中 —— 那时两条 prompt 会退化成同一个常量、断言**打红**（不是静默变绿），
             // 但要照着这里才能看懂报错。
             if (Number(size.split("x")[1]) < 60) {
+              // 窄带 OCR 只服务分段，所以调用序 = 页序
+              h.bandCalls += 1;
+              if (h.bandFailFor.includes(h.bandCalls)) {
+                return { data: { success: false }, error: null };
+              }
               const text = `第${h.bandTexts.length + 1}页页眉`;
               h.bandTexts.push(text);
               return { data: { success: true, text }, error: null };
@@ -201,11 +235,22 @@ vi.mock("@/lib/supabase", () => {
             if (h.llmFail || h.llmFailFor.some((n) => text.includes(n) || fileName.includes(n))) {
               return { data: null, error: { message: "boom" } };
             }
-            // 按调用顺序取的答案优先（见 `llmReplies`）
-            const perCall = h.llmReplies.shift();
+            // 按**文件名**给的答案最优先（`llmReplyFor`）—— 同一次分析里要让两份文件
+            // 状态不同时用它：`llmReplies` 那个队列按调用顺序取，而哪一份先跑完
+            // OCR 是不受控的，会变成偶发。
+            const byName = Object.entries(h.llmReplyFor).find(([n]) => fileName.includes(n))?.[1];
+            // 其次是按调用顺序取的答案（见 `llmReplies`）
+            const perCall = byName ?? h.llmReplies.shift();
             return { data: perCall ?? h.llmReply, error: null };
           }
           if (name === "segment-parts") {
+            // 两条抛错分支各要一条用例（#317：这个桩此前只会成功）
+            if (h.segmentFail === "error") {
+              return { data: null, error: { message: "boom-seg" } };
+            }
+            if (h.segmentFail === "soft") {
+              return { data: { success: false, error: "no-cuts" }, error: null };
+            }
             return { data: { success: true, cuts: h.segmentCuts }, error: null };
           }
           return { data: null, error: { message: `未预期的调用 ${name}` } };
@@ -280,10 +325,16 @@ beforeEach(() => {
   h.uploaded.length = 0;
   h.llmFailFor = [];
   h.llmGate = null;
+  h.uploadGate = null;
+  h.ocrGate = null;
+  h.segmentFail = null;
+  h.bandFailFor = [];
+  h.bandCalls = 0;
   h.segmentCuts = [2];
   // ⚠️ 必须清空：mock 里是 `shift()` 按调用顺序取答案，用例中途失败时数组里会**剩下几条**
   // —— 不清的话后面所有用例的 LLM 回包都被顶掉，报错指向无辜的用例。
   h.llmReplies.length = 0;
+  h.llmReplyFor = {};
   const pixels = makePixels();
   HTMLCanvasElement.prototype.getContext = function () {
     return {
@@ -1461,13 +1512,13 @@ describe("名字里的字符判据（判据本体在 unsafe-name.test.ts，这�
   });
 });
 
-describe("「没有号」逃生口（那条判据在组件里被重推了好几处，这里驱动真组件钉住它们）", () => {
+describe("「没有号」逃生口（判据现在只有一份，这里驱动真组件钉住它**接得对不对**）", () => {
   it("模型给了号但谁都没读懂：**被拦 → 点逃生口 → 真的传出去**（否则是死胡同）", async () => {
     h.user = { id: "u1" }; // 不置的话 confirmUpload 会 alert("请先登录") 并原样返回
-    // ⚠️ 判据在组件里被**重推了好几处**（`grep -n subPartsRaw src/app/admin/sheet-music/upload-modal.tsx`
-    // 能看到全部）：`row-text.ts` 的 `subPartsUnread`、下面这个按钮的渲染条件、
-    // `subPartsNotice` 的行内提示 —— 注释写着「必须完全同源」，但另外两份此前**零覆盖**
-    // （这个文件里搜不到「没有号」）。单测那条钉的是**状态契约**，钉不到「按钮写什么、什么时候出现」。
+    // ⚠️ 这条判据**历史上被重推过好几处**（`row-text.ts` 的 `subPartsUnread`、组件的渲染条件、
+    // `subPartsNotice` 的行内提示），现在收成了一处（`row-text.ts` 的 `needsNoSubPartsButton`，
+    // 读 `editsOf().subPartsUnread`）。这里驱动真组件钉的是**它接得对不对** ——
+    // 按钮写什么字、什么时候出现、点了会怎样；单测那条钉的是**状态契约**，这三件事都钉不到。
     h.llmReply = {
       success: true,
       section: "圆号",
@@ -1529,10 +1580,13 @@ describe("「没有号」逃生口（那条判据在组件里被重推了好几�
     await waitFor(() => expect(h.uploaded.length).toBeGreaterThan(0), { timeout: 10000 });
   });
 
-  it("**模型没给号**的行不出现这个按钮（三个条件里 `subPartsRaw` 那一格也要钉）", async () => {
-    // 删掉按钮条件里 `f.subPartsRaw &&` 那一格，上面两条用例照样绿（一条有 raw、一条被
-    // `guess 为空` 挡住），而那个 docblock 写着「三个条件缺一不可」—— 后果是「模型没给号、
-    // 号也为空」的行会冒出一个多余的「没有号」（功能无害，但是噪声）。
+  it("**模型没给号**的行不出现这个按钮（判据里 `subPartsRaw` 那一格也要钉）", async () => {
+    // 这一格（`subPartsRaw` 非空，现在在 `needsNoSubPartsButton` → `editsOf().subPartsUnread`
+    // 里）是判据里的条件之一：去掉它，上面两条用例照样绿（一条有 raw、一条被 `guess 为空` 挡住）
+    // —— 后果是「模型没给号、号也为空」的行会冒出一个多余的「没有号」（功能无害，但是噪声）。
+    // ⚠️ 要模仿**旧的内联写法**得给足前提：现在条件与取值同源（`? f.subPartsRaw : undefined`），
+    // 只删 `&& f.subPartsRaw` 这一个 token 是**恒等变换**、什么都不会发生 ——
+    // 拿它当变异会得出「这条用例空转」的错误结论。
     h.llmReply = {
       success: true,
       section: "圆号",
@@ -1839,5 +1893,572 @@ describe("只钉了半边的交互（#317）", () => {
     release();
     h.llmGate = null;
     await waitFor(() => expect(screen.queryByText(/识别各段中/)).toBeNull(), { timeout: 10000 });
+  });
+});
+
+describe("上传飞行中的禁用态（#326 第 3 条：此前没有任何用例驱动过这个相位）", () => {
+  it("一份挂在门上飞、一份被拦下留在 analyzed：后者整行控件灰着，放行后恢复", async () => {
+    // ⚠️ **为什么必须两份文件**：上传中的那一行 status 变 "uploading"，而编辑器那道门是
+    // `analyzed || error` ⇒ **它自己的输入框根本不渲染**，「禁没禁用」无从谈起。
+    // `phase === "uploading"` 那几处禁用态真正管的是**同一时刻还停在 analyzed 的别的行** ——
+    // 也就是被 `uploadBlocker` 拦下的那一份（issue 里写的就是这三种行）。
+    h.user = { id: "u1" };
+    h.llmReplyFor = {
+      // 能传的那一份：它的 `storage.upload` 挂在门上 → 相位一直停在 uploading
+      "圆号.pdf": {
+        success: true,
+        section: "圆号",
+        instrument: "F调圆号",
+        subParts: [1],
+        isFullScore: false,
+      },
+      // 号没读懂的那一份：被 `uploadBlocker` 拦下 → 留在 analyzed、编辑器还在
+      "说不清.pdf": {
+        success: true,
+        section: "其他",
+        instrument: "",
+        subParts: [],
+        isFullScore: false,
+        subPartsRaw: "一二",
+      },
+    };
+    await runAnalysis({ names: ["圆号.pdf", "说不清.pdf"] });
+    await waitFor(() => expect(screen.getByText("需人工确认")).toBeTruthy(), { timeout: 10000 });
+
+    let release!: () => void;
+    h.uploadGate = new Promise<void>((r) => {
+      release = r;
+    });
+    fireEvent.click(screen.getByText(/确认上传/));
+
+    // ⚠️ 等的是**禁用态本身**，不是「上传中」那几个字：`setPhase("uploading")` 是同步的，
+    // 而后面任何一步提前失败都会在 `finally` 里把相位打回 `confirm` —— 只等文案的话，
+    // 可能恰好在那一瞬被满足，随后断言的是**已经退回**的界面（第一版就这么栽的）。
+    const boxes = () => screen.getAllByPlaceholderText("号，如 1,2") as HTMLInputElement[];
+    await waitFor(
+      () => {
+        // 空数组的 `every` 恒真 —— 先钉住「真的还有输入框在屏幕上」再谈禁用
+        expect(boxes().length).toBeGreaterThan(0);
+        expect(boxes().every((el) => el.disabled)).toBe(true);
+      },
+      { timeout: 10000 },
+    );
+    // 门确实还挂着（上传一个字节都还没落地）：证明「禁用」是被这个相位驱动的，
+    // 不是别的巧合
+    expect(h.uploaded).toHaveLength(0);
+    // 逃生口同理 —— 它在被拦下的那一行上（`getByText` 找不到会抛，所以这条非空转）
+    expect((screen.getByText("没有号") as HTMLButtonElement).disabled).toBe(true);
+    // ⚠️ **这一行其余的控件也要钉**：这几处删掉 `phase === "uploading"` 时，当时全套用例
+    // 一条都不红（对抗测试实测；本用例补上之后各自变红）。这个窗口里能断的就是这 4 处 ——
+    // 「+ 声部」与它 chip 的 X 渲染不出来（被拦的这行 section 是「其他」、整块不渲染），
+    // 要覆盖得换夹具。全部在这个 `uploadGate` 窗口里断，**零 harness 成本**。
+    const blockedSection = screen
+      .getAllByRole("combobox")
+      .find((el) => (el as HTMLSelectElement).value === "其他") as HTMLSelectElement;
+    expect(blockedSection.disabled).toBe(true); // 声部下拉
+    expect((screen.getByPlaceholderText("乐器名") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByTitle("重置为识别结果") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText("重试") as HTMLButtonElement).disabled).toBe(true);
+
+    release();
+    // 放行后必须**恢复可编辑** —— 否则「灰着」可能只是永久禁用（那也是一种坏法）。
+    // ⚠️ 上面那 4 个控件同样要这一半：实测把声部下拉（或「重置 + 重试」）改成 `disabled={true}`
+    // 永久禁用，只断言「灰着」的写法照样绿。
+    await waitFor(
+      () => {
+        expect(boxes().every((el) => !el.disabled)).toBe(true);
+        expect(blockedSection.disabled).toBe(false);
+        expect((screen.getByPlaceholderText("乐器名") as HTMLInputElement).disabled).toBe(false);
+        expect((screen.getByTitle("重置为识别结果") as HTMLButtonElement).disabled).toBe(false);
+        expect((screen.getByText("重试") as HTMLButtonElement).disabled).toBe(false);
+      },
+      { timeout: 10000 },
+    );
+  });
+});
+
+describe("三个从未被驱动的 UI 入口（号框 / 重置 / + 声部；另外三个在下面「段卡片」那一段）", () => {
+  /** 圆号那一行分析完（这一批用例的公共起点） */
+  async function analyzed() {
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [1],
+      isFullScore: false,
+    };
+    await runAnalysis({ names: ["圆号.pdf"] });
+    await waitFor(() => expect(screen.getByText("已识别 → 圆号 / F调圆号 1")).toBeTruthy(), {
+      timeout: 10000,
+    });
+  }
+  /** 声部下拉（按**值**取 —— 一行里还有「+ 声部」那个 combobox） */
+  const sectionSelect = (value: string) =>
+    screen
+      .getAllByRole("combobox")
+      .find((el) => (el as HTMLSelectElement).value === value) as HTMLSelectElement;
+  const extrasSelect = () =>
+    screen
+      .getAllByRole("combobox")
+      .find((el) => (el as HTMLSelectElement).value === "") as HTMLSelectElement;
+
+  it("分声部框存的是**原文**：`1,` 不许当场被归一成 `1`", async () => {
+    // 存解析结果的话，受控框里那个逗号会**当场消失**（回写成 `1`）—— `1,2` 就逐字敲不出来
+    //（整串粘贴仍可以：粘贴落进来自带逗号。逐字是这条判据要保的那个用法）。
+    // 解析发生在读取时（`editsOf`），预览与落库照旧用解析后的号。
+    await analyzed();
+    const box = screen.getByPlaceholderText("号，如 1,2") as HTMLInputElement;
+    expect(box.value).toBe("1");
+
+    fireEvent.change(box, { target: { value: "1," } });
+    expect(box.value).toBe("1,"); // ← 变异「存解析结果」在这里变红
+    // 而这一行的**含义**仍按解析结果走（半截的 `1,` 解析出 [1]）—— 原文与语义两回事
+    expect(screen.getByText("已识别 → 圆号 / F调圆号 1")).toBeTruthy();
+
+    fireEvent.change(box, { target: { value: "1,2" } });
+    expect(box.value).toBe("1,2");
+    await waitFor(() => expect(screen.getByText("已识别 → 圆号 / F调圆号 1,2")).toBeTruthy());
+  });
+
+  it("「重置为识别结果」把**四个**字段一起退回模型给的值", async () => {
+    // 少退一个 = 静默保留用户的改动，而按钮写着「重置」—— 用户以为回到了识别结果。
+    //
+    // ⚠️ 额外声部这一格必须让**模型给一个非空值**（"中提琴"）：模型值本来就空的话，
+    // 「退了」与「没退」两种写法都让 chip 消失，这条断言就抓不到东西了（空转）。
+    // 判据用 chip 上那个 X 的 title —— `<option>` 里也有同样的文字，查文本会撞上。
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [1],
+      isFullScore: false,
+      extraSections: ["中提琴"],
+    };
+    await runAnalysis({ names: ["圆号.pdf"] });
+    await waitFor(() => expect(screen.getByTitle("不再让这份谱落到「中提琴」")).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    // 四个字段各改一遍：声部（下拉）、乐器（文本框）、号（文本框）、额外声部（+ 声部）
+    fireEvent.change(sectionSelect("圆号"), { target: { value: "长笛" } });
+    fireEvent.change(screen.getByPlaceholderText("乐器名"), { target: { value: "改过的乐器" } });
+    fireEvent.change(screen.getByPlaceholderText("号，如 1,2"), { target: { value: "7" } });
+    fireEvent.change(extrasSelect(), { target: { value: "低音提琴" } });
+    await waitFor(() => expect(screen.getByTitle("不再让这份谱落到「低音提琴」")).toBeTruthy());
+
+    fireEvent.click(screen.getByTitle("重置为识别结果"));
+
+    await waitFor(() =>
+      expect(screen.getByText("已识别 → 圆号 / F调圆号 1（并另存到 中提琴）")).toBeTruthy(),
+    );
+    expect((screen.getByPlaceholderText("乐器名") as HTMLInputElement).value).toBe("F调圆号");
+    expect((screen.getByPlaceholderText("号，如 1,2") as HTMLInputElement).value).toBe("1");
+    expect(sectionSelect("圆号")).toBeTruthy(); // 声部也退回去了
+    // 额外声部回到**模型给的那一个**：用户加的那个没了、模型那个还在
+    expect(screen.getByTitle("不再让这份谱落到「中提琴」")).toBeTruthy();
+    expect(screen.queryByTitle("不再让这份谱落到「低音提琴」")).toBeNull();
+  });
+
+  it("「+ 声部」加上去的第二个声部：chip、落点、以及 chip 的 X 都要真的接上", async () => {
+    await analyzed();
+    fireEvent.change(extrasSelect(), { target: { value: "低音提琴" } });
+
+    // ① chip 出现 ② 标题写出第二个落点 ③ 预览**展开成两个落点**
+    await waitFor(() => expect(screen.getByTitle("不再让这份谱落到「低音提琴」")).toBeTruthy());
+    expect(screen.getByText("已识别 → 圆号 / F调圆号 1（并另存到 低音提琴）")).toBeTruthy();
+    expect(screen.getByText("低音提琴 / 低音提琴1.pdf", { exact: false })).toBeTruthy();
+
+    // chip 的 X 真的接上了（点掉 → 落点回到一个）
+    fireEvent.click(screen.getByTitle("不再让这份谱落到「低音提琴」"));
+    await waitFor(() => expect(screen.queryByTitle("不再让这份谱落到「低音提琴」")).toBeNull());
+    expect(screen.queryByText("低音提琴 / 低音提琴1.pdf", { exact: false })).toBeNull();
+  });
+
+  it("声部下拉里**必须有「总谱」** —— 模型认错时这是唯一的人工入口", async () => {
+    // #317 实测：删掉那个 <option>，当时**一条用例都不红**（要复算就删掉它、跑
+    // `npx vitest run src/app/admin/sheet-music` —— 本用例就在这个目录里，红了即为复算成功）。
+    // 而「总谱不参与切分」是省 OCR 最大的一笔，
+    // 三个本地判据又都被实测否掉了（见 instruments.ts）⇒ **选不到它，那条分支永远走不到**，
+    // 还不是死代码那么轻：用户会以为总谱已经被排除了。
+    // （别的用例锚的是「总谱」这条**判据**，这条锚的是**入口**。）
+    await analyzed();
+    expect(Array.from(sectionSelect("圆号").options).map((o) => o.value)).toContain("总谱");
+  });
+});
+
+describe("段卡片上的三个入口（合并 / 拆分 / 段起点框）", () => {
+  /**
+   * 跑到「一段合订谱识别出 2 段、又还原成一行」——
+   * ⚠️ 段卡片只在**没拆开**的行上渲染（拆完每段各占一行，段卡片就没有了），
+   * 而自动拆是点完「识别分段」就跑的 ⇒ 只能先让它拆、再点「还原为一份」退回来。
+   */
+  async function restoredTwoSegments() {
+    h.segmentCuts = [2];
+    h.llmReplies = [
+      {
+        success: true,
+        section: "圆号",
+        instrument: "F调圆号",
+        subParts: [1, 2],
+        isFullScore: false,
+      },
+      { success: true, section: "圆号", instrument: "F调圆号", subParts: [1], isFullScore: false },
+      { success: true, section: "圆号", instrument: "F调圆号", subParts: [2], isFullScore: false },
+    ];
+    await runAnalysis({ names: ["短笛长笛.pdf"] });
+    await waitFor(() => expect(screen.getByText(/^已识别 → 圆号/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+    fireEvent.click(screen.getAllByText("还原为一份")[0]!);
+    await waitFor(() => expect(screen.getByText("识别出 2 段 —— 可改分段点")).toBeTruthy(), {
+      timeout: 10000,
+    });
+  }
+
+  it("「合并」删掉一条边界，把这一段并进上一段", async () => {
+    await restoredTwoSegments();
+    // 合并只在**第 2 段起**出现（第 1 段没有上一条边界可并）
+    expect(screen.getAllByText("合并")).toHaveLength(1);
+
+    fireEvent.click(screen.getByText("合并"));
+
+    await waitFor(() => expect(screen.getByText("识别出 1 段")).toBeTruthy());
+    expect(screen.queryByText("合并")).toBeNull();
+  });
+
+  it("「拆分」在这一段中间加一条边界（不重跑 OCR），段数要涨", async () => {
+    // 后端刻意「宁可少切，不可多切」⇒ 漏切是常态，没有这个按钮用户只能重跑分段再烧 N 次 OCR。
+    // ⚠️ 桩给的是 `segmentCuts: [2]` ⇒ 段是 **[1–1]、[2–3]**（切点在**第 2 页之前**）——
+    // 于是第 1 段只有一页、它的「拆分」本来就该是灰的（`to - from < 1`，切无可切）。
+    await restoredTwoSegments();
+    const splits = screen.getAllByText("拆分").map((e) => e as HTMLButtonElement);
+    expect(splits).toHaveLength(2);
+    const usable = splits.filter((b) => !b.disabled);
+    // 只有第 2 段够长。这条断言顺带钉住「切无可切时不许给按钮」——
+    // 点了没反应比灰着更糟（用户会以为功能坏了）
+    expect(usable).toHaveLength(1);
+
+    fireEvent.click(usable[0]!);
+
+    // 2 段 → 3 段：第 2 段（2–3 页）被从中间切开
+    await waitFor(() => expect(screen.getByText("识别出 3 段 —— 可改分段点")).toBeTruthy());
+  });
+
+  it("段起点框：填非法值当场标红并给出可填范围，填合法值提交后**边界真的动了**", async () => {
+    await restoredTwoSegments();
+    // 段是 [1–1]、[2–3]（见上一条），第 2 段的起点框里是 2
+    const startBox = screen.getByDisplayValue("2") as HTMLInputElement;
+    expect(startBox.tagName).toBe("INPUT");
+    // 前提：此刻第 1 段是「– 第 1 页」（改完之后要变成第 2 页 —— 这就是「边界真的动了」的可见后果）
+    expect(screen.getByText("– 第 1 页")).toBeTruthy();
+
+    // ① 非法值：不显示当前区间（那会让「框里是 9、右边写着 – 第 3 页」看着像一条合法的段），
+    //    改成只给可填范围（`boundarySpan`：上一段起点 +1 = 2，到页数 = 3）
+    fireEvent.change(startBox, { target: { value: "9" } });
+    await waitFor(() => expect(screen.getByText("起点要填 2–3")).toBeTruthy());
+
+    // ② 合法值 + 提交（失焦）：第 2 段改成从第 3 页起 ⇒ 第 1 段变成「– 第 2 页」
+    fireEvent.change(startBox, { target: { value: "3" } });
+    fireEvent.blur(startBox);
+    await waitFor(() => expect(screen.getByText("– 第 2 页")).toBeTruthy());
+    expect(screen.queryByText("– 第 1 页")).toBeNull();
+  });
+});
+
+describe("分段的三种状态与失败页（#317 里那批「桩只会成功、状态支没人渲染」的缺口）", () => {
+  /** 一行的「识别分段」按钮出现（多页 + 非总谱 + 已识别） */
+  async function readyToSegment() {
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: [1],
+      isFullScore: false,
+    };
+    await runAnalysis({ names: ["短笛长笛.pdf"] });
+    await waitFor(() => expect(screen.getByText(/^已识别 → 圆号/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+  }
+
+  it("分段飞行中：写「识别中…（约 N 次 OCR）」—— 用户要知道在烧钱、且知道烧多少", async () => {
+    await readyToSegment();
+    let release!: () => void;
+    h.ocrGate = new Promise<void>((r) => {
+      release = r;
+    });
+    fireEvent.click(screen.getByText(/^识别分段（/));
+
+    await waitFor(() => expect(screen.getByText("识别中…（约", { exact: false })).toBeTruthy(), {
+      timeout: 10000,
+    });
+    // ⚠️ 光有那句文案不够 —— 它在点击的**同一次同步流程**里就写上了。
+    // 所以再钉两条「真的还在飞」，而且**隔一段时间再钉**：门挂着的时候，
+    // 相位不许自己往前走（不挂门的话这 60ms 里整批早就跑完了 ⇒ 变红，夹具自检实测）。
+    await new Promise((r) => setTimeout(r, 60));
+    expect(h.bandCalls).toBe(0);
+    expect(screen.queryAllByText("还原为一份")).toHaveLength(0);
+
+    release();
+    // 放行后要真的走完 —— 否则上面那句可能只是**永久卡住**（那也是「识别中」）
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+  });
+
+  it("segment-parts 传输层报错：行上留一句「失败：…」，不是静默什么都不发生", async () => {
+    h.segmentFail = "error";
+    await readyToSegment();
+    fireEvent.click(screen.getByText(/^识别分段（/));
+
+    await waitFor(
+      () => expect(screen.getByText("失败：分段请求失败", { exact: false })).toBeTruthy(),
+      { timeout: 10000 },
+    );
+  });
+
+  it("segment-parts 回 success:false：同样报到行上（两条抛错分支各一条）", async () => {
+    h.segmentFail = "soft";
+    await readyToSegment();
+    fireEvent.click(screen.getByText(/^识别分段（/));
+
+    await waitFor(() => expect(screen.getByText("失败：分段失败", { exact: false })).toBeTruthy(), {
+      timeout: 10000,
+    });
+  });
+
+  it("有几页没读到文本：段数后面要带一笔，并点名是哪几页（否则「模型没找到边界」与「有一半页没看」长得一样）", async () => {
+    // ⚠️ 这两句只在**没拆开**的行上（段卡片里）—— 自动拆一跑完源行就没了，
+    // 所以要先让它拆、再「还原为一份」退回来（快照里带着 segFailedPages）
+    h.bandFailFor = [2];
+    h.segmentCuts = [2];
+    h.llmReplies = [
+      {
+        success: true,
+        section: "圆号",
+        instrument: "F调圆号",
+        subParts: [1, 2],
+        isFullScore: false,
+      },
+      { success: true, section: "圆号", instrument: "F调圆号", subParts: [1], isFullScore: false },
+      { success: true, section: "圆号", instrument: "F调圆号", subParts: [2], isFullScore: false },
+    ];
+    await readyToSegment();
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+    fireEvent.click(screen.getAllByText("还原为一份")[0]!);
+
+    await waitFor(
+      () =>
+        expect(
+          screen.getByText("（其中 1 页 OCR 失败，边界可能不全）", { exact: false }),
+        ).toBeTruthy(),
+      { timeout: 10000 },
+    );
+    expect(screen.getByText("第 2 页没取到文本（OCR 失败）", { exact: false })).toBeTruthy();
+  });
+});
+
+describe("「没有号」判据收走拷贝之后的行为（#326 第 2 条：这是**可达**的）", () => {
+  it("段行「重试」回总谱：按钮与那句提示都不该出现（那句会指着一个不存在的按钮）", async () => {
+    // ⚠️ 这条钉的是**真实可达**的状态，不是编出来的夹具：「总谱 + 有 `subPartsRaw` +
+    // 号为空 + 没编辑过」只有 `retryRow` 的段分支能造出来 —— 它写 `sectionGuess: 总谱`
+    // 却**不写** `subPartsEditText`，而 `subPartsRaw` 是**条件写**
+    //（`got.subParts.length > 0` 才写），总谱回包 `subParts` 恒空 ⇒ 段级识别上次留下的
+    // `subPartsRaw` 原样留着。（我第一版断言这个组合「到不了」，合规审查用这条路径证伪了。）
+    h.segmentCuts = [2];
+    h.llmReplies = [
+      {
+        success: true,
+        section: "圆号",
+        instrument: "F调圆号",
+        subParts: [1, 2],
+        isFullScore: false,
+      },
+      // 第 1 段：**给了号但没读懂** ⇒ `subPartsRaw` 从此留在这一行上
+      {
+        success: true,
+        section: "圆号",
+        instrument: "F调圆号",
+        subParts: [],
+        subPartsRaw: "2-3",
+        isFullScore: false,
+      },
+      { success: true, section: "圆号", instrument: "F调圆号", subParts: [2], isFullScore: false },
+    ];
+    await runAnalysis({ names: ["短笛长笛.pdf"] });
+    await waitFor(() => expect(screen.getByText(/^已识别 → 圆号/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+
+    // 清空第 1 段的乐器名 → 未识别 ⇒ 「重试」出现
+    fireEvent.change(screen.getAllByPlaceholderText("乐器名")[0]!, { target: { value: "" } });
+    // 前提（**非空转的关键**）：此刻那一行确实挂着「没读懂」那句 —— 换总谱之后它必须消失
+    await waitFor(() =>
+      expect(screen.getAllByText(/识别到分声部号但没读懂/).length).toBeGreaterThan(0),
+    );
+
+    h.llmReplies.push({
+      success: true,
+      section: "总谱",
+      instrument: "总谱",
+      subParts: [],
+      isFullScore: true,
+    });
+    fireEvent.click(screen.getByText("重试"));
+    await waitFor(() => expect(screen.getByText("已识别 → 总谱 / 总谱")).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    // 正值对照：先证明编辑器块**真的渲染着**、而且**被重试的那一行**那一格真的成了「总谱」
+    // —— 否则下面两句 null 会静默变成空转（本文件里那条同名纪律见「小提琴」那条用例）。
+    // ⚠️ 按**顺序 + 值**一起断言，别用 `getByPlaceholderText`（两段各有一个框，会撞多个元素）：
+    // 这样连「是哪一行变成了总谱」也一并钉住（第 2 段仍是它自己的号 2）。
+    expect(
+      screen.getAllByPlaceholderText("号，如 1,2").map((e) => (e as HTMLInputElement).value),
+    ).toEqual(["总谱", "2"]);
+    // ① 逃生口不显示 —— 旧的内联判据（少了 `!isFullScore`）会显示它：那处漂移的**真实后果**
+    expect(screen.queryByText("没有号")).toBeNull();
+    // ② 那句提示也不许留着：它写着「请填上号，或点『没有号』」，而按钮已被藏起来、
+    //    分声部框此时也是禁用的（总谱）—— 用户照做不了（同一条判据的第三份拷贝）
+    expect(screen.queryByText(/识别到分声部号但没读懂/)).toBeNull();
+  });
+
+  it("同样的路：**非法的号**也不许在总谱行上留着那句「不是数字」", async () => {
+    // 与上一条同源（`retryRow` 的段分支），走的是 `subPartsNotice` 的**第一支**：
+    // 用户在号框里敲过非法值 ⇒ `subPartsEditText` 有值；再「重试」回总谱 ⇒ 那一格被强制
+    // 显示成「总谱」并禁用，而原始字段里的 `abc` 还在 —— 读原始字段的话，行上会挂着一句
+    // 指着**用户看不见也改不了**的值的提示（`uploadBlocker` 这侧对总谱根本不拦）。
+    h.segmentCuts = [2];
+    h.llmReplies = [
+      {
+        success: true,
+        section: "圆号",
+        instrument: "F调圆号",
+        subParts: [1, 2],
+        isFullScore: false,
+      },
+      { success: true, section: "圆号", instrument: "F调圆号", subParts: [1], isFullScore: false },
+      { success: true, section: "圆号", instrument: "F调圆号", subParts: [2], isFullScore: false },
+    ];
+    await runAnalysis({ names: ["短笛长笛.pdf"] });
+    await waitFor(() => expect(screen.getByText(/^已识别 → 圆号/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+
+    // 第 1 段：号框里敲个非法值（这一支的先决条件），再把乐器名清空让「重试」出现
+    fireEvent.change(screen.getAllByPlaceholderText("号，如 1,2")[0]!, {
+      target: { value: "abc" },
+    });
+    fireEvent.change(screen.getAllByPlaceholderText("乐器名")[0]!, { target: { value: "" } });
+    // 前提：那句「不是数字」此刻在行上（换总谱之后必须消失）
+    await waitFor(() => expect(screen.getAllByText(/不是数字/).length).toBeGreaterThan(0));
+
+    h.llmReplies.push({
+      success: true,
+      section: "总谱",
+      instrument: "总谱",
+      subParts: [],
+      isFullScore: true,
+    });
+    fireEvent.click(screen.getByText("重试"));
+    await waitFor(() => expect(screen.getByText("已识别 → 总谱 / 总谱")).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    // 正值对照：编辑器块真渲染着、**被重试的那一行**那一格真的成了「总谱」（顺序 + 值一起钉）
+    expect(
+      screen.getAllByPlaceholderText("号，如 1,2").map((e) => (e as HTMLInputElement).value),
+    ).toEqual(["总谱", "2"]);
+    expect(screen.queryByText(/不是数字/)).toBeNull();
+  });
+
+  it("同样的路：**上界那句**也不许在总谱行上留着（第二支的总谱抑制）", async () => {
+    // 与上面两条同源（`retryRow` 的段分支），走的是 `subPartsNotice` 的**第二支**：
+    // 段级识别回了 33 个号（上界 32）⇒ 号被整个丢掉、行上挂着「后端返回了 33 个…」；
+    // 再「重试」回总谱 ⇒ 那句话同样没有立足点（号在总谱行上整体无效）。
+    // ⚠️ 这条是补的：光有「上界那句会渲染」的用例证明不了「总谱行该不该渲染它」——
+    // 把第二支改回读原始字段，那条**照样绿**（合规审查实测）。
+    h.segmentCuts = [2];
+    const tooMany = Array.from({ length: 33 }, (_, i) => i + 1);
+    h.llmReplies = [
+      {
+        success: true,
+        section: "圆号",
+        instrument: "F调圆号",
+        subParts: [1, 2],
+        isFullScore: false,
+      },
+      {
+        success: true,
+        section: "圆号",
+        instrument: "F调圆号",
+        subParts: tooMany,
+        isFullScore: false,
+      },
+      { success: true, section: "圆号", instrument: "F调圆号", subParts: [2], isFullScore: false },
+    ];
+    await runAnalysis({ names: ["短笛长笛.pdf"] });
+    await waitFor(() => expect(screen.getByText(/^已识别 → 圆号/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+
+    // 清空第 1 段的乐器名让「重试」出现；前提：上界那句此刻真的在行上
+    fireEvent.change(screen.getAllByPlaceholderText("乐器名")[0]!, { target: { value: "" } });
+    await waitFor(() => expect(screen.getAllByText(/超过前端上界/).length).toBeGreaterThan(0));
+
+    h.llmReplies.push({
+      success: true,
+      section: "总谱",
+      instrument: "总谱",
+      subParts: [],
+      isFullScore: true,
+    });
+    fireEvent.click(screen.getByText("重试"));
+    await waitFor(() => expect(screen.getByText("已识别 → 总谱 / 总谱")).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    // 正值对照（顺序 + 值）：编辑器在、那一格成了「总谱」，而上界那句没了
+    expect(
+      screen.getAllByPlaceholderText("号，如 1,2").map((e) => (e as HTMLInputElement).value),
+    ).toEqual(["总谱", "2"]);
+    expect(screen.queryByText(/超过前端上界/)).toBeNull();
+  });
+
+  it("上界漂移那句提示：文案要点名两个数字（它此前**零断言**）", async () => {
+    // 模型一次给 33 个号（上界 32）⇒ `analysis.ts` 的 `overSubPartsCap` 会算出超界、
+    // 号被整个丢掉，界面上必须说清「丢了多少、上界是多少、该找谁」—— 不说的话就是
+    // 一条**完全静默的丢号路径**。这句文案属于 #317 里那批「已渲染但零断言」的文案。
+    h.llmReply = {
+      success: true,
+      section: "圆号",
+      instrument: "F调圆号",
+      subParts: Array.from({ length: 33 }, (_, i) => i + 1),
+      isFullScore: false,
+    };
+    await runAnalysis();
+    await waitFor(() => expect(screen.getByText(/超过前端上界/)).toBeTruthy(), { timeout: 10000 });
+    // 两个数字都写死：只断言「有这句话」的话，把 33 写成别的数、或把上界抄错都抓不到
+    expect(screen.getByText(/后端返回了 33 个分声部号/)).toBeTruthy();
+    expect(screen.getByText(/超过前端上界 32/)).toBeTruthy();
   });
 });

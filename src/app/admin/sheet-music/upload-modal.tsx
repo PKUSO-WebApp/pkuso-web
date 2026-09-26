@@ -57,6 +57,8 @@ import {
   SegmentationCancelled,
 } from "./segmentation-run";
 import { runOcr } from "./ocr-client";
+import { FooterBar } from "./components/footer-bar";
+import { DetailsPanel } from "./components/details-panel";
 
 /**
  * 乐器名现在是**开放集**：后端 llm-analyze 直接返回中文（`木琴` / `英国管` /
@@ -2515,133 +2517,26 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                     )}
                   </div>
 
-                  {expandedIdx === i && hasDetails(f) && (
-                    <div className="border-t border-border px-3 py-2 text-xs space-y-2 bg-muted/30">
-                      {f.preview && (
-                        <div>
-                          <span className="font-medium text-text-muted">
-                            送检图像{f.sourcePage ? `（第 ${f.sourcePage} 页）` : ""}：
-                          </span>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={f.preview}
-                            alt="送去 OCR 的图像"
-                            className="mt-1 w-40 border border-border rounded"
-                          />
-                        </div>
-                      )}
-                      {f.cropNote && <p className="text-text-muted">{f.cropNote}</p>}
-                      {/* 弃权原因：**排查用**，所以给的是后端那个 slug 而不是编一句人话 ——
-                          它要与后端日志对得上。用户能照做的那句话在状态行上（「需人工确认」）。
-                          ⚠️ 措辞必须是**过去式**、而且不能加「这一行未识别」之类的当下判断
-                          （对抗测试实测）：用户按提示手填之后这一行已经识别了，句子里那句
-                          「未识别原因」就成了假话；而**段级弃权**的行更特别 —— 它继承着源行的
-                          乐器名（状态行显示「已识别」），这时把原因藏起来恰恰会丢掉最需要它的
-                          那种情形。所以只陈述「上一次识别后端弃权了」这个**事实**。 */}
-                      {f.abstainReason && (
-                        <p className="text-text-muted">上一次识别后端弃权：{f.abstainReason}</p>
-                      )}
-                      {f.warning && <p className="text-warning">{f.warning}</p>}
-                      {f.ocrText && (
-                        <div>
-                          <span className="font-medium text-text-muted">OCR 文本：</span>
-                          <pre className="mt-1 p-2 bg-muted border border-border rounded text-text max-h-24 overflow-y-auto whitespace-pre-wrap break-all">
-                            {f.ocrText}
-                          </pre>
-                        </div>
-                      )}
-                      {f.llmResult && (
-                        <div>
-                          <span className="font-medium text-text-muted">LLM 结果：</span>
-                          <p className="mt-1 text-text">{f.llmResult}</p>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {expandedIdx === i && hasDetails(f) && <DetailsPanel f={f} />}
                 </div>
               ))}
             </div>
 
-            <div className="flex justify-end gap-3 pt-2 border-t border-border">
-              {/* 分段**不自动跑**：一份 N 页的合订谱要烧 N 次 OCR，而免费档是 500 次/天/IP。
-                  所以这个按钮把代价写在脸上（#290 验收标准：调用次数在导入前可见）。
-                  ⚠️ 不打 `mr-auto`：操作行按 #182 一律靠右下角，不许左右两端分布。 */}
-              {segTargets.length > 0 && !allDone && (
-                <button
-                  onClick={startSegmentation}
-                  // ⚠️ **`hasAnalyzingFiles` 不能少**（2026-09-25）：切点判出后这个函数会
-                  // **自动拆行**，而拆分改变 `files` 长度 —— 逐行重试恰是「攥着下标飞行」的
-                  // 长任务，行集一平移，重试结果就写进别的行、被重试那行永远停在「分析中」
-                  // →`hasAnalyzingFiles` 恒真 →「确认上传」永久禁用。
-                  // 与「还原为一份」「确认这 N 段」两处是同一条纪律（不在注释里写行号 ——
-                  // 它们每改一次就腐烂一次，本行自己就烂过一次）。
-                  // 改动前这个按钮只写 `segState`、不动行集，所以漏了它也不会出事。
-                  disabled={
-                    phase === "analyzing" || phase === "uploading" || segBusy || hasAnalyzingFiles
-                  }
-                  className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted disabled:opacity-50"
-                  title="合订谱里可能装着好几份分谱。识别出边界后会直接拆成几份，各自识别、各自上传。"
-                >
-                  {segTargets.some(({ f }) => f.segState === "running")
-                    ? "识别分段中..."
-                    : `识别分段（${segTargets.length} 份，约 ${segCost} 次 OCR）`}
-                </button>
-              )}
-              <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">
-                {phase === "analyzing" ? "取消分析" : "取消"}
-              </button>
-              {/* 分析期间就把「确认上传」显示出来、但禁用：让用户看得见终点在哪、
-                  还差几个文件，而不是对着一个转圈图标猜还要等多久。 */}
-              {phase === "uploading" ? (
-                <button
-                  disabled
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg opacity-50"
-                >
-                  {/* ⚠️ 转圈而不是「…」（用户实测反馈）：省略号是**静止**的，看不出还在动 ——
-                      上传十几份谱要等一会儿，静止的三个点读起来就是「卡住了」。
-                      用 `admin/layout.tsx` 守护页那套纯 CSS 转圈（border + animate-spin），
-                      不引图标依赖。颜色取 `border-primary-foreground`，与本按钮的前景色一致。 */}
-                  <span className="inline-flex items-center gap-2">
-                    <span
-                      aria-hidden
-                      className="animate-spin rounded-full h-4 w-4 border-2 border-primary-foreground border-t-transparent shrink-0"
-                    />
-                    上传中
-                  </span>
-                </button>
-              ) : allDone ? (
-                // 干完了就给一个**正向出口**：全部传完后还显示禁用的「确认上传（0/N）」
-                // 会让用户以为没成功，而唯一能点的是「取消」。
-                <button
-                  onClick={onClose}
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90"
-                >
-                  完成（已上传 {doneCount} 个）
-                </button>
-              ) : (
-                <button
-                  onClick={confirmUpload}
-                  // ⚠️ `refiningCount` 不能漏：段级识别还在飞时上传，`uploadOne` 会按
-                  // 点击那一刻的行算出**没号**的 `file_name` / `sub_parts` 落库，
-                  // 而屏幕上那几秒后就有号了 —— 界面与库从此对不上且没人回退（见 `refiningCount`）。
-                  disabled={
-                    phase === "analyzing" ||
-                    uploadableCount === 0 ||
-                    hasAnalyzingFiles ||
-                    segBusy ||
-                    refiningCount > 0
-                  }
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
-                >
-                  {/* 灰着必须给理由：段级识别在飞时那几行看起来是「已识别、可直接传」的
-                      （它们继承了源行的乐器名），只灰不说是本文件明确反对的写法。
-                      同一文件里「识别分段」用的也是这个「动词中...」的写法。 */}
-                  {refiningCount > 0
-                    ? "识别各段中..."
-                    : `确认上传（${uploadableCount}/${files.length}）`}
-                </button>
-              )}
-            </div>
+            <FooterBar
+              phase={phase}
+              totalCount={files.length}
+              uploadableCount={uploadableCount}
+              doneCount={doneCount}
+              allDone={allDone}
+              hasAnalyzingFiles={hasAnalyzingFiles}
+              segBusy={segBusy}
+              refiningCount={refiningCount}
+              segTargets={segTargets}
+              segCost={segCost}
+              onClose={onClose}
+              onStartSegmentation={startSegmentation}
+              onConfirmUpload={confirmUpload}
+            />
           </>
         )}
       </div>

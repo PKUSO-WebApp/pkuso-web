@@ -148,7 +148,7 @@ export function FileRow({
                   // 这个按钮**会改变 files 的长度**，而分析 worker（含逐行重试）
                   // 手里攥着点击那一刻的下标 —— 重试飞行中还原一份，会让结果
                   // 写进**别的行**、被重试那行永远停在「分析中」。
-                  // 见 `onRetryRow` 的说明与本文件里 `segBusy` 的同类教训。
+                  // 见 `onRetryRow` 的说明与 `./segment-block` 里 `segBusy` 的同类教训。
                   disabled={
                     phase === "uploading" ||
                     segBusy ||
@@ -427,8 +427,8 @@ export function FileRow({
           用户也可以直接手填。
           `disabled` 带上 `segBusy` 与 uploading：飞行中的闭包攥着
           `{f, i}` 下标，这时候挪动行集会把结果写进别的行（同「确认这 N 段」
-          那个按钮上写的理由。**别在这里写行号** —— 本目录既有约定
-          （见 `sub-parts.ts` 与 `sections.ts` 里都写过的那句），
+          那个按钮上写的理由。**别在这里写行号** —— `../sub-parts.ts` 与 `../sections.ts`
+          里都写过那句，
           它随改动漂走，而且本分支已经把它飘错过一次）。 */}
         {((f.status === "error" && f.instrumentGuess === undefined) || isUnidentified(f)) && (
           <div className="flex justify-end">

@@ -44,11 +44,15 @@ const h = vi.hoisted(() => ({
   /**
    * 逐页的页高（pt）。默认等高。
    *
-   * 它决定窄带的高（`round(页高px × BAND_PCT)`，见 `h.pageHeights` 的使用处 —— 桩按尺寸
-   * 认出「这是窄带」）。设成**不等高**时，`composeMosaic` 会因「本组必须等高」直接抛错
-   * （`upload-modal.tsx` 的 `composeMosaic`），窄带于是**确定地**走逐页 OCR 那条回退 ——
-   * 不必依赖桩对拼图那张图的回包形状。所以它买的是**确定性**，不是「否则测不到」：
-   * 每页窄带本来就各 OCR 一次，桩按调用序给的文本本来就能区分页。
+   * 它决定 pdfjs 桩渲染出的页高（下面 `getPage` 的 `height`），也就决定窄带的像素高
+   * （`round(canvas.height × BAND_PCT)`）—— OCR 桩靠「图很矮」认出窄带。买的是**渲染尺寸**。
+   *
+   * ⚠️ **它买不到「确定地走逐页 OCR」**：`composeMosaic` 在 jsdom 里第一句就走不通
+   * （`createImageBitmap` 是 undefined）→ 抛在「本组必须等高」那条判据**之前**，被
+   * `requestSegmentation` 的逐组 catch 吞掉、退回逐页（两者都在 `segmentation-run.ts`）。
+   * 所以给不等高的页高什么也换不来 —— 本次改动删掉了原先那几处 `h.pageHeights = [100, 120]`，
+   * 它们当时的注释写着「不等高 → 抛错 → 确定回退」，而实测改成等高后相关用例**照样全绿**。
+   * 要把拼图那条路真正点亮，得先给 jsdom 桩上 `createImageBitmap`（见 pkuso-web#317）。
    */
   pageHeights: [100, 100, 100] as number[],
   /**
@@ -572,9 +576,6 @@ describe("错误行不再是死胡同：重试", () => {
       isFullScore: false,
     };
     h.segmentCuts = [2];
-    // 两页不一样高 → `composeMosaic` 因「本组必须等高」抛错 → 窄带**确定地**走逐页 OCR
-    //（不依赖桩对拼图那张图的回包形状，见 `h.pageHeights`）
-    h.pageHeights = [100, 120];
     await runAnalysis({ names: ["短笛长笛.pdf"] });
     // ⚠️ **必须等分析落定再取基准**：`runAnalysis` 只等到渲染，此刻 LLM 调用还在飞
     //（第一版就栽在这里：基准取成 0，断言变成「总共 5 次」而期望 2 次）。
@@ -1263,7 +1264,6 @@ describe("后端信号字段的消费者（#302：发了没人读，就等于不
     // 「模型没给出乐器」，**正是 `abstainReason` 要拆开的事** —— 弃权也可能是
     // 「模型说了、我们拒了」（名字里有不能用于文件名的字符）。
     h.segmentCuts = [2];
-    h.pageHeights = [100, 120];
     h.llmReplies = [
       // #1 整份：识别正常，但**声部漂移**（源行带一个 sectionRaw）
       {
@@ -1325,7 +1325,6 @@ describe("后端信号字段的消费者（#302：发了没人读，就等于不
     // 段行的「重试」走 `retryRow` 里 `splitOf` 那一支。此前**没有任何用例**钉住它的写回 ——
     // 删掉它写回的两行诊断字段，套件全绿（对抗测试实测）。
     h.segmentCuts = [2];
-    h.pageHeights = [100, 120];
     h.llmReplies = [
       { success: true, section: "长笛", instrument: "长笛", subParts: [1, 2], isFullScore: false },
       { success: true, section: "长笛", instrument: "长笛", subParts: [1], isFullScore: false },

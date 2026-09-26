@@ -31,7 +31,7 @@ export class SegmentationCancelled extends Error {
  * （语料、轮次与结论见 #290 的评论）—— **别在这里写份数/页数**：那是会腐烂的计数，
  * 每加一份语料就错一次。
  */
-export const BAND_PCT = 0.12;
+const BAND_PCT = 0.12;
 
 /**
  * 把若干条窄带**垂直叠成一张长图**。返回长图与它的高度（归页要用）。
@@ -224,7 +224,7 @@ async function renderNarrowBands(
  * `existing` 就是上一次留下来的东西，有它则那几页连渲染都不做。
  *
  * ⚠️ 串行跑。一份 N 页 = N 次 OCR，**不能**与别的文件并发更多 —— 整个分析阶段已经
- * 有 `PIPELINE_CONCURRENCY` 个文件在飞，这里再并发会把 OCR.space 的瞬时压力翻几倍。
+ * 有 `upload-modal.tsx` 的 `PIPELINE_CONCURRENCY` 个文件在飞，这里再并发会把 OCR.space 的瞬时压力翻几倍。
  */
 export async function ocrBandsForSegmentation(
   file: File,

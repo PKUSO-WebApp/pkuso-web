@@ -11,7 +11,7 @@ import type { LlmAnalysis, PageAttempt } from "./upload-modal.types";
 // 或「上游响应无法解析（HTTP 500）」）。45s 给 6s 余量。
 // 正常一次 LLM 调用只要 2~5s，这只在上游持续故障时才走到；最坏单文件
 // ≈ OCR 65s + LLM 45s，批量耗时因此变长，但分析途中关掉弹窗即可中止（cancelledRef，
-// 最坏再多做已在飞的那 PIPELINE_CONCURRENCY 个）。
+// 最坏再多做已在飞的那 PIPELINE_CONCURRENCY 个，见 `upload-modal.tsx`）。
 export const LLM_TIMEOUT_MS = 45000;
 
 /**
@@ -27,7 +27,7 @@ export const LLM_TIMEOUT_MS = 45000;
 export const MAX_PAGES_EXAMINED = 3;
 
 /** 一页最多送两张图给 OCR：标题区一张、整页一张（未裁切时两者是同一张，只送一次） */
-export const MAX_OCR_IMAGES_PER_PAGE = 2;
+const MAX_OCR_IMAGES_PER_PAGE = 2;
 
 /**
  * 一份文件在分析阶段**最多**烧几次 OCR。
@@ -35,9 +35,9 @@ export const MAX_OCR_IMAGES_PER_PAGE = 2;
  * 这是**上界**，与分段那边「约 N 次」的估算不同 —— 它由几个常量相乘得出、不依赖语料，
  * 所以可以写成确定的数。真实值通常是 1（第 1 页就读出乐器），扉页起排的总谱是 2~3。
  */
-export const MAX_ANALYSIS_OCR_PER_FILE = MAX_OCR_IMAGES_PER_PAGE;
+const MAX_ANALYSIS_OCR_PER_FILE = MAX_OCR_IMAGES_PER_PAGE;
 
-export const MAX_ANALYSIS_OCR_PER_FILE_ESCALATED = MAX_PAGES_EXAMINED * MAX_OCR_IMAGES_PER_PAGE;
+const MAX_ANALYSIS_OCR_PER_FILE_ESCALATED = MAX_PAGES_EXAMINED * MAX_OCR_IMAGES_PER_PAGE;
 
 /**
  * 一批文件在**分析阶段**最多烧几次 OCR —— 点火前给用户看的那个数。
@@ -102,8 +102,8 @@ export function analysisSettled(a: { instrument: string; isFullScore: boolean })
  * ⚠️ **段级识别一律传 `null`**（2026-09-25 改）。段行继承的是**源合订本**的文件名，
  * 它描述的是**整本**、不代表这一段 —— 而 prompt 规则 8 明写「文件名是 `Flute 1-2`
  * 这种就写 `[1,2]`」，于是**每一段**都会被填成源行那份号，盖过页眉上真正写着的那一行。
- * 后果不是「号不准」而已：各段算出的下载名会撞在一起，`duplicatedInGroup` 命中后
- * **整组都传不上去**（见 pkuso-web#304）。
+ * 后果不是「号不准」而已：各段算出的下载名会撞在一起，`duplicatedInGroup`（在
+ * `upload-modal.tsx`）命中后**整组都传不上去**（见 pkuso-web#304）。
  *
  * 整份调用照旧发文件名 —— 对**单份**分谱它常常是最可靠的线索。
  */
@@ -118,7 +118,7 @@ export async function runLlmAnalysis(
     // （实测 36 次调用里 2 次是这种情形）。
     //
     // 段级调用（`fileName === null`）**不发 `file_name`**（`ocr_text` 照发）—— 那条路本来
-    // 就没有文件名（段行继承的是源合订本的名字，见 `refineSegments`）。
+    // 就没有文件名（段行继承的是源合订本的名字，见 `upload-modal.tsx` 的 `refineSegments`）。
     body: {
       ...(fileName ? { file_name: fileName } : {}),
       ocr_text: ocrText,
@@ -158,7 +158,7 @@ export async function runLlmAnalysis(
       // 这是 pkuso-backend#15（subParts 契约 + sub_parts 列）那次「必须同批上线」的教训：
       // 只在新字段的**读的一侧**兜底是不够的，还得保证「缺席」与「空」同义。
       extraSections: normalizeExtraSections(String(data.section ?? ""), data.extraSections),
-      // 引文与「有没有在原文里找到」：两者一起显示给用户复核（见 evidenceLine）。
+      // 引文与「有没有在原文里找到」：两者一起显示给用户复核（见 `upload-modal.tsx` 的 `evidenceLine`）。
       // `typeof` 判型而不是 `??` —— 缺字段与空串在界面上**不等价**（前者什么都不显示，
       // 后者要提示「模型没给引文」），**这不是兼容层**，别顺手改成 `?? ""`。
       evidence: typeof data.evidence === "string" ? data.evidence : undefined,
@@ -166,7 +166,8 @@ export async function runLlmAnalysis(
       // 引文**只在文件名里**找得到（`Analysis.evidenceFromFileName`，2026-09-26 新增）。
       // 字段缺失 → undefined → 不进「来自文件名」那一支 —— 落到 `evidenceFound` 决定的那两句
       // 之一（所以「`evidence` 非空 + `evidenceFound === false` + 缺这个字段」显示的是警示那一句，
-      // 见上面接口处；`evidence` 是空串时会更早返回「模型没给引文」）。
+      // 口径见 `upload-modal.types.ts` 的 `LlmAnalysis.evidenceFromFileName`；
+      // `evidence` 是空串时会更早返回「模型没给引文」）。
       evidenceFromFileName:
         typeof data.evidenceFromFileName === "boolean" ? data.evidenceFromFileName : undefined,
     };

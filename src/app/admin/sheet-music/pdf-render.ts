@@ -243,7 +243,7 @@ export async function renderPagesForAnalysis(
     maxPages: number;
     /**
      * 出现结论就停；**关掉时「读完第一张有内容的页就走」**，也就是加总谱分析之前的行为。
-     * 这一条是全部行为差异的所在，改它等于改配额（见 `upload-modal.tsx` 的 `MAX_PAGES_EXAMINED`）。
+     * 这一条是全部行为差异的所在，改它等于改配额（见 `analysis.ts` 的 `MAX_PAGES_EXAMINED`）。
      */
     escalate: boolean;
     /** 这一页能不能定论。true = 定了，不再往下看 */

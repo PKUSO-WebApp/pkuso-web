@@ -142,9 +142,10 @@ export function editsOf(f: UploadFile): {
 /**
  * 这一行现在是不是总谱。取值**只走 editsOf**（与落库、文件名、拦截、分段资格同一条判据）。
  *
- * ⚠️ **必须放在模块作用域**，不能放进组件体：`segEligible`（组件体里更早的位置）要调它，
- * 而 `segTargets` 是渲染期立即求值的语句 —— 声明在使用点**之后**的 `const` 会在那一刻
- * 撞上 TDZ，`ReferenceError: Cannot access 'isFullScoreRow' before initialization`，
+ * ⚠️ **必须放在模块作用域**，不能放进组件体：`segEligible`（在本模块，比它靠后）要调它，
+ * 而 `upload-modal.tsx` 的 `segTargets` 是渲染期立即求值的语句 —— 这三者当年都在组件体里时，
+ * 声明在使用点**之后**的 `const` 会在那一刻撞上 TDZ，
+ * `ReferenceError: Cannot access 'isFullScoreRow' before initialization`，
  * **选完文件整个弹窗就崩**。这种错 `tsc` 报不出来（嵌套闭包里的调用序它不判）、
  * 纯模块测试也测不到 —— 补它的是渲染冒烟测试（`upload-modal.test.tsx` 的头一段就写着这件事）。
  */
@@ -247,16 +248,18 @@ export function cropNoteOf(crop: CropDecision, cropped: boolean): string {
 }
 
 /* ------------------------------------------------------------------ *
- * 行卡片的状态行 / 提示文案 / 预览路径（2026-09-27 从 upload-modal.tsx 搬来）
+ * 行卡片的状态行 / 提示文案 / 预览路径（2026-09-26 从 upload-modal.tsx 搬来）
  *
  * 这一批都是 `(f: UploadFile) => …` 的**纯函数**（没有一个闭包组件状态 ——
  * `canUnsplit` / `unsplitGroup` / `duplicatedInGroup` 因为读 `files` 而留在原处）。
  * 搬出来是为了让行卡片能抽成组件：它们原本要占 15 个 prop，现在两边都直接 import。
  * ------------------------------------------------------------------ */
 
-// ⚠️ **必须定义在 `segEligible` 之前**：`upload-modal.tsx` 的 `segTargets` 是**渲染期立即
-// 求值**的语句，而声明在使用点之后的 `const` 会在那一刻撞 TDZ —— 那次事故的记录在
-// `isFullScoreRow` 的 docblock 里（「必须放在模块作用域」那一段）。
+// ⚠️ 顺序上 `isUnidentified` 仍排在 `segEligible` 之前（后者读前者）。
+// **模块作用域下这条约束已经不会咬人了**：两者都是本模块的 `const`，而消费它们的
+// `segTargets` 在**另一个模块**里 —— ESM 保证本模块整体求值完才轮到那边（实测把两者对调，
+// `tsc` 与全部用例都过）。留着它是因为它记录了一次真实的 TDZ 事故（见 `isFullScoreRow`
+// 的 docblock）：别读成「调换顺序 = 弹窗崩」。
 /** 这一行「分析完了但没认出乐器」。它与「已识别」是**两件事**：要提示、要能重试、
  * 且**不该进分段**（见下）。总谱的 instrument 是「总谱」，不会落进来。 */
 export const isUnidentified = (f: UploadFile) => f.status === "analyzed" && !editsOf(f).instrument;

@@ -61,6 +61,19 @@ describe("editsOf：Edit 优先，用户清空后**不回退**到 Guess", () => 
     );
   });
 
+  it("额外声部在 `editsOf` 里就清洗过（总谱 / 「其他」 → 空；去重、去主声部、保序）", () => {
+    expect(
+      editsOf(row({ sectionGuess: "总谱", extraSectionsGuess: ["低音提琴"] })).extraSections,
+    ).toEqual([]);
+    expect(
+      editsOf(row({ sectionGuess: "其他", extraSectionsGuess: ["低音提琴"] })).extraSections,
+    ).toEqual([]);
+    expect(
+      editsOf(row({ sectionGuess: "圆号", extraSectionsGuess: ["圆号", "低音提琴", "低音提琴"] }))
+        .extraSections,
+    ).toEqual(["低音提琴"]);
+  });
+
   it("**总谱没有分声部可言**：号一律当空，且不冒出拦截/上界信号", () => {
     const r = editsOf(
       row({ sectionGuess: "总谱", subPartsGuess: [1, 2], subPartsRaw: "1,2", subPartsOverCap: 3 }),
@@ -82,6 +95,31 @@ describe("editsOf：Edit 优先，用户清空后**不回退**到 Guess", () => 
     expect(
       editsOf(row({ subPartsEditText: "3", subPartsRaw: "1,2" })).subPartsUnread,
     ).toBeUndefined();
+  });
+
+  it("用户点「没有号」（EditText = **空串**）之后必须放行 —— 否则是死胡同", () => {
+    // ⚠️ 这是承重的一格：`uploadBlocker` 的注释写着「裸拦会把人锁死在无法通过的状态里」，
+    // 界面上那个「本谱没有分声部」按钮把 EditText 置成**空串**（= 用户表态）。
+    // 判据必须把「空串」与「没动过（undefined）」分开 —— 用真值判断（`!f.subPartsEditText`）
+    // 就把这个逃生口堵死了，而**只喂真值（"3"）的用例在两种写法下都绿**。
+    const e = editsOf(
+      row({
+        sectionGuess: "圆号",
+        instrumentGuess: "F调圆号",
+        subPartsGuess: [],
+        subPartsRaw: "1,2",
+        subPartsEditText: "",
+      }),
+    );
+    expect(e.subPartsUnread).toBeUndefined();
+    expect(
+      uploadBlocker({
+        section: e.section,
+        instrument: e.instrument,
+        subPartsInvalid: e.subPartsInvalid,
+        subPartsUnread: e.subPartsUnread,
+      }),
+    ).toBe("");
   });
 });
 
@@ -135,6 +173,17 @@ describe("uploadBlocker：这一行为什么不能上传", () => {
   it("拦截顺序：先乐器名，再声部名（两处都空时报的是乐器名）", () => {
     expect(uploadBlocker({ section: "", instrument: "" })).toBe("未识别的乐器名，请先填写再上传");
   });
+
+  it("拦截顺序：**名字类判据在号类之前**（名字空 + 号非法时，要报「请先填写」）", () => {
+    // 只钉 instrument→section 那一对是不够的：把号类判据整体提到名字类之前，用户会先看到
+    // 「号不合法」，而真正卡住他的是名字还没填。
+    expect(uploadBlocker({ section: "", instrument: "", subPartsInvalid: "号不合法" })).toBe(
+      "未识别的乐器名，请先填写再上传",
+    );
+    expect(uploadBlocker({ section: "圆号", instrument: "", subPartsUnread: "1,2" })).toBe(
+      "未识别的乐器名，请先填写再上传",
+    );
+  });
 });
 
 describe("isBlankName", () => {
@@ -185,6 +234,9 @@ describe("isKnownSection / isFullScoreRow / canHaveExtraSections", () => {
     expect(canHaveExtraSections(row({ sectionGuess: "圆号" }))).toBe(true);
     expect(canHaveExtraSections(row({ sectionGuess: "总谱" }))).toBe(false);
     expect(canHaveExtraSections(row({ sectionGuess: "其他" }))).toBe(false);
+    // 取值必须走 editsOf（那里两侧 trim）—— 抄一份不带 trim 的推导式时，模型给的
+    // `" 总谱 "` 会被判成「可以有额外声部」，用户加完被清洗静默丢掉（该函数 docblock 的警告）。
+    expect(canHaveExtraSections(row({ sectionGuess: " 总谱 " }))).toBe(false);
   });
 });
 
@@ -234,6 +286,19 @@ describe("文案", () => {
     ).toBe("这一声部下已经有同名文件（F调圆号1.pdf）—— 请改乐器名或分声部号，或先删掉详情页里那份");
     expect(describeInsertError({ code: "42P01", message: "relation does not exist" }, [])).toBe(
       "relation does not exist",
+    );
+  });
+
+  it("describeInsertError：**多个落点各有各的名字**时，去重不误伤、分隔符写对", () => {
+    // ⚠️ 上面那条 fixture 的两个名字**完全相同**，去重后只剩一个 —— 于是 `join` 的分隔符
+    // 根本不产生，把 `、` 改成 `,` 也照样绿。真实场景恰恰是两个不同的名字
+    // （`fileTargetsOf` 按主声部 + 额外声部产出，同一份谱落两个声部）。
+    const targets = [
+      { section: "圆号", instrument: "F调圆号", fileName: "F调圆号1.pdf" },
+      { section: "低音提琴", instrument: "低音提琴", fileName: "低音提琴1.pdf" },
+    ];
+    expect(describeInsertError({ code: "23505", message: "dup" }, targets)).toBe(
+      "这一声部下已经有同名文件（F调圆号1.pdf、低音提琴1.pdf）—— 请改乐器名或分声部号，或先删掉详情页里那份",
     );
   });
 });

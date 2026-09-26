@@ -61,7 +61,7 @@ export interface UploadFile {
    * 模型给的声部**原值**（`Analysis.sectionRaw`），落在闭集外时才有 —— 见 `LlmAnalysis`。
    *
    * ⚠️ 它**不是用户可编辑字段**（没有 Edit/Guess 两态，所以 `editsOf` 里没有它）：
-   * 唯一来源是 `runLlmAnalysis` 那次映射，读法就是 `f.sectionRaw`（`sectionWarning`）。
+   * 唯一来源是 `analysis.ts` 的 `runLlmAnalysis` 那次映射，读法就是 `f.sectionRaw`（`sectionWarning`）。
    */
   sectionRaw?: string;
   /**

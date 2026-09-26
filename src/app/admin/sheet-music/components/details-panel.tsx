@@ -1,3 +1,5 @@
+"use client";
+
 import type { UploadFile } from "../upload-modal.types";
 
 /**

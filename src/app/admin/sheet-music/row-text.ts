@@ -272,6 +272,10 @@ export const isUnidentified = (f: UploadFile) => f.status === "analyzed" && !edi
  * 页数未知（分析失败）时不跑 —— 连成本都算不出来。
  */
 export const segEligible = (f: UploadFile) =>
+  // **分析/上传失败的不算**：**能带上 `pageCount` 的那几处错误**都是「先分析成功、再落 error」，
+  // 所以它是**可达**的一条 —— 少这一条，一次「分析成功 + 上传失败」的多页行就会被算进分段池、
+  // 按钮按它计费。⚠️ 这条此前**没有行内注释**，于是历次「数守卫」都是从注释里数的、每次都漏掉它
+  //（本 PR 才补上钉它的用例）—— 注释不只是给人看，也是**穷举时的锚点**。
   f.status !== "error" &&
   // **已上传成功的不算**（`status === "done"`）：分段的结果只写进组件 state，
   // 而 `done` 的行**不再渲染编辑器块**（那道门是 `analyzed || error`）—— 于是

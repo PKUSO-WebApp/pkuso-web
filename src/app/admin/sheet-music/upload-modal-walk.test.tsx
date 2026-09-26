@@ -1360,6 +1360,14 @@ describe("后端信号字段的消费者（#302：发了没人读，就等于不
       timeout: 10000,
     });
     fireEvent.click(screen.getAllByLabelText("查看详情")[1]);
+    // ⚠️ 号必须**还在**：这次重试的回包是 `subParts: []`（「这次没读出号」），而写回那段守卫
+    // 明写「空数组不覆盖」—— 去掉守卫，第 2 段那个**已经有的号会被静默清掉**（连带 raw /
+    // overCap），而套件在此之前全绿（对抗测试实测）。这条用例早就走过这一支，只是没人断言。
+    await waitFor(() =>
+      expect(
+        screen.getAllByPlaceholderText("号，如 1,2").map((e) => (e as HTMLInputElement).value),
+      ).toEqual(["1", "2"]),
+    );
     await waitFor(
       () => expect(screen.getByText(/上一次识别后端弃权：instrument-too-long/)).toBeTruthy(),
       { timeout: 10000 },
@@ -1562,16 +1570,12 @@ describe("同一判据的**反面**拷贝（补号守卫 / 段行不继承 raw�
       timeout: 10000,
     });
 
-    // 两段都不该带着源行那句「没读懂」——段自己没读出号是**另一回事**（不猜，留空手填）
-    await waitFor(
-      () => {
-        const vals = screen
-          .getAllByPlaceholderText("号，如 1,2")
-          .map((el) => (el as HTMLInputElement).value);
-        expect(vals).toEqual(["", ""]);
-      },
-      { timeout: 10000 },
-    );
+    // 同步点：等两段各自识别落地（这条用例的夹具让两段都读不出号，所以号框本来就是空的 ——
+    // 那个 `["",""]` 断言在这套夹具下**结构性无法失败**：能产出非空值的三条路都被堵死
+    // （源行无号、两段回包都空、补号没料）。真正有牙的号断言在后面那条失败段用例里。）
+    await waitFor(() => expect(screen.getAllByText(/已识别/)).toHaveLength(2), {
+      timeout: 10000,
+    });
     // ⚠️ 「继承 raw」那个变异在这一条上**是绿的** —— 不是断言写法问题，而是它**稳态等价**：
     // 段级识别落地时会把 `subPartsRaw` 显式写回 `undefined`（下一条用例有完整说明），
     // 所以只有**识别失败**的那一段才留下后果，那一格由下一条钉。
@@ -1584,6 +1588,10 @@ describe("同一判据的**反面**拷贝（补号守卫 / 段行不继承 raw�
     // ⚠️ 这条钉的是上一条**钉不到**的那一格：段级识别落地时会把 `subPartsRaw` **显式写回**
     // `undefined`，所以「继承」在稳态下观察不到（等价变异）；但**识别失败**的那一段不会走写回，
     // 继承来的 raw 会留在行上 → 那一段平白多一句「没读懂」并要求用户多点一次逃生口。
+    // ⚠️ **同一个 seed 里的 `extraSectionsGuess` 没被钉住**（对抗测试实测：加一行继承它也全绿）：
+    // 它的机制与 raw 同源，但**源行自己会变成第一段**，所以「这一段该不该有额外声部」在夹具里
+    // 区分不开（源行本来就带着自己的 extras）—— 那需要先定「源行的 extras 拆段后何去何从」，
+    // 不是这条用例能顺手钉的，所以**不假装覆盖**。
     h.segmentCuts = [2];
     h.llmReplies = [
       // #1 整份：模型给了号但没读懂（源行带 raw）

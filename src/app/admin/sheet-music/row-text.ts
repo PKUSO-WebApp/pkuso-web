@@ -168,6 +168,34 @@ export function canHaveExtraSections(f: UploadFile): boolean {
 }
 
 /**
+ * 行上要不要显示「没有号」那个**逃生口**按钮。
+ *
+ * ⚠️ 判据**只有这一份**：它的条件原来在 `components/file-row.tsx` 里内联写了一遍，而那份
+ * **少了 `!isFullScore`**（`editsOf().subPartsUnread` 里有），注释却写着「必须与 `uploadBlocker`
+ * 的 `subPartsUnread` 完全同源」—— 也就是**已经漂了**（pkuso-web#326 第 2 条）。
+ *
+ * ⚠️ **收走这份拷贝是一次有意（且正确）的行为改变，不是「行为等价」**：总谱行不再显示
+ * 那个按钮。而「总谱 + 有没读懂的号 + 没编辑过」这个组合**真的会出现** ——
+ * ⚠️ **来源只有一处**：`retryRow` 的**段分支** —— 依据是「`FULL_SCORE_SECTION` 的写点里，
+ * 它是唯一一个既**不清** `subPartsEditText`、又**不清** `subPartsRaw` 的」
+ *（另外几处：`analyzeOne` 与 `handleSectionChange` 写 `subPartsEditText: ""`；
+ * `refineSegmentsInner` 无条件写 `subPartsRaw: got.subPartsRaw`，而后端判总谱时
+ * **提前返回**、根本不带这个字段 ⇒ 等于清掉）。它写 `sectionGuess: 总谱` 却**不写**
+ * `subPartsEditText`（段行的 seed 也从不写这个字段），而 `subPartsRaw` 在它那里是
+ * **条件写**（`got.subParts.length > 0` 才写）—— 总谱回包 `subParts` 恒空 ⇒
+ * 上一次段级识别留下的 `subPartsRaw` **原样留着**。落地证据是
+ * `upload-modal-walk.test.tsx` 那条「段行重试回总谱」。
+ *
+ * ⚠️ **我第一版在这里写过「到不了」，是错的**（合规审查用实验证伪并给出上面这条路径）：
+ * 我当时只找到了「模型判总谱」与「手选总谱」两条路 —— 而写 `sectionGuess/sectionEdit` 为
+ * 总谱的地方不止那两处。**判据漂移是否变成界面后果，要把所有写点穷举完再下结论。**
+ * 产品判断按 #326 第 2 条：总谱本就没有「第几号」可言，那个按钮在它上面没有意义。
+ */
+export function needsNoSubPartsButton(f: UploadFile): boolean {
+  return Boolean(editsOf(f).subPartsUnread);
+}
+
+/**
  * 「模型给了号但没读懂」的**统一文案**。
  *
  * ⚠️ 必须只有一份：`uploadBlocker` 用它做**拦截原因**，`subPartsNotice` 用它做**行内提示**
@@ -396,33 +424,48 @@ export const sectionWarning = (f: UploadFile) => {
 };
 
 /**
- * 分声部这一格要不要给用户一句话。三种情形都返回文案（空串 = 不用提示）：
+ * 分声部这一格要不要给用户一句话。四条路都返回文案（空串 = 不用提示）：
  *
  * 1. **输入非法** —— 优先显示，因为它是用户当下能改的；
- * 2. **模型给了号但没读懂**（`subPartsRaw`）—— 这一行看起来是「已识别成功」，
+ * 2. **上界漂移**（模型一次给的号超过前端上界）—— 用户解决不了，这句其实是给维护者看的；
+ * 3. **模型给了号但没读懂**（`subPartsRaw`）—— 这一行看起来是「已识别成功」，
  *    但号是空的，不提示就没人会去填，号就静默丢了；
- * 3. 都不适用 → 空串。
+ * 4. 都不适用 → 空串。
  *
- * ⚠️ 第 2 条只在**用户还没动手**时提示（`subPartsEditText === undefined`）——
+ * ⚠️ 第 3 条只在**用户还没动手**时提示（`subPartsEditText === undefined`）——
  * 否则用户填完之后那句「没读懂」会一直挂着，变成一条永远消不掉的假告警。
  */
 export const subPartsNotice = (f: UploadFile) => {
+  // ⚠️ 下面两个值一律走 `editsOf`，**别读原始字段**：总谱行上「号」这一格整体没有意义
+  //（`editsOf` 在那里把 invalid / overCap 都当空），而分声部框此时被**强制显示成「总谱」并禁用**
+  //（见 `file-row`）—— 读原始字段会让行上挂着一句指着**用户看不见也改不了**的值的提示。
+  // 可达路径与 `needsNoSubPartsButton` 的 docblock 那条同源：段行「重试」回总谱。
+  const { subPartsInvalid, subPartsOverCap } = editsOf(f);
   if (f.subPartsEditText !== undefined) {
-    const invalid = parseSubPartsInput(f.subPartsEditText).invalid;
     // ⚠️ 与 uploadBlocker 返回的是同一句话时**让位** —— 否则点一次「确认上传」
     // 会在行里出现两行一模一样的提示（一行黄、一行红），看着像两个不同的问题。
-    if (!invalid || f.error === invalid) return "";
-    return invalid;
+    if (!subPartsInvalid || f.error === subPartsInvalid) return "";
+    return subPartsInvalid;
   }
   // 上界漂移：用户解决不了这件事，这句其实是给维护者看的
-  if (f.subPartsOverCap) {
-    return `后端返回了 ${f.subPartsOverCap} 个分声部号，超过前端上界 ${MAX_SUB_PARTS}，未填入 —— 请核对前后端上限是否一致`;
+  if (subPartsOverCap) {
+    return `后端返回了 ${subPartsOverCap} 个分声部号，超过前端上界 ${MAX_SUB_PARTS}，未填入 —— 请核对前后端上限是否一致`;
   }
-  if (f.subPartsRaw && (f.subPartsGuess ?? []).length === 0) {
+  // ⚠️ 判据走 `editsOf().subPartsUnread`，**与「没有号」那个按钮同源**
+  //（#326 第 2 条：这条判据的**反面用法**还在 —— `upload-modal.tsx` 里调
+  // `fillMissingSubParts`（定义在 `sub-parts.ts`）之后那个逐行守卫：
+  // `cur.subPartsEditText === undefined` / `subPartsGuess` 为空 / `!cur.subPartsRaw`
+  //（还有 `!cur.subPartsOverCap` 与「用户没动过声部/乐器」那一对 —— 清单别只抄前三条件），
+  // 意思是「不许把号补进这一行」。它与这里读同一个字段，收一份算一份。）。
+  // 差别可见：总谱行不算「有没读懂的号」—— 留着这句话，用户会在总谱行上读到
+  // 「请填上号，或点『没有号』」，而**那个按钮已经被藏起来、分声部框也是禁用的**
+  //（见 `file-row` 的渲染），等于指着一个屏幕上不存在的东西。
+  const unread = editsOf(f).subPartsUnread;
+  if (unread) {
     // 让位判据必须与 uploadBlocker **同源**（同一个 `unreadMessage`）。
     // 早先两处各写一句、措辞差一个字（「模型给的是」vs「模型给的写法是」），
     // 于是这个守卫**结构上永远匹配不上**，用户照样看到黄红两行。
-    const msg = unreadMessage(f.subPartsRaw);
+    const msg = unreadMessage(unread);
     return f.error === msg ? "" : msg;
   }
   return "";
@@ -481,5 +524,27 @@ export const statusColor = (f: UploadFile) => {
   }
 };
 
+/**
+ * 展开详情面板的那个键，这一行有没有内容可看。契约是「**面板里有东西**，这个键就在」——
+ * 所以这一串必须与 `components/details-panel.tsx` 认的是同一组字段。
+ *
+ * ⚠️ **含 `abstainReason`**（pkuso-web#326 第 1 条）：面板里就渲染着它
+ *（「上一次识别后端弃权」那一行），判据不认它就等于「有内容、打不开」。
+ *
+ * ⚠️ **诚实边界：议题正文写的那个后果到不了**（「只有弃权原因的行展开键不出现、那条原因
+ * 用户看不到」）。写 `abstainReason` 的几条路 —— `analyzeOne` 的成功回写、
+ * `retryRow`、段级识别的「模型没给出乐器」分支与成功分支 —— 每一条都**同时**写了
+ * `llmResult` 或 `warning`，于是旧判据本来就为真、界面上看不出差别。
+ * ⚠️ 加上一条实测口径：**生产路径一次都没有**；整套里唯一会经过「只有它」的是本条的单测夹具
+ *（`row-text.test.ts` 里 `row({ abstainReason: … })` 那条断言 —— 另一条是「一个字段都没有」的
+ * 对照组，不含这个字段）。⚠️ 「唯一」是会随用例增长而腐烂的说法：可复核的是「生产路径 0」那半。
+ * ⚠️ **别把这类结论写成「插桩跑整套 0 次命中」**：本仓的默认命令下 **vitest 不显示 console
+ * 输出**（实测：无条件插桩跑 28 条用例，一行都没印出来），那样的计数是**哑的** ——
+ * 要看得加 `--disableConsoleIntercept`，而且必须带一个「本就该大量命中」的对照组，
+ * 否则分不清是「真没有」还是「记不下来」。
+ * 也就是说这一项堵的是**下一个写者的口子**（不再顺带写 `llmResult` 的那条路会做出一个
+ * 「有内容却打不开」的行），不是修一个现网看得见的 bug。判据本身的单测在
+ * `row-text.test.ts` 的「hasDetails」那一段。
+ */
 export const hasDetails = (f: UploadFile) =>
-  f.ocrText || f.llmResult || f.preview || f.warning || f.cropNote;
+  f.ocrText || f.llmResult || f.preview || f.warning || f.cropNote || f.abstainReason;

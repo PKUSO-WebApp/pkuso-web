@@ -27,6 +27,7 @@ import {
   isFullScoreRow,
   isKnownSection,
   isUnidentified,
+  needsNoSubPartsButton,
   previewPath,
   sectionWarning,
   segEligible,
@@ -239,22 +240,19 @@ export function FileRow({
                 没有它的话 `../row-text` 的 `uploadBlocker` 那道拦截会把人锁死：那种状态下
                 「确实没有分声部」只能靠清空输入框表达，而框本来就空着、
                 用户没有任何操作能表达这个意思。点它 = 显式表态（置成空串）。
-                ⚠️ 三个条件缺一不可，且必须与 `uploadBlocker` 的 `subPartsUnread`
-                **完全同源**。漏掉 `guess 为空` 会让按钮出现在**有号**的行上
-                （小提琴声部推导补出 [1]/[2] 时就是这样，且旁边没有任何提示），
-                点一下就把那个号静默抹掉 —— 与「消灭静默丢号」正好相反。 */}
-              {f.subPartsRaw &&
-                f.subPartsEditText === undefined &&
-                (f.subPartsGuess ?? []).length === 0 && (
-                  <button
-                    onClick={() => onUpdateFile(i, { subPartsEditText: "" })}
-                    disabled={phase === "uploading"}
-                    className="px-1.5 py-0.5 text-xs text-text-muted border border-border rounded shrink-0 hover:text-primary disabled:opacity-50"
-                    title="这份谱子确实没有分声部"
-                  >
-                    没有号
-                  </button>
-                )}
+                ⚠️ 判据**走 `../row-text` 的 `needsNoSubPartsButton`**，别在这里内联第二份 ——
+                这里原来那份就漏了 `!isFullScore`（总谱行本不该有它），而注释还写着「完全同源」，
+                已经漂了一次（pkuso-web#326 第 2 条）。 */}
+              {needsNoSubPartsButton(f) && (
+                <button
+                  onClick={() => onUpdateFile(i, { subPartsEditText: "" })}
+                  disabled={phase === "uploading"}
+                  className="px-1.5 py-0.5 text-xs text-text-muted border border-border rounded shrink-0 hover:text-primary disabled:opacity-50"
+                  title="这份谱子确实没有分声部"
+                >
+                  没有号
+                </button>
+              )}
               <button
                 onClick={() =>
                   onUpdateFile(i, {

@@ -312,3 +312,10 @@ export interface LlmAnalysis {
    */
   evidenceFromFileName?: boolean;
 }
+
+/**
+ * 弹窗的阶段。**类型只定义在这一处** —— 凡是拿 phase 做判断的地方（父组件的 `useState`、
+ * 子组件的 props）都该 import 它，**别再抄字面量**：抄出来的那份自己不会跟着变，
+ * 提醒你的是 `tsc` 在「把值喂进 prop」那一侧报的错 —— 喂进去的那个值要是也抄的，就没人会报。
+ */
+export type UploadPhase = "select" | "analyzing" | "confirm" | "uploading";

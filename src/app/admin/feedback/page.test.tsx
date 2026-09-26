@@ -77,9 +77,14 @@ describe("反馈列表：作者名（#314 的行为修复）", () => {
       // ⚠️ 嵌入本身也要在查询里：类型一旦退回可选形态，漏掉 `profiles(full_name)`
       // 是 **tsc 0 错 + 用例全绿**（实测），而作者名会静静地不再显示 —— 这行是那种情况下
       // 唯一的警报。（顺带堵掉「无参调用被 `String()` 变成 "undefined"」的小口子。）
-      // ⚠️ **连列一起钉**：只钉关系名的话，`profiles(id)` 这种「关系在、投影列错」的组合仍然
-      // tsc 0 错 + 用例全绿，而生产上 PostgREST 只回 id ⇒ 作者名照旧静静地不显示（实测）。
-      expect(cols).toContain("profiles(full_name)");
+      // ⚠️ 嵌入必须是**没被别名**的 `profiles(...)`、且投影里要有 `full_name`。
+      // 这里用正则而不是 `toContain("profiles(full_name)")`：后者两头都不对 ——
+      // ① **太松**：`p:profiles(full_name)`（关系被别名）照样命中子串，而生产上 PostgREST 回的键是 `p`
+      //    ⇒ 作者名照旧静静地不显示（实测：再配上「类型退回可选形态」就是 tsc 0 错 + 用例全绿）；
+      // ② **太紧**：`profiles(full_name, avatar_url)`（顺手多取一列）、`profiles(full_name )`（多个空格）、
+      //    `profiles!feedback_created_by_fkey(full_name)`（#268 时代真在跑的写法）都会被判红 ——
+      //    那些是**合法**查询，测试不该拦（误伤逼着后人把断言删掉，比漏报更坏）。
+      expect(cols).toMatch(/(?:^|,\s*)profiles\s*(?:![A-Za-z_]+)?\([^)]*\bfull_name\b/);
     }
   });
 
@@ -110,7 +115,7 @@ describe("反馈列表：作者名（#314 的行为修复）", () => {
     expect(selectCalls().length).toBeGreaterThanOrEqual(2);
     for (const cols of selectCalls()) {
       expect(cols).not.toContain("!inner");
-      expect(cols).toContain("profiles(full_name)"); // 同上：关系与列缺一不可
+      expect(cols).toMatch(/(?:^|,\s*)profiles\s*(?:![A-Za-z_]+)?\([^)]*\bfull_name\b/); // 同上：关系名不许别名、投影里必须有 full_name
     }
   });
 });

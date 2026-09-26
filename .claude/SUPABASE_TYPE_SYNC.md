@@ -1,6 +1,8 @@
 # Supabase 类型同步 — 操作指南
 
-> Phase 1.5:当此文件中的步骤完成后,手动维护的 `src/types/database.ts` 应被自动生成的 `database.types.ts` 取代。
+> ⚠️ **2026-09-27：这条已作废** —— 手写层 `src/types/database.ts` **保留**，并作为取 `Database`/表类型的**单一入口**（pkuso-web#314）。下面保留原文只为存档。
+>
+> Phase 1.5(原计划):当此文件中的步骤完成后,手动维护的 `src/types/database.ts` 应被自动生成的 `database.types.ts` 取代。
 
 ## 背景
 
@@ -69,7 +71,7 @@ pnpm typecheck  # 检查哪些代码需要适配新 schema
 > ⚠️ **2026-09-27 现状：下面第 2 步没有执行，而且已经被反过来定死。**
 > 手写层 `src/types/database.ts` **保留**，并作为「要 `Database` 泛型或表类型时从这一层拿」的
 > **单一入口**（`src/lib/supabase.ts` / `src/lib/supabase-server.ts` 也已改走它，不再直接 import
-> 生成文件 —— 见该文件的 docblock 与 pkuso-web#314 的 PR）。
+> 生成文件 —— 那条「单一入口」的 docblock 在 `src/types/database.ts` 里）。
 > **第 2/3 步是当时的计划，别再照着做。**
 > 第 1 步代码片段里的 import 路径同样以手写层为准：`@/types/database`（不是 `@/types/database.types`）。
 

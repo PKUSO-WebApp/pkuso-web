@@ -10,9 +10,16 @@ import { useAdminPageHeader } from "@/context/admin-page-header-context";
 // 在 feedback 那一侧，所以从 feedback 看是**多对一**，PostgREST 的嵌入回单个对象
 //（仓内另两个 join 扩展 `PostRowWithAuthor` / `AttendanceRowWithUser` 也是这么写的）。
 // 查询归一化里原先是 `r.profiles?.[0] ?? null` —— 对象上取 `[0]` 恒为 undefined，
-// 于是作者名从来没显示出来过（#314 接上泛型后由类型报错照出来的）。
+// 于是作者名不显示。⚠️ 别写成「从来没显示出来过」：**#268（`63d6948`）修过它**，
+// 是 #271（`f2bd326`）重写这个页面（抽出页面 + 引入 `!inner`）时又带回来的
+// —— #314 接上泛型后由类型报错再照出来一次。
+// ⚠️ `profiles` 是**必填、可空**，不是可选：左连接下 PostgREST 一定发这个键、值可能是 `null`。
+// 写成 `profiles?` 的话「**把嵌入从 select 里漏掉**」也合法 ⇒ 类型检查对漏字段完全失明，
+// 而作者名会**静静地**不再显示（**可选形态下**实测：删掉 `profiles(full_name)` 时 tsc 0 错、
+// 用例也照绿；当前这种必填形态下删嵌入会当场报错，用例里那两句 `toContain("profiles")`
+// 再钉一层）。`full_name` 同理：列在库里存在、只是可空。
 type FeedbackWithAuthor = Pick<FeedbackRow, "id" | "content" | "created_at" | "is_anonymous"> & {
-  profiles?: { full_name?: string | null } | null;
+  profiles: { full_name: string | null } | null;
 };
 
 export default function FeedbackPage() {

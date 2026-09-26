@@ -5,8 +5,13 @@ import { supabase as defaultClient } from "@/lib/supabase";
 import type { ProfileRow, ProfileStatus } from "@/types/database";
 
 type ProfileFilter = {
-  /** ⚠️ 用既有别名而不是 `string`（`NonNullable` 是因为这一列本身可空，而 `.eq` 要非空的那个联合）。 */
-  status?: NonNullable<ProfileStatus>;
+  /**
+   * ⚠️ 用既有别名而不是 `string`。
+   * ⚠️ **别写成 `NonNullable<ProfileStatus>`** —— 那是空转壳：可空的是**列**
+   *（`ProfileRow["status"]` = `profileStatus | null`），而这个**枚举别名**本身只有
+   * `"pending" | "approved" | "rejected"` 三个非空值（实测：加不加 `NonNullable` 都是 tsc 0 错）。
+   */
+  status?: ProfileStatus;
   ids?: string[];
   userId?: string;
 };

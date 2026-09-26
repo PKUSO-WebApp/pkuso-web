@@ -80,7 +80,11 @@ export function useAttendance(client: typeof defaultClient = defaultClient) {
         setList([]);
         return [];
       }
-      const rows = (data ?? []) as AttendanceRowWithUser[];
+      // ⚠️ 这里原先有一句 `as AttendanceRowWithUser[]`（#314 接上泛型之前是必需的）——
+      // 泛型接上之后 `data` 的推断类型**已可直接赋给**它（有这个 `!inner` 时嵌出的是必填非空，比
+      // `AttendanceRowWithUser` 的 `profiles?: … | null` 更窄），cast 只起「把类型钉回手写形状」的反作用
+      //（与反馈页删掉的那句同类）。删掉后 tsc 0 错（实测）。
+      const rows = data ?? [];
       setList(rows);
       return rows;
     },

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import FeedbackPage from "./page";
 import { renderWithProviders } from "@/__tests__/render-with-providers";
 
@@ -10,8 +10,10 @@ import { renderWithProviders } from "@/__tests__/render-with-providers";
 const mocks = vi.hoisted(() => ({
   select: vi.fn(),
   order: vi.fn(),
-  selectArg: "",
 }));
+
+/** 这次渲染里**每一次** `select` 的实参（首屏与「重试」是两条独立的查询）。 */
+const selectCalls = () => mocks.select.mock.calls.map(([cols]) => String(cols));
 
 vi.mock("@/lib/supabase", () => ({
   supabase: {
@@ -19,12 +21,10 @@ vi.mock("@/lib/supabase", () => ({
   },
 }));
 
-/** 让这次查询返回给定的行，并记下 `select` 的实参（用来钉「没有 `!inner`」）。 */
+/** 让查询返回给定的行。`select` 的实参由 `selectCalls()` 从调用记录里读 —— 不另存字段：
+ *  那样写既会漏掉第二次查询，又会跨用例留值（`vi.clearAllMocks()` 只清 calls）。 */
 function respondWith(rows: unknown[]) {
-  mocks.select.mockImplementation((cols: string) => {
-    mocks.selectArg = cols;
-    return { order: mocks.order };
-  });
+  mocks.select.mockImplementation(() => ({ order: mocks.order }));
   mocks.order.mockResolvedValue({ data: rows, error: null });
 }
 
@@ -36,7 +36,8 @@ describe("反馈列表：作者名（#314 的行为修复）", () => {
   it("实名反馈：profiles 是**对象**时，作者名要显示出来", async () => {
     // ⚠️ 这条钉的是一个**已经回归过一次**的 bug（#268 修过、#271 重写页面时又回来了）：
     // PostgREST 的 **to-one 嵌入回对象**（`feedback_created_by_fkey` 在 feedback 一侧 ⇒ 多对一），
-    // 而页面曾按数组取 `r.profiles?.[0]` ⇒ 对象上取 `[0]` 恒为 undefined ⇒ 作者名从来没显示出来过。
+    // 而页面曾按数组取 `r.profiles?.[0]` ⇒ 对象上取 `[0]` 恒为 undefined ⇒ 作者名不显示
+    //（#268 修过、#271 重写页面时又带回来了 —— 不是「从来没显示过」）。
     // 修前红、修后绿。
     respondWith([
       {
@@ -66,6 +67,50 @@ describe("反馈列表：作者名（#314 的行为修复）", () => {
     ]);
     renderWithProviders(<FeedbackPage />);
     await waitFor(() => expect(screen.getByText(/匿名说一句/)).toBeTruthy());
-    expect(mocks.selectArg).not.toContain("!inner");
+    // ⚠️ **真正有牙的是下面那个字符串断言，不是上面这句渲染断言**：mock 无条件返回给它的行，
+    // 从不模拟 PostgREST 的 inner-join 过滤 ⇒ 就算把 `!inner` 加回去，「匿名行渲染出来了」
+    // 也照样成立（实测：加回 `!inner` 时唯一失败的就是下面那句）。渲染断言只说明「渲染路径没崩」，
+    // 别以为它覆盖了「匿名行不会被滤掉」—— 那件事在本地测不了（要真 PostgREST）。
+    expect(selectCalls().length).toBeGreaterThan(0);
+    for (const cols of selectCalls()) {
+      expect(cols).not.toContain("!inner");
+      // ⚠️ 嵌入本身也要在查询里：类型一旦退回可选形态，漏掉 `profiles(full_name)`
+      // 是 **tsc 0 错 + 用例全绿**（实测），而作者名会静静地不再显示 —— 这行是那种情况下
+      // 唯一的警报。（顺带堵掉「无参调用被 `String()` 变成 "undefined"」的小口子。）
+      // ⚠️ **连列一起钉**：只钉关系名的话，`profiles(id)` 这种「关系在、投影列错」的组合仍然
+      // tsc 0 错 + 用例全绿，而生产上 PostgREST 只回 id ⇒ 作者名照旧静静地不显示（实测）。
+      expect(cols).toContain("profiles(full_name)");
+    }
+  });
+
+  it("「重试」那条查询同样不许带 `!inner` —— 首屏与 refetch 是两条独立的 select", async () => {
+    // ⚠️ 这条补的是上面那条的盲区：只钉首屏的话，把 `!inner` 加回 **refetch** 照样绿
+    //（实测过）。两条查询各有各的字符串，就得各钉一次。
+    mocks.select.mockImplementation(() => ({ order: mocks.order }));
+    mocks.order.mockResolvedValueOnce({ data: null, error: { message: "boom" } });
+    renderWithProviders(<FeedbackPage />);
+    await waitFor(() => expect(screen.getByText("重试")).toBeTruthy());
+
+    mocks.order.mockResolvedValueOnce({
+      data: [
+        {
+          id: "f3",
+          content: "重试之后才看到的一条",
+          created_at: "2026-09-22T10:00:00Z",
+          is_anonymous: true,
+          profiles: null,
+        },
+      ],
+      error: null,
+    });
+    fireEvent.click(screen.getByText("重试"));
+    await waitFor(() => expect(screen.getByText(/重试之后才看到的一条/)).toBeTruthy());
+
+    // 两次查询都真的发生过（否则下面那个循环是空转）
+    expect(selectCalls().length).toBeGreaterThanOrEqual(2);
+    for (const cols of selectCalls()) {
+      expect(cols).not.toContain("!inner");
+      expect(cols).toContain("profiles(full_name)"); // 同上：关系与列缺一不可
+    }
   });
 });

@@ -66,6 +66,13 @@ pnpm typecheck  # 检查哪些代码需要适配新 schema
 
 ## 从手写类型迁移到自动类型(Phase 1 完成后的下一步)
 
+> ⚠️ **2026-09-27 现状：下面第 2 步没有执行，而且已经被反过来定死。**
+> 手写层 `src/types/database.ts` **保留**，并作为「要 `Database` 泛型或表类型时从这一层拿」的
+> **单一入口**（`src/lib/supabase.ts` / `src/lib/supabase-server.ts` 也已改走它，不再直接 import
+> 生成文件 —— 见该文件的 docblock 与 pkuso-web#314 的 PR）。
+> **第 2/3 步是当时的计划，别再照着做。**
+> 第 1 步代码片段里的 import 路径同样以手写层为准：`@/types/database`（不是 `@/types/database.types`）。
+
 生成 `database.types.ts` 后:
 
 1. 将 Supabase 客户端泛型化:

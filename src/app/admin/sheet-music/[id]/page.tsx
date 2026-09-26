@@ -13,7 +13,8 @@ interface SheetMusicFile {
   storage_path: string;
   file_name: string;
   file_size: number | null;
-  created_at: string;
+  /** 可空性以 `src/types/database.types.ts` 为准（生成类型是 `string | null`）。 */
+  created_at: string | null;
   /** 中文乐器名。同一份谱子里不同乐器要按拼音排（见 sort-parts.ts） */
   instrument: string | null;
   /**
@@ -29,7 +30,9 @@ interface SheetMusicPart {
    *  而 `section` 自那次迁移起是 `NOT NULL` —— 所以这里既不该读旧列、也不用兜空值。
    *  （形状的仓内事实来源是 `src/types/database.types.ts`。） */
   section: string;
-  sort_order: number;
+  /** ⚠️ 生成类型是 `number | null` —— 与它对齐（#314）。全仓没人消费这个值
+   *  （`sort-parts.ts` 只提过一句「实际全是 0」），所以对齐零连带。 */
+  sort_order: number | null;
   files: SheetMusicFile[];
 }
 
@@ -38,7 +41,8 @@ interface SheetMusic {
   title: string;
   composer: string | null;
   notes: string | null;
-  created_at: string;
+  /** 可空性以 `src/types/database.types.ts` 为准（生成类型是 `string | null`）。 */
+  created_at: string | null;
 }
 
 export default function ScoreDetailPage() {

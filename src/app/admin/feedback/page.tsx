@@ -6,7 +6,14 @@ import { formatDateTimeInChina } from "@/lib/date-utils";
 import type { FeedbackRow } from "@/types/database";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
 
-type FeedbackWithAuthor = FeedbackRow & { profiles?: { full_name?: string | null } | null };
+// ⚠️ `profiles` 是**对象**不是数组：反馈 → profiles 的 FK（`feedback_created_by_fkey`）
+// 在 feedback 那一侧，所以从 feedback 看是**多对一**，PostgREST 的嵌入回单个对象
+//（仓内另两个 join 扩展 `PostRowWithAuthor` / `AttendanceRowWithUser` 也是这么写的）。
+// 查询归一化里原先是 `r.profiles?.[0] ?? null` —— 对象上取 `[0]` 恒为 undefined，
+// 于是作者名从来没显示出来过（#314 接上泛型后由类型报错照出来的）。
+type FeedbackWithAuthor = Pick<FeedbackRow, "id" | "content" | "created_at" | "is_anonymous"> & {
+  profiles?: { full_name?: string | null } | null;
+};
 
 export default function FeedbackPage() {
   const { setTitle } = useAdminPageHeader();
@@ -24,7 +31,10 @@ export default function FeedbackPage() {
     const seq = ++seqRef.current;
     void supabase
       .from("feedback")
-      .select("id, content, created_at, is_anonymous, profiles!inner(full_name)")
+      // ⚠️ **不带 `!inner`**：inner-join 语义会把「嵌入为 null」的父行**整个滤掉**，
+      // 而匿名反馈的 `created_by` 就是 null ⇒ 带 `!inner` 会让**匿名反馈从列表里消失**
+      //（#271 重写页面时带进来的回归）。渲染侧本来就是 null-safe 的。
+      .select("id, content, created_at, is_anonymous, profiles(full_name)")
       .order("created_at", { ascending: false })
       .then(({ data, error: dbError }) => {
         if (seq !== seqRef.current) return;
@@ -35,13 +45,10 @@ export default function FeedbackPage() {
           setRows([]);
           return;
         }
-        const normalized = (
-          (data ?? []) as Array<FeedbackRow & { profiles?: { full_name: string | null }[] }>
-        ).map((r) => ({
-          ...r,
-          profiles: r.profiles?.[0] ?? null,
-        }));
-        setRows(normalized);
+        // ⚠️ 这里**不需要** cast 也不需要归一化：泛型接上之后 `data` 的推断类型就是
+        // `profiles: { full_name: string | null } | null`，与 FeedbackWithAuthor 相容。
+        // （原先那份 cast 把类型钉回手写形状，恰好与「让生成类型参与检查」相反。）
+        setRows(data ?? []);
       });
   }, []);
 
@@ -51,7 +58,10 @@ export default function FeedbackPage() {
     const seq = ++seqRef.current;
     void supabase
       .from("feedback")
-      .select("id, content, created_at, is_anonymous, profiles!inner(full_name)")
+      // ⚠️ **不带 `!inner`**：inner-join 语义会把「嵌入为 null」的父行**整个滤掉**，
+      // 而匿名反馈的 `created_by` 就是 null ⇒ 带 `!inner` 会让**匿名反馈从列表里消失**
+      //（#271 重写页面时带进来的回归）。渲染侧本来就是 null-safe 的。
+      .select("id, content, created_at, is_anonymous, profiles(full_name)")
       .order("created_at", { ascending: false })
       .then(({ data, error: dbError }) => {
         if (seq !== seqRef.current) return;
@@ -61,13 +71,10 @@ export default function FeedbackPage() {
           setRows([]);
           return;
         }
-        const normalized = (
-          (data ?? []) as Array<FeedbackRow & { profiles?: { full_name: string | null }[] }>
-        ).map((r) => ({
-          ...r,
-          profiles: r.profiles?.[0] ?? null,
-        }));
-        setRows(normalized);
+        // ⚠️ 这里**不需要** cast 也不需要归一化：泛型接上之后 `data` 的推断类型就是
+        // `profiles: { full_name: string | null } | null`，与 FeedbackWithAuthor 相容。
+        // （原先那份 cast 把类型钉回手写形状，恰好与「让生成类型参与检查」相反。）
+        setRows(data ?? []);
       });
   }, []);
 

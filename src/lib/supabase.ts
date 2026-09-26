@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import type { Database } from "@/types/database.types";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabasePublishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -11,7 +12,7 @@ function createSupabase() {
       "[Supabase] 缺少 NEXT_PUBLIC_SUPABASE_URL 或 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY 环境变量。",
     );
   }
-  return createClient(supabaseUrl ?? "", supabasePublishableKey ?? "");
+  return createClient<Database>(supabaseUrl ?? "", supabasePublishableKey ?? "");
 }
 
 export const supabase = createSupabase();

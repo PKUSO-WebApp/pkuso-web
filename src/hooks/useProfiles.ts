@@ -2,10 +2,11 @@
 
 import React from "react";
 import { supabase as defaultClient } from "@/lib/supabase";
-import type { ProfileRow } from "@/types/database";
+import type { ProfileRow, ProfileStatus } from "@/types/database";
 
 type ProfileFilter = {
-  status?: string;
+  /** ⚠️ 用既有别名而不是 `string`（`NonNullable` 是因为这一列本身可空，而 `.eq` 要非空的那个联合）。 */
+  status?: NonNullable<ProfileStatus>;
   ids?: string[];
   userId?: string;
 };

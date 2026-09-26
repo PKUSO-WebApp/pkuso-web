@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import type { Database } from "@/types/database";
 import { Expand, Minimize2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useSchedule } from "@/hooks/useSchedule";
@@ -273,7 +274,8 @@ export default function AdminSchedulePage() {
 
     // 创建重复预约时先插入 schedule_groups 表
     if (groupId) {
-      const groupData: Record<string, unknown> = {
+      // ⚠️ 同 upload-modal：用生成类型里的 Insert（#314）。
+      const groupData: Database["public"]["Tables"]["schedule_groups"]["Insert"] = {
         id: groupId,
         title: form.title,
         author_id: user?.id ?? null,
@@ -283,19 +285,17 @@ export default function AdminSchedulePage() {
       if (form.repeatMode === "weekly") {
         // 计算星期几（getDay(): 0=周日，1=周一...）
         const startDate = parseLocalISO(form.weeklyStartDate + "T00:00:00");
-        Object.assign(groupData, {
-          weekly_start_date: form.weeklyStartDate,
-          weekly_end_date: form.weeklyEndDate,
-          weekly_day: startDate.getDay(),
-        });
+        // ⚠️ 用**属性赋值**而不是 `Object.assign(groupData, {…})`：后者的 source 不受约束、
+        // 返回值又被丢弃 ⇒ 拼错列名或值类型写错都**不会报错**（#314 的合规审查实测过）。
+        groupData.weekly_start_date = form.weeklyStartDate;
+        groupData.weekly_end_date = form.weeklyEndDate;
+        groupData.weekly_day = startDate.getDay();
       } else if (form.repeatMode === "monthly") {
-        Object.assign(groupData, {
-          monthly_start_year: form.monthlyStartYear,
-          monthly_start_month: form.monthlyStartMonth,
-          monthly_end_year: form.monthlyEndYear,
-          monthly_end_month: form.monthlyEndMonth,
-          monthly_day: form.monthlyDay,
-        });
+        groupData.monthly_start_year = form.monthlyStartYear;
+        groupData.monthly_start_month = form.monthlyStartMonth;
+        groupData.monthly_end_year = form.monthlyEndYear;
+        groupData.monthly_end_month = form.monthlyEndMonth;
+        groupData.monthly_day = form.monthlyDay;
       }
 
       const { error: groupError } = await supabase.from("schedule_groups").insert([groupData]);

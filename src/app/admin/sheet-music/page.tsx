@@ -8,12 +8,17 @@ import { useAdminPageHeader } from "@/context/admin-page-header-context";
 import { Modal } from "@/components/ui/Modal";
 import { UploadModal } from "./upload-modal";
 
+/**
+ * ⚠️ 可空性以 `src/types/database.types.ts` 为准（手写层与它对齐 —— 之前这里是 `string`，
+ * 而生成类型说 `string | null`，于是泛型一接上就报错）。这一列在本文件里只当**列名**用
+ *（`.order("created_at")`），没人消费它的值，所以对齐零连带。
+ */
 interface SheetMusic {
   id: string;
   title: string;
   composer: string | null;
   notes: string | null;
-  created_at: string;
+  created_at: string | null;
 }
 
 export default function SheetMusicPage() {

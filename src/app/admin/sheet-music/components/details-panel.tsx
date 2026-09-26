@@ -3,8 +3,8 @@ import type { UploadFile } from "../upload-modal.types";
 /**
  * 行卡片展开后的**排查面板**：送检图像、裁切说明、弃权原因、warning、OCR 文本、LLM 结果。
  *
- * 这里全是「出问题时才要看」的东西，所以整块由父组件用
- * `expandedIdx === i && hasDetails(f)` 把关 —— 面板自己不做「该不该显示」的判断，
+ * 这里全是「出问题时才要看」的东西，所以整块由 `./file-row` 用
+ * `expanded && hasDetails(f)` 把关 —— 面板自己不做「该不该显示」的判断，
  * 拿到的 `f` 有什么就画什么（`f.preview` / `f.warning` 等各自为 undefined 时那一行不出现）。
  */
 type DetailsPanelProps = {

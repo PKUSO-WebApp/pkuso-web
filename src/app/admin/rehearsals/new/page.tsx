@@ -154,7 +154,7 @@ export default function AdminCreateRehearsalPage() {
         return;
       }
 
-      // 新建排练时自动为所有已批准团员生成出勤记录（默认缺席）
+      // 新建排练时自动为所有已批准团员生成出勤记录（默认缺勤）
       const members = (allProfiles as ProfileRow[]).filter((r) => (r.role ?? "") !== "admin");
       if (members.length > 0) {
         const rows: AttendanceEntry[] = members.map((m) => ({

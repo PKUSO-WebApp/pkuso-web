@@ -6,6 +6,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import { useRehearsals } from "@/hooks/useRehearsals";
 import { useAttendanceEditor } from "@/hooks/useAttendanceEditor";
 import { AttendanceModal } from "@/components/attendance-modal";
+import { STATUS_LABEL } from "@/lib/attendance-status";
 import { parseLocalISO, getLocalDateString } from "@/lib/date-utils";
 import type { RehearsalRow } from "@/types/database";
 import * as XLSX from "xlsx";
@@ -37,13 +38,6 @@ async function fetchRosterProfiles(
 
 const inOrchestraLabel = (v: boolean | null | undefined): string =>
   v === true ? "在团" : v === false ? "不在团" : "—";
-
-const STATUS_LABEL: Record<string, string> = {
-  present: "出席",
-  late: "迟到",
-  absent: "缺席",
-  excused: "请假",
-};
 
 export default function AttendancePage() {
   const { setTitle } = useAdminPageHeader();
@@ -284,6 +278,7 @@ export default function AttendancePage() {
 
       <AttendanceModal
         open={!!attendanceRehearsal}
+        rehearsalId={attendanceRehearsal?.id ?? null}
         title={attendanceRehearsal?.repertoire ?? ""}
         loading={attendanceLoading}
         list={attendanceList}

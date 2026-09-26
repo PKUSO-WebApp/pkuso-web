@@ -24,6 +24,35 @@ function mockClient<T>(responses: T[]) {
   };
 }
 
+/** 可控制返回时机的 mock：每次 .select() 同步登记一个 deferred，由测试决定谁先 resolve */
+function raceClient<T>() {
+  const defs: { promise: Promise<T>; resolve: (v: T) => void }[] = [];
+  const mk = (d: { promise: Promise<T> }): unknown => ({
+    eq: () => mk(d),
+    in: () => mk(d),
+    select: () => mk(d),
+    order: () => mk(d),
+    then: (resolve: (v: T) => void, reject?: (e: unknown) => void) =>
+      d.promise.then(resolve, reject),
+  });
+  return {
+    client: {
+      from: () => ({
+        select: () => {
+          let resolve!: (v: T) => void;
+          const promise = new Promise<T>((r) => {
+            resolve = r;
+          });
+          const d = { promise, resolve };
+          defs.push(d);
+          return mk(d);
+        },
+      }),
+    },
+    defs,
+  };
+}
+
 describe("useAttendance", () => {
   it("初始 loading 为 true（map 未就绪，调用方据此抑制首屏状态渲染）", () => {
     const { result } = renderHook(() => useAttendance(mockClient([]) as never));
@@ -87,6 +116,59 @@ describe("useAttendance", () => {
       rows = (await result.current.fetchByRehearsal(1)) || [];
     });
     expect(rows).toHaveLength(1);
+  });
+
+  it("fetchByRehearsal 竞态：先发后返的过期响应返回 null，且不覆盖新一轮的名单/loading", async () => {
+    const r = raceClient<{ data: unknown; error: null }>();
+    const { result } = renderHook(() => useAttendance(r.client as never));
+
+    let stale: unknown = "未赋值";
+    let fresh: unknown = "未赋值";
+    let p1!: Promise<unknown>;
+    let p2!: Promise<unknown>;
+    // .select() 在 await 之前同步执行，故两轮 deferred 已就位
+    act(() => {
+      p1 = result.current.fetchByRehearsal(1); // 第 1 轮（旧）
+      p2 = result.current.fetchByRehearsal(2); // 第 2 轮（新）
+    });
+    expect(r.defs).toHaveLength(2);
+
+    // 新一轮先返回 → 写入 B 场名单
+    await act(async () => {
+      r.defs[1].resolve({ data: [{ id: 2, user_id: "u2", status: "present" }], error: null });
+      fresh = await p2;
+    });
+    // 旧一轮后返回 → 必须整体作废
+    await act(async () => {
+      r.defs[0].resolve({ data: [{ id: 1, user_id: "u1", status: "absent" }], error: null });
+      stale = await p1;
+    });
+
+    expect(stale).toBeNull(); // 返回值即契约：null = 过期，调用方据此忽略
+    expect(fresh).toHaveLength(1);
+    expect(result.current.list).toEqual([{ id: 2, user_id: "u2", status: "present" }]);
+    expect(result.current.loading).toBe(false); // 终态：新一轮已完成，loading 正常复位
+  });
+
+  it("fetchByRehearsal 竞态：过期响应先返回时不改动 loading 与名单（新一轮仍在进行）", async () => {
+    const r = raceClient<{ data: unknown; error: null }>();
+    const { result } = renderHook(() => useAttendance(r.client as never));
+
+    let p1!: Promise<unknown>;
+    act(() => {
+      p1 = result.current.fetchByRehearsal(1); // 第 1 轮（旧）
+      void result.current.fetchByRehearsal(2); // 第 2 轮（新），故意留在进行中
+    });
+    expect(r.defs).toHaveLength(2);
+
+    // 旧一轮先返回：新一轮尚未完成，过期响应不得把 loading 置 false、也不得写入名单
+    await act(async () => {
+      r.defs[0].resolve({ data: [{ id: 1, user_id: "u1", status: "absent" }], error: null });
+      await p1;
+    });
+
+    expect(result.current.loading).toBe(true);
+    expect(result.current.list).toEqual([]);
   });
 
   it("upsert 签到成功", async () => {

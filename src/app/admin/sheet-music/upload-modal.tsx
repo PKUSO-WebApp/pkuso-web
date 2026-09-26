@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { Database } from "@/types/database";
 import JSZip from "jszip";
 import { X } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
@@ -1470,7 +1471,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           // **不要「失败时把刚建的 part 删掉」**：`ensurePart` 的票是**按 section 共享**的，
           // 同一批里别的行（甚至并发的另一个 worker）可能正要用那个 part —— 回滚会把
           // 别人正在用的声部删掉，比留一个空声部糟得多。空声部是可恢复的（删除按钮一直渲染）。
-          const rows: Array<Record<string, unknown>> = [];
+          // ⚠️ 用生成类型里的 Insert，而不是 `Record<string, unknown>`：后者与库形状脱钩，
+          // 泛型一接上就报错（#314）。列名/可空性写错都会在这里被编译器拦住。
+          const rows: Array<Database["public"]["Tables"]["sheet_music_files"]["Insert"]> = [];
           for (const [k, target] of targets.entries()) {
             const partId = await ensurePart(target.section);
             if (!partId) {

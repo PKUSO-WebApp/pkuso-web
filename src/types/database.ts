@@ -6,6 +6,10 @@
 
 import type { Database } from "./database.types";
 
+/** 再导出：业务组件要用 `createClient<Database>` 或表类型时，从这一层拿（**单一入口**），
+ *  别各自去 import 生成文件 —— 那个文件由后端 CI 覆盖，本层才是给人用的手写面。 */
+export type { Database };
+
 type PublicSchema = Database["public"];
 
 // ---- 表行类型 ----

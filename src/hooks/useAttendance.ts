@@ -132,7 +132,7 @@ export function useAttendance(client: typeof defaultClient = defaultClient) {
 
   /** 查询区间出勤统计 */
   const fetchStats = React.useCallback(
-    async (rehearsalIds: (string | number)[]) => {
+    async (rehearsalIds: number[]) => {
       if (rehearsalIds.length === 0) return [];
       setLoading(true);
       const { data, error } = await client

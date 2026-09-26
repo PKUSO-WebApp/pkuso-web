@@ -33,7 +33,7 @@ import { findUnsafeInName, unsafeNameMessage } from "./unsafe-name";
 const INVISIBLE = /[\p{Cf}\p{Cc}]/gu;
 
 /** 名字是不是「空的」：只有空白、或只有不可见字符，都算空。 */
-function isBlankName(s: string): boolean {
+export function isBlankName(s: string): boolean {
   return s.replace(INVISIBLE, "").trim() === "";
 }
 

@@ -5,6 +5,7 @@
  * 注释里的理由与被测代码里的理由**必须对得上**：断言的鉴别力靠的就是这个。
  */
 import { describe, expect, it } from "vitest";
+import { INSTRUMENT_ORDER } from "@/constants/instruments";
 import type { UploadFile } from "./upload-modal.types";
 import {
   analysisSummary,
@@ -146,6 +147,13 @@ describe("isBlankName", () => {
     expect(isBlankName(" 圆号 ")).toBe(false);
   });
 
+  it("**控制字符**（`\\p{Cc}`）也算空 —— `.trim()` 同样不管它们", () => {
+    // 覆盖缺口：只测零宽（`\p{Cf}`）的话，把 `INVISIBLE` 里的 `\p{Cc}` 去掉一个用例都不会红。
+    expect(isBlankName(String.fromCharCode(0x07))).toBe(true); // BEL
+    expect(isBlankName(String.fromCharCode(0x00))).toBe(true); // NUL
+    expect(isBlankName(` ${String.fromCharCode(0x07)} `)).toBe(true);
+  });
+
   it("只填韩文填充符（U+3164）**不算空** —— 它由 unsafe-name 那条判据拦下并给出可读的说明", () => {
     // 两套判据刻意不同：这一份只回答「是不是空的」，`unsafe-name.ts` 回答「命中的字符看不看得见」。
     const filler = String.fromCharCode(0x3164);
@@ -155,8 +163,9 @@ describe("isBlankName", () => {
 });
 
 describe("isKnownSection / isFullScoreRow / canHaveExtraSections", () => {
-  it("闭集里的 16 个声部 + 「其他」 + 「总谱」都算已知", () => {
-    expect(isKnownSection("圆号")).toBe(true);
+  it("声部表里的**每一个** + 「其他」 + 「总谱」都算已知（遍历，不写死个数）", () => {
+    // 原来只验了「圆号」，名字里却写着个数 —— 声部表加一项，名字与断言就各错各的。
+    for (const s of INSTRUMENT_ORDER) expect(isKnownSection(s)).toBe(true);
     expect(isKnownSection("其他")).toBe(true);
     expect(isKnownSection("总谱")).toBe(true);
   });
@@ -186,9 +195,12 @@ describe("文案", () => {
     expect(analysisSummary("圆号", "F调圆号", [])).toBe("识别结果: 圆号 / F调圆号");
   });
 
-  it("unreadMessage 带上模型给的原值（用户才知道该核什么）", () => {
-    expect(unreadMessage("1-2")).toContain("1-2");
-    expect(unreadMessage("1-2")).toContain("没有号");
+  it("unreadMessage 整句钉住（`toContain` 钉不住：换一句别的话照样能含这两个子串）", () => {
+    // 这条文案是 `uploadBlocker` 与 `subPartsNotice` 共用的，改写的后果是去重守卫匹配不上、
+    // 用户会看到黄红两行 —— 但「改写成另一句」在 `toContain` 下是绿的，所以整句比。
+    expect(unreadMessage("1-2")).toBe(
+      "识别到分声部号但没读懂（模型给的是「1-2」）：请填上号，或点「没有号」",
+    );
   });
 
   it("cropNoteOf 同时看「决策」与「实际裁没裁出来」—— 只看决策会说反话", () => {
@@ -212,9 +224,14 @@ describe("文案", () => {
       { section: "圆号", instrument: "F调圆号", fileName: "F调圆号1.pdf" },
       { section: "圆号", instrument: "F调圆号", fileName: "F调圆号1.pdf" },
     ];
-    const msg = describeInsertError({ code: "23505", message: "duplicate key …" }, targets);
-    expect(msg).toContain("F调圆号1.pdf");
-    expect(msg).not.toContain("F调圆号1.pdf、F调圆号1.pdf"); // 去重过
+    expect(describeInsertError({ code: "23505", message: "duplicate key …" }, targets)).toBe(
+      "这一声部下已经有同名文件（F调圆号1.pdf）—— 请改乐器名或分声部号，或先删掉详情页里那份",
+    );
+    // `21000` 是同一个约束的另一副面孔（`INSERT … ON CONFLICT DO UPDATE` 里两个相同的键），
+    // 走同一句话 —— 只钉 `23505` 的话，把这个分支整段删掉不会有任何用例变红。
+    expect(
+      describeInsertError({ code: "21000", message: "cannot affect row a second time" }, targets),
+    ).toBe("这一声部下已经有同名文件（F调圆号1.pdf）—— 请改乐器名或分声部号，或先删掉详情页里那份");
     expect(describeInsertError({ code: "42P01", message: "relation does not exist" }, [])).toBe(
       "relation does not exist",
     );

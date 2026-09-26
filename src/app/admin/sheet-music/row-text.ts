@@ -38,7 +38,7 @@ export function isBlankName(s: string): boolean {
 }
 
 /**
- * 后端返回的 `section` 是否落在项目标准的 16 声部内。
+ * 后端返回的 `section` 是否落在项目标准的声部表（`INSTRUMENT_ORDER`）内。
  *
  * **只校验，不映射** —— 后端 prompt 的词表与 `INSTRUMENT_ORDER` 是两份手抄副本，
  * 这里是把「词表漂移」变成界面上的可见告警，而不是再引入一张跨仓同步的映射表。
@@ -145,11 +145,11 @@ export function editsOf(f: UploadFile): {
  * 而 `segTargets` 是渲染期立即求值的语句 —— 声明在使用点**之后**的 `const` 会在那一刻
  * 撞上 TDZ，`ReferenceError: Cannot access 'isFullScoreRow' before initialization`，
  * **选完文件整个弹窗就崩**。这种错 `tsc` 报不出来（嵌套闭包里的调用序它不判）、
- * 纯模块测试也测不到（这个组件在仓库里没有渲染测试）。
+ * 纯模块测试也测不到 —— 补它的是渲染冒烟测试（`upload-modal.test.tsx` 的头一段就写着这件事）。
  */
 export function isFullScoreRow(f: UploadFile): boolean {
-  // 走 editsOf 而不是抄一遍 `(sectionEdit ?? sectionGuess).trim()`：同文件里已经栽过
-  // 一次「三处各抄一份推导式」的跟头，总谱这条判据只能有一份。
+  // 走 editsOf 而不是抄一遍 `(sectionEdit ?? sectionGuess).trim()`：「三处各抄一份推导式」
+  // 的跟头已经栽过一次，总谱这条判据只能有一份。
   return editsOf(f).section === FULL_SCORE_SECTION;
 }
 

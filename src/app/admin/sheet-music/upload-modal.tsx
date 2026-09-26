@@ -1667,8 +1667,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    * 页数未知（分析失败）时不跑 —— 连成本都算不出来。
    */
   // ⚠️ **必须定义在 `segEligible` 之前**：`segTargets`（下面几行）是**渲染期立即求值**的
-  // 语句，而声明在使用点之后的 `const` 会在那一刻撞 TDZ —— 这个文件里已经栽过一次
-  // （见上面 `segTargets` 那段注释）。
+  // 语句，而声明在使用点之后的 `const` 会在那一刻撞 TDZ —— 那次事故的记录在
+  // `isFullScoreRow` 的 docblock 里（「必须放在模块作用域」那一段）。
   /** 这一行「分析完了但没认出乐器」。它与「已识别」是**两件事**：要提示、要能重试、
    * 且**不该进分段**（见下）。总谱的 instrument 是「总谱」，不会落进来。 */
   const isUnidentified = (f: UploadFile) => f.status === "analyzed" && !editsOf(f).instrument;

@@ -105,7 +105,7 @@ export async function invokeOcr(
       throw new Error(`OCR 请求失败（${opts.what} ${kb}KB）: ${lastError}`);
     }
     // 服务端 200 且 success：即便一个字都没读到也算成功，返回空串。
-    // 这里**不能抛错** —— 调用方靠「文本去空白后 < 5 字符」触发回退整页，
+    // 这里**不能抛错** —— 调用方靠「文本去空白后少于 `MIN_OCR_CHARS` 个字符」触发回退整页，
     // 抛错会让最关键的那种情况（裁切条完全空白）根本走不到回退分支，
     // 而这正是「切错位置」最常见的表现。
     if (data?.success) {

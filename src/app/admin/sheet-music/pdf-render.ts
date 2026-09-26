@@ -8,6 +8,11 @@ import {
 import { cropNoteOf } from "./row-text";
 import type { RenderedPage } from "./upload-modal.types";
 
+// pdf.js 的字体与图像解码资源（public/pdfjs 下，从 node_modules/pdfjs-dist 拷贝）。
+// 缺了它们 pdf.js 不会报错，但会整页什么都不画：文本用未内嵌的标准字体、扫描件用 JBIG2/JPX 时命中。
+// 升级 pdfjs-dist 时需要同步重新拷贝这三个目录。
+export const PDFJS_ASSET_BASE = "/pdfjs/";
+
 // —— pdf.js 装载 ——
 //
 // v6 已移除 disableWorker，且 PDFWorker 的初始化逻辑是「只要 globalThis.pdfjsWorker
@@ -20,11 +25,6 @@ import type { RenderedPage } from "./upload-modal.types";
 // 若将来卡顿不可接受，改用真实 worker：把 node_modules/pdfjs-dist/build/pdf.worker.min.mjs
 // 拷到 public/，然后 GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs"，
 // 并把下面的 globalThis 赋值删掉（升级 pdfjs-dist 时必须同步重新拷该文件）。
-// pdf.js 的字体与图像解码资源（public/pdfjs 下，从 node_modules/pdfjs-dist 拷贝）。
-// 缺了它们 pdf.js 不会报错，但会整页什么都不画：文本用未内嵌的标准字体、扫描件用 JBIG2/JPX 时命中。
-// 升级 pdfjs-dist 时需要同步重新拷贝这三个目录。
-export const PDFJS_ASSET_BASE = "/pdfjs/";
-
 let pdfjsPromise: Promise<typeof import("pdfjs-dist")> | null = null;
 
 // 首页栅格化参数：约 216 DPI，再往上 OCR 收益很小、体积翻倍（OCR.space 免费档单文件 1MB）

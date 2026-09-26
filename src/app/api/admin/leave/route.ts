@@ -11,7 +11,9 @@ export const runtime = "nodejs";
  * - GET：service role 查全部申请（join 成员与排练信息），按 created_at 倒序；
  * - POST { action: "approve", ids }：逐条通过。联动考勤（返工守卫）：先查考勤行，
  *   sign_in_time 非空（成员已实际签到）时不写考勤、申请照常置 approved，并在返回的
- *   warnings 中标注让管理员知晓（避免「已签到但请假」的不可恢复矛盾）；否则只改 status、
+ *   warnings 中标注让管理员知晓（避免「已签到但请假」的不可恢复矛盾）；status 为
+ *   exempt（无需出勤，管理员设置的长期免出勤）时同理不写考勤并给出对应 warning；
+ *   否则只改 status、
  *   不动 sign_in_time（保持签到锁定语义，Issue #141），无考勤行时补插一行（只写状态）；
  *   通过成功后向申请人插「attendance」通知（best-effort，失败不阻断主操作，Issue #188）；
  * - POST { action: "reject", ids, reject_reason }：驳回，原因必填，同一原因应用到全部勾选；
@@ -23,6 +25,9 @@ export const runtime = "nodejs";
 
 /** approve 时成员已实际签到（sign_in_time 非空）：考勤保持签到记录，仅通过申请 */
 const SIGNED_IN_WARNING = "成员已签到，考勤保持签到记录（请假申请已通过）";
+
+/** approve 时成员被设为「无需出勤」：考勤保持该状态，仅通过申请 */
+const EXEMPT_WARNING = "成员已设为「无需出勤」，考勤保持该状态（请假申请已通过）";
 
 /**
  * 向申请人插请假处理通知（best-effort，Issue #188）：
@@ -195,35 +200,43 @@ export async function POST(request: Request) {
           // 语义），因此不写考勤（保持签到记录），申请照常置 approved，并返回 warning
           const { data: attendanceRow, error: attQueryErr } = await auth.supabaseServer
             .from("attendances")
-            .select("sign_in_time")
+            .select("status, sign_in_time")
             .eq("rehearsal_id", req.rehearsal_id)
             .eq("user_id", req.user_id)
             .maybeSingle();
           if (attQueryErr) throw new Error(attQueryErr.message);
           const memberSignedIn = !!attendanceRow?.sign_in_time;
+          const memberExempt = attendanceRow?.status === "exempt";
           if (memberSignedIn) {
             warnings.push({ id, message: SIGNED_IN_WARNING });
+          } else if (memberExempt) {
+            warnings.push({ id, message: EXEMPT_WARNING });
           } else {
             // 只改 status 不动 sign_in_time（保持签到锁定语义，Issue #141）；更新条件限定
-            // sign_in_time IS NULL 才命中——关闭「查考勤 → 更新」间隙内成员并发签到的竞态窗口
+            // sign_in_time IS NULL 才命中——关闭「查考勤 → 更新」间隙内成员并发签到的竞态窗口；
+            // 同时排除间隙内被设为「无需出勤」的行（pkuso-backend#47 请假侧）
             const { data: updatedRows, error: attErr } = await auth.supabaseServer
               .from("attendances")
               .update({ status: req.target_status })
               .eq("rehearsal_id", req.rehearsal_id)
               .eq("user_id", req.user_id)
               .is("sign_in_time", null)
+              .neq("status", "exempt")
               .select("id");
             if (attErr) throw new Error(attErr.message);
             if (!updatedRows || updatedRows.length === 0) {
-              // 0 行两种可能：无考勤行（补插），或间隙内成员并发签到（保持签到记录，跳过）
+              // 0 行三种可能：无考勤行（补插）、间隙内成员并发签到、或间隙内被设为无需出勤。
+              // 复核状态以给出与前置判断一致的原因，不一律报「已签到」
               const { data: recheckRow, error: recheckErr } = await auth.supabaseServer
                 .from("attendances")
-                .select("id")
+                .select("status, sign_in_time")
                 .eq("rehearsal_id", req.rehearsal_id)
                 .eq("user_id", req.user_id)
                 .maybeSingle();
               if (recheckErr) throw new Error(recheckErr.message);
-              if (recheckRow) {
+              if (recheckRow?.status === "exempt") {
+                warnings.push({ id, message: EXEMPT_WARNING });
+              } else if (recheckRow) {
                 warnings.push({ id, message: SIGNED_IN_WARNING });
               } else {
                 // 无考勤行（该排练创建后新加入的团员等）：补插一行，只写状态不写签到时间

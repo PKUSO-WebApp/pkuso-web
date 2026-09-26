@@ -227,7 +227,7 @@ export async function renderPageToJpeg(page: PDFPageProxy): Promise<{
  * 所以它既不是空白、又给不出结论，只看第一张有内容的页会永远停在扉页上。
  *
  * 于是「空白顺延」（原来在本函数里）与「这一页没给出结论、换下一页」（原来在
- * `analyzeOne` 里）**合并成同一个循环** —— 两者都是「这一页不算数」。拆成两层的话
+ * `analyzeOne`（在 `upload-modal.tsx`）里）**合并成同一个循环** —— 两者都是「这一页不算数」。拆成两层的话
  * 前者会先返回，后者根本没机会跑。这也正是 `escalate` 只能是一个开关的原因。
  *
  * 文档只打开一次（一份 1500 DPI 扫描件解析一次的开销不小），所以「页游走」必须发生在
@@ -243,7 +243,7 @@ export async function renderPagesForAnalysis(
     maxPages: number;
     /**
      * 出现结论就停；**关掉时「读完第一张有内容的页就走」**，也就是加总谱分析之前的行为。
-     * 这一条是全部行为差异的所在，改它等于改配额（见 `MAX_PAGES_EXAMINED`）。
+     * 这一条是全部行为差异的所在，改它等于改配额（见 `upload-modal.tsx` 的 `MAX_PAGES_EXAMINED`）。
      */
     escalate: boolean;
     /** 这一页能不能定论。true = 定了，不再往下看 */

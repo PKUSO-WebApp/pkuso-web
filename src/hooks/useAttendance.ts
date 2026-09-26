@@ -81,8 +81,9 @@ export function useAttendance(client: typeof defaultClient = defaultClient) {
         return [];
       }
       // ⚠️ 这里原先有一句 `as AttendanceRowWithUser[]`（#314 接上泛型之前是必需的）——
-      // 泛型接上之后 `data` 的推断类型**已可直接赋给**它（有这个 `!inner` 时嵌出的是必填非空，比
-      // `AttendanceRowWithUser` 的 `profiles?: … | null` 更窄），cast 只起「把类型钉回手写形状」的反作用
+      // 泛型接上之后 `data` 的推断类型**已可直接赋给**它（嵌出的是必填非空 —— ⚠️ 那**不是** `!inner`
+      // 带来的：去掉 `!inner` 后推断类型逐字节相同，非空来自 FK 列 `attendances.user_id` 本身非空。
+      // 它比 `AttendanceRowWithUser` 的 `profiles?: … | null` 更窄），cast 只起「把类型钉回手写形状」的反作用
       //（与反馈页删掉的那句同类）。删掉后 tsc 0 错（实测）。
       const rows = data ?? [];
       setList(rows);

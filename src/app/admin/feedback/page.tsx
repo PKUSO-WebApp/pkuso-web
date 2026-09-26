@@ -15,9 +15,9 @@ import { useAdminPageHeader } from "@/context/admin-page-header-context";
 // —— #314 接上泛型后由类型报错再照出来一次。
 // ⚠️ `profiles` 是**必填、可空**，不是可选：左连接下 PostgREST 一定发这个键、值可能是 `null`。
 // 写成 `profiles?` 的话「**把嵌入从 select 里漏掉**」也合法 ⇒ 类型检查对漏字段完全失明，
-// 而作者名会**静静地**不再显示（**可选形态下**实测：删掉 `profiles(full_name)` 时 tsc 0 错、
-// 用例也照绿；当前这种必填形态下删嵌入会当场报错，用例里那两句 `toContain("profiles")`
-// 再钉一层）。`full_name` 同理：列在库里存在、只是可空。
+// 而作者名会**静静地**不再显示（**收紧那两条断言之前**实测：类型退回可选形态 + 删掉
+// `profiles(full_name)` ⇒ tsc 0 错、**用例也照绿**；现在那两条断言会把这个组合判红 ——
+// 它们就是为「类型层失明」兜底的）。`full_name` 同理：列在库里存在、只是可空。
 type FeedbackWithAuthor = Pick<FeedbackRow, "id" | "content" | "created_at" | "is_anonymous"> & {
   profiles: { full_name: string | null } | null;
 };

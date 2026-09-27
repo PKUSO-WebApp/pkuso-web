@@ -35,7 +35,6 @@ pnpm verify       # 一键:format → lint → typecheck → test
 - `SUPABASE_SERVICE_ROLE_KEY`(仅服务端)
 - 邮件:`RESEND_API_KEY` 或 SMTP 系(`SMTP_USER`/`SMTP_PASS`/`SMTP_HOST`/`SMTP_PORT`/`SMTP_FROM`,SMTP 优先)
 - `NEXT_PUBLIC_TENCENT_MAP_KEY`:腾讯位置服务 JSAPI Key(lbs.qq.com),用于管理端排练地理围栏的地图选点/搜索;需在腾讯控制台绑定部署域名白名单并启用 WebServiceAPI 产品
-- （`.env.example` 里还声明了 `GEMINI_API_KEY`,但**本仓库没有任何代码读它**——LLM 识别走的是后端的 `llm-analyze` Edge Function,key 配在 backend 侧。视作待清理项。）
 
 ### 认证
 
@@ -54,7 +53,7 @@ pnpm verify       # 一键:format → lint → typecheck → test
 
 Web 端最重的子系统：上传总谱 PDF → 自动切成各声部分谱。代码全在 `src/app/admin/sheet-music/`。
 
-**链路**：PDF → `pdf-render.ts` 渲染页面 → `staff-line.ts` 定位第一条谱线 → `segmentation.ts` 按谱线分段 → `mosaic.ts` 拼图 → `ocr-client.ts` 调后端 `ocr-analyze`（转发 OCR.space）→ `analysis.ts` 调后端 `llm-analyze`（Gemini）识别声部与乐器 → `sub-parts.ts` / `sort-parts.ts` 整理 → `split-pdf.ts` 切分导出。
+**链路**：PDF → `pdf-render.ts` 渲染页面 → `staff-line.ts` 定位第一条谱线 → `segmentation.ts` 按谱线分段 → `mosaic.ts` 拼图 → `ocr-client.ts` 调后端 `ocr-analyze`（转发 OCR.space）→ `analysis.ts` 调后端 `llm-analyze` 识别声部与乐器 → `sub-parts.ts` / `sort-parts.ts` 整理 → `split-pdf.ts` 切分导出。
 
 - **后端依赖**：`ocr-analyze` 与 `llm-analyze` 两个 Edge Function 都在 `pkuso-backend`，本仓库只调不改
 - **数据表**：`sheet_music` / `sheet_music_files` / `sheet_music_parts` / `sheet_music_distributions` / `sheet_music_analysis_logs`

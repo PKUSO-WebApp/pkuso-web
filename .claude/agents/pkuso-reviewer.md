@@ -1,6 +1,6 @@
 ---
 name: pkuso-reviewer
-description: 合规审查。当 pkuso-implementer 声明编码完成、且尚未 git commit 时调用。仅审 CLAUDE.md 规则合规性。
+description: 合规审查。主智能体声明编码完成、且尚未 git commit 时调用。仅对照 CLAUDE.md 审规则合规性，不找 Bug。
 model: haiku
 tools:
   - Read
@@ -35,8 +35,8 @@ tools:
 
 调用方必须提供：
 
-- 改动文件清单
-- implementer 的自检声明
+- `git diff`（改动内容本身，不是「相关文件清单」——审 diff 而不是审整个仓库）
+- 本次改动的验收标准 / 必须为真的不变量
 
 ## 输出要求
 
@@ -56,4 +56,4 @@ tools:
 2. ...
 ```
 
-FAIL 时携带完整返工清单，由主智能体传回 pkuso-implementer 返工。
+FAIL 时给出完整返工清单，由主智能体修复后重审。

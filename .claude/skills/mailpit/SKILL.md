@@ -1,9 +1,13 @@
 ---
 name: mailpit
-description: 启动 Mailpit SMTP 测试容器。当运行 notify 测试遇到 ECONNREFUSED 时报错时使用。
+description: 启动 Mailpit SMTP 测试容器。⚠️ 当前休眠——仓库里已经没有任何测试用它，仅在要恢复端到端邮件测试时才需要。
 ---
 
 # 启动 Mailpit
+
+> ⚠️ **2026-09 起休眠。** 端到端邮件测试（Mailpit 直连 + 临时 admin → POST `/api/notify` → 查 Mailpit API）
+> 已经从 `src/__tests__/notify.test.ts` 里丢失，该文件现在是纯单测。CI 的 `services.mailpit` 也成了死配置。
+> **本技能当前没有触发场景**，留在这里是为了恢复端到端测试时能直接照做。
 
 本项目的 SMTP 集成测试依赖 Mailpit（本地 Docker 容器，零外部网络依赖）。
 
@@ -37,11 +41,11 @@ curl -s http://localhost:8025/api/v1/messages | head -20
 
 ```bash
 # Linux / Git Bash
-MAILPIT_ENABLED=true npx vitest run src/__tests__/notify.test.ts
+MAILPIT_ENABLED=true pnpm vitest run src/__tests__/notify.test.ts
 
 # PowerShell
 $env:MAILPIT_ENABLED = "true"
-npx vitest run src/__tests__/notify.test.ts
+pnpm vitest run src/__tests__/notify.test.ts
 ```
 
 ## 清理

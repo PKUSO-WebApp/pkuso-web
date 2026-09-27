@@ -17,27 +17,22 @@ pnpm dev            # http://localhost:3000
 
 ## 常用命令
 
-| 命令              | 说明                              |
-| ----------------- | --------------------------------- |
-| `pnpm dev`        | 开发服务器                        |
-| `pnpm build`      | 生产构建 (含 tsc 类型检查)        |
-| `pnpm typecheck`  | TypeScript 类型检查               |
-| `pnpm lint`       | ESLint 检查                       |
-| `pnpm format`     | Prettier 格式检查                 |
-| `pnpm format:fix` | 自动格式化                        |
-| `pnpm test`       | 运行测试                          |
-| `pnpm verify`     | 一次性: 格式 → lint → 类型 → 测试 |
+| 命令              | 说明                                     |
+| ----------------- | ---------------------------------------- |
+| `pnpm dev`        | 开发服务器                               |
+| `pnpm build`      | 生产构建 (**不含** tsc,须另跑 typecheck) |
+| `pnpm typecheck`  | TypeScript 类型检查                      |
+| `pnpm lint`       | ESLint 检查                              |
+| `pnpm format`     | Prettier 格式检查                        |
+| `pnpm format:fix` | 自动格式化                               |
+| `pnpm test`       | 运行测试                                 |
+| `pnpm verify`     | 一次性: 格式 → lint → 类型 → 测试        |
 
 ## 环境变量
 
-创建 `.env.local`:
+复制 `.env.example` 为 `.env.local` 并填入实际值——**`.env.example` 是完整清单**，别在这里再抄一份（抄了就会腐烂）。
 
-```
-NEXT_PUBLIC_SUPABASE_URL=<your-project-url>
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<your-publishable-key>
-SUPABASE_SERVICE_ROLE_KEY=<service-role-key>    # 仅服务端,用于 API route
-RESEND_API_KEY=<resend-api-key>                  # 排练通知邮件
-```
+最小可用集合：`NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`、`SUPABASE_SERVICE_ROLE_KEY`；邮件走 SMTP 系（`SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`SMTP_FROM`，**优先**）或 `RESEND_API_KEY`（兜底）。
 
 ## 部署
 

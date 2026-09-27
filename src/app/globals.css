@@ -66,36 +66,36 @@ body {
   padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
 }
 
-/* react-datepicker */
+/* react-datepicker —— 只用语义 token，双模式可用 */
 .react-datepicker-orchestra {
-  @apply rounded-2xl border border-zinc-200 bg-white shadow-md text-xs;
+  @apply rounded-2xl border border-border bg-surface shadow-md text-xs;
 }
 .react-datepicker-orchestra .react-datepicker__header {
-  @apply border-b border-zinc-200 bg-zinc-50 py-2;
+  @apply border-b border-border bg-card py-2;
 }
 .react-datepicker-orchestra .react-datepicker__current-month {
-  @apply text-xs font-medium text-zinc-900;
+  @apply text-xs font-medium text-text;
 }
 .react-datepicker-orchestra .react-datepicker__day-name,
 .react-datepicker-orchestra .react-datepicker__day {
   @apply w-7 text-center text-[11px];
 }
 .react-datepicker-orchestra .react-datepicker__day {
-  @apply rounded-full text-zinc-700 hover:bg-zinc-100;
+  @apply rounded-full text-text hover:bg-muted;
 }
 .react-datepicker-orchestra .react-datepicker__day--selected.react-datepicker__day--selected {
-  @apply bg-zinc-900 text-white hover:bg-zinc-900;
+  @apply bg-primary text-primary-foreground hover:bg-primary;
 }
 .react-datepicker-orchestra .react-datepicker__day--today {
-  @apply font-semibold text-zinc-900;
+  @apply font-semibold text-text;
 }
 .react-datepicker-orchestra .react-datepicker__time-container {
-  @apply border-l border-zinc-200;
+  @apply border-l border-border;
 }
 .react-datepicker-orchestra .react-datepicker__time-list-item {
   @apply text-[11px];
 }
 .react-datepicker-orchestra
   .react-datepicker__time-list-item--selected.react-datepicker__time-list-item--selected {
-  @apply bg-zinc-900 text-white;
+  @apply bg-primary text-primary-foreground;
 }

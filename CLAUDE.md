@@ -35,11 +35,13 @@ pnpm verify       # 一键:format → lint → typecheck → test
 - `SUPABASE_SERVICE_ROLE_KEY`(仅服务端)
 - 邮件:`RESEND_API_KEY` 或 SMTP 系(`SMTP_USER`/`SMTP_PASS`/`SMTP_HOST`/`SMTP_PORT`/`SMTP_FROM`,SMTP 优先)
 - `NEXT_PUBLIC_TENCENT_MAP_KEY`:腾讯位置服务 JSAPI Key(lbs.qq.com),用于管理端排练地理围栏的地图选点/搜索;需在腾讯控制台绑定部署域名白名单并启用 WebServiceAPI 产品
+- （`.env.example` 里还声明了 `GEMINI_API_KEY`,但**本仓库没有任何代码读它**——LLM 识别走的是后端的 `llm-analyze` Edge Function,key 配在 backend 侧。视作待清理项。）
 
 ### 认证
 
-全局用户状态在 `src/context/user-context.tsx`;页面访问由 auth-gate 组件把关;登录/注册页在 `src/app/(auth)/`。
-**成员端已 deprecated**:成员无法再从网页端登录(登录路由对非管理员 `is_admin()` 拦截登出并提示使用微信小程序);网页端仅面向管理员。
+全局用户状态在 `src/context/user-context.tsx`;页面访问由 `src/components/auth-gate.tsx` 把关;登录页在 `src/app/(auth)/login`,**没有注册页**。
+
+**成员端代码已删除**(2026-09-05,提交 `2e9f69d`):`(member)/` 下只剩一张「成员端已迁移到微信小程序」的静态引导页。登录校验在 `login/page.tsx` 里直接查 `profiles.role`,`role !== "admin"` 即 `signOut()` 并提示「成员不允许进行web端登录」——**不走 `is_admin()` RPC**。网页端仅面向管理员。
 
 ### 地理签到（2026-08 起）
 
@@ -48,69 +50,85 @@ pnpm verify       # 一键:format → lint → typecheck → test
 - `rehearsals.checkin_lat/lng/checkin_radius_m` 三字段全非 NULL 才启用围栏,任一为 NULL = 不限位置;管理端表单以「开启地理围栏」开关显式控制
 - 历史决策:web member 端已废弃,不再为其维护签到功能
 
-### 路由结构（Route Group 分离 Admin/Member）
+### 谱务系统（2026-09 起）
+
+Web 端最重的子系统：上传总谱 PDF → 自动切成各声部分谱。代码全在 `src/app/admin/sheet-music/`。
+
+**链路**：PDF → `pdf-render.ts` 渲染页面 → `staff-line.ts` 定位第一条谱线 → `segmentation.ts` 按谱线分段 → `mosaic.ts` 拼图 → `ocr-client.ts` 调后端 `ocr-analyze`（转发 OCR.space）→ `analysis.ts` 调后端 `llm-analyze`（Gemini）识别声部与乐器 → `sub-parts.ts` / `sort-parts.ts` 整理 → `split-pdf.ts` 切分导出。
+
+- **后端依赖**：`ocr-analyze` 与 `llm-analyze` 两个 Edge Function 都在 `pkuso-backend`，本仓库只调不改
+- **数据表**：`sheet_music` / `sheet_music_files` / `sheet_music_parts` / `sheet_music_distributions` / `sheet_music_analysis_logs`
+- **已知设计陷阱**（改之前先读）：降级逻辑会掩盖失败、`functions.invoke` 吞错、pdf.js 静默不画、OCR 链路无超时
+- **别用固定阈值**判分谱页边界——换出版社后会大面积判错，判据必须与 OCR+LLM 耦合
+- **渲染对照台**在仓库外的 `.render-harness/`（真实浏览器跑串行 vs 并发）。注意**并发不会让纯 CPU 渲染变快**
+- `upload-modal.tsx` 是这一块的核心，也是全仓最大的文件（已经拆过几轮，还没拆完），正按「类型 → 行级 helper → 出图/OCR → 分段/LLM → 叶子组件」继续分层拆分（进行中）
+
+### 路由结构
+
+**全部功能都在 admin 端**（member 端只剩引导页）。
 
 ```
 src/app/
-├── (auth)/           # route group, URL: /login, /signup, /reset-password
-├── (member)/         # route group, URL: /, /schedule, /community, /members, /profile
-│   ├── layout.tsx    # member tab bar（首页/社区/日程/成员/我的）
-│   ├── page.tsx      # 排练日程展示（含历史合排 tab）+ 签到
-│   ├── schedule/     # 排练房预约（甘特图+预约）
-│   │   └── components/  # rehearsal-card, code-verify-modal, leave-request-modal, schedule-gantt 等
-│   ├── community/    # 社区帖子（重奏/团建）
-│   ├── members/      # 全团成员花名册（声部分组+拼音搜索）
-│   └── profile/      # 个人信息+密码修改
-├── admin/            # 普通目录, URL: /admin, /admin/rehearsals, /admin/schedule, /admin/members, /admin/community, /admin/profile
-│   ├── layout.tsx    # admin tab bar（控制台/排练/社区/日程/成员/我的）+ 角色鉴权 + 守护页超时刷新
-│   ├── page.tsx      # 仪表盘（入团审批/请假审批/公告,tab 切换）
-│   ├── components/   # admin 共享组件（announcement-list-modal, leave-management, leave-detail-modal 等）
-│   ├── rehearsals/   # 排练管理（CRUD+考勤查看）
-│   │   └── components/  # rehearsal-card
-│   ├── schedule/     # 日程管理（甘特图+预约 CRUD）
-│   │   └── components/  # admin-schedule-gantt, create-schedule-modal, date-selector
-│   ├── members/      # 花名册+考勤统计（排练行点击直达考勤编辑）
-│   ├── community/    # 社区帖子管理
-│   └── profile/      # 个人设置（含邀请码管理+邮件签名）
-└── api/              # API routes（notify, admin/approve, admin/approve-all, admin/reject,
-                      #            admin/reject-all, admin/announcement, admin/settings, admin/leave）
+├── (auth)/           # route group, URL: /login, /reset-password, /reset-password/reset
+├── (member)/         # route group, URL: / —— 只剩引导页
+│   ├── layout.tsx    # 直通 fragment（无 tab bar）
+│   └── page.tsx      # 「成员端已迁移到微信小程序」静态引导页
+├── admin/            # 普通目录, URL: /admin/*
+│   ├── layout.tsx    # 顶部 AdminHeader（返回/标题/设置）+ 角色鉴权 + 守护页超时刷新
+│   ├── page.tsx      # 首页宫格入口 + 入团审批/请假审批/公告
+│   ├── components/   # admin 共享组件（leave-management 等）
+│   ├── rehearsals/   # 排练管理（list + new + [id] + [id]/edit）
+│   ├── schedule/     # 排练房预约（甘特图 + CRUD）
+│   ├── attendance/   # 考勤管理
+│   ├── members/      # 花名册 + 考勤统计
+│   ├── roster/       # 成员花名册（声部/在团标记）
+│   ├── approval/     # 入团审批
+│   ├── leave/        # 请假审批
+│   ├── announcements/# 公告管理
+│   ├── community/    # 社区帖子管理（list + [id]）
+│   ├── sheet-music/  # 谱务系统（list + [id]）—— 见下文专节
+│   ├── feedback/     # 意见反馈
+│   ├── config/import/# 团员信息 Excel 导入
+│   ├── email-settings/ email-signature/  # 邮件模板与签名
+│   ├── system-notify/# 系统通知
+│   └── profile/      # 个人设置
+└── api/              # API routes
+    ├── notify/                       # 排练通知发信
+    └── admin/                        # announcement, approve, approve-all, reject, reject-all,
+                                      # feedback, import-member-info, leave, notify-system,
+                                      # settings, sync-profiles
 ```
 
-### 开发方式：admin/member 分端独立
+各功能域的私有组件放各自目录的 `components/` 子目录（`rehearsals/`、`schedule/`、`members/`、`sheet-music/`、`community/` 都有）。
 
-项目虽然部署在同一个 Next.js app 中，但 **admin 和 member 已完全分离**，可按两个独立应用对待：
+### 开发方式：只做 admin 端
 
-| 维度     | Member 端                                   | Admin 端                             |
-| -------- | ------------------------------------------- | ------------------------------------ |
-| 路由前缀 | `/`                                         | `/admin`                             |
-| 布局     | `(member)/layout.tsx`                       | `admin/layout.tsx`                   |
-| Tab bar  | 首页 · 日程 · 社区 · 我的                   | 控制台 · 排练 · 日程 · 成员 · 我的   |
-| 角色守卫 | 无（AuthGate 统一鉴权）                     | `layout.tsx` 检查 `role === "admin"` |
-| 开发入口 | 新功能加在 `(member)/` 下                   | 新功能加在 `admin/` 下               |
-| 组件     | 各端组件放在各自目录的 `components/` 子目录 | 同                                   |
-| 数据层   | 共享 `src/hooks/` 和 `src/lib/`             | 同                                   |
-| UI 原语  | 共享 `src/components/ui/`                   | 同                                   |
+Web 端**只服务管理员**，没有「两端独立」这回事了。新功能一律加在 `admin/` 下。
 
-**不再通过 `isAdmin` 条件分支混合 UI**。开发 member 端新功能时不需要关心 admin 代码，反之亦然。唯一共享的部分是 hooks、lib、UI 原语、类型定义。
+- **导航形态**：没有 tab bar。`admin/layout.tsx` 只提供顶部 `AdminHeader`（返回按钮 + 页面标题 + 设置齿轮，标题走 `AdminPageHeaderContext`）；入口是 `/admin` 首页的宫格。
+- **角色守卫**：`admin/layout.tsx` 里 `user.role !== "admin"` → `router.replace("/")`（落到 member 引导页）；AuthGate 也会把非 admin 从 `/admin/*` 弹回 `/`。
+- **共享层**：`src/hooks/`、`src/lib/`、`src/components/ui/`、`src/types/`。
 
-### 迁移状态（2026-08）
+### 迁移状态（2026-09）
 
-微信小程序 → Web 的界面迁移**已完成**：Web 端已承接小程序的核心交互（排练/公告详情改为页面路由、tab 长背景修复等）。**此后所有改动只针对 admin 端**，member 端保持现状、不要改动（除非用户明确指示）。member 端仍保留 Modal 式交互，属有意保留，非遗漏。
+微信小程序 → Web 的界面迁移已完成，随后**member 端代码被整体删除**（2026-09-05 提交 `2e9f69d`，保留一张引导页）。`(member)/schedule|community|members|profile` 等页面**已不存在**——引用它们的旧文档、旧 skill、旧记忆都已过期。
+
+成员端的功能（含签到）在微信小程序里实现，Web 端不再维护。
 
 ## 分支工作流
 
-- 分支命名: `<type>/<简述>`,type = feat|fix|docs|refactor|test|chore|build|ci
+- 分支命名: `<type>/<简述>`,type = feat|fix|docs|refactor|test|chore|build|ci|style(以 `.github/workflows/ci.yml` 的 branch-name job 为准)
 - 每个 PR 从 main 切新分支,合并后删分支。禁止在原分支上继续追加。
 - 提交遵循 Conventional Commits(commitlint 强制)。PR 用 Squash & merge。
 - CI 自动验证 typecheck + lint + test + build + gen-types 一致性 + 分支命名规范。
 
 ## 前端设计原则
 
-- **Token 优先**: `src/styles/tokens.css` 为设计令牌单一可信源。所有颜色通过 Tailwind 语义类使用,**禁止硬编码调色板色**(`zinc-*`/`text-white` 等——`text-white` 应写 `text-primary-foreground`,暗色模式才不会低对比度)。21 对语义色覆盖亮/暗双模式,完整清单以 tokens.css 为准。
+- **Token 优先**: `src/styles/tokens.css` 为设计令牌单一可信源,经 `globals.css` 的 `@theme inline` 注册成 Tailwind 语义类。所有颜色通过语义类使用,**禁止硬编码调色板色**(`zinc-*`/`text-white` 等——`text-white` 应写 `text-primary-foreground`,暗色模式才不会低对比度)。令牌清单以 tokens.css 为准——**不要在本文件里写令牌数量**,那种计数一定会腐烂。
 - **移动端优先**: 页面宽 `max-w-md`(448px),Modal 默认底部弹出(`position="bottom"`),底部安全区 `pb-safe`。
-- **罗列内容必须可滚动**: 页面是固定视口(AuthGate `h-screen` 列 + 两端 layout `flex-1 overflow-hidden`,页面本身不可滚动)。罗列性质的内容必须放可滚动容器(`flex-1 min-h-0 overflow-y-auto` 或 `max-h-[Npx] overflow-y-auto`);含筛选控件的列表页,根容器用 `flex h-full min-h-0 flex-col`,控件+列表整体放滚动区(矮屏可到达)。**豁免:member 端 profile 页整页滚动**——page 根节点自身为 `flex-1 min-h-0 overflow-y-auto` 滚动容器(整页上下滚动、tab bar 固定),其余页面维持固定视口。
+- **罗列内容必须可滚动**: AuthGate 外层是 `h-screen` + `overflow-hidden` 的列,页面因此是固定视口。页面根节点按 `flex h-full min-h-0 flex-col` 铺满,罗列性质的内容**必须自带滚动容器**(`flex-1 min-h-0 overflow-y-auto` 或 `max-h-[Npx] overflow-y-auto`);含筛选控件的列表页,控件+列表整体放滚动区(矮屏可到达)。现役 admin 页面都遵循这个骨架,可参照 `admin/roster`、`admin/members`、`admin/sheet-music`、`admin/page.tsx`。
 - **多行文本框可拉长**: textarea 保持默认可拖拽调整大小(resize: both),除全屏铺满等豁免场景外**不要加 `resize-none`**,且避免 `.input` 固定高度类覆盖 rows。
-- **组件复用**: 写新 UI 前先查 `src/components/ui/`(Modal/Toggle/Card/Toast)和 `src/app/(member)/schedule/components/`(排练相关组件)。Button 暂不统一(35+ 变体,待设计系统定型)。
+- **组件复用**: 写新 UI 前先查 `src/components/ui/`(Modal/Toggle/Card/Toast)和该功能域自己的 `components/` 子目录(如 `src/app/admin/rehearsals/components/`)。Button 暂不统一(变体很多,待设计系统定型)。
 - **暗色模式**: `<html data-theme="dark">` 即可全局切换,所有组件应双模式可用。测试时亮/暗都过一遍。
 - **0 行更新必须检测**: 带状态守卫的 update 要链 `.select("id")`,0 行(RLS 静默失败/并发已处理)时 return false,且**在任何副作用(如删附件)之前检测**。
 - **附件路径提取**: storage 路径从 URL 提取统一用 `indexOf("bucket/")` + `decodeURIComponent`,try/catch 兜底(参考 `usePosts.remove`)。
@@ -155,7 +173,8 @@ src/app/
   - PowerShell here-string(`@"..."@`)在多行中文场景下更可靠,优于多个 `-m` 拼接 commit message。
   - **bash heredoc（`cat <<'EOF'`）在 PowerShell 中不可用**，会报 "Missing file specification after redirection operator"。多行中文 commit message / PR body 改用文件方式：写入临时文件后 `git commit -F <file>` / `gh pr create --body-file <file>`，完成后删除临时文件。
   - **PowerShell `Select-Object` 在管道输出中文时会出现乱码**,改用 `ForEach-Object` 或直接输出。如需格式化对象输出,使用 `ConvertTo-Json -Depth 10` 或手动拼接字符串。
-- **`supabase/` 文件夹保持 git 追踪**：该目录包含历史迁移文件，供参考和审计。**新迁移不要添加到这里**——所有新 schema 变更必须提交到 `pkuso-backend` 仓库。
+- **`supabase/` 文件夹保持 git 追踪**：**新迁移不要添加到这里**——所有新 schema 变更必须提交到 `pkuso-backend` 仓库。
+  注意这个目录不只是「参考和审计」材料：`pkuso-backend` 的迁移里 2026-09-08 之前的部分只有 stub 占位文件（内容为 `-- Applied directly to dev database. Stub file for migration version compatibility.`），**本目录是那之前 schema 的唯一真实 DDL 记录**，别再往里加东西，也别删。
 - 历代功能 spec(颜色系统、admin/member 拆分、hooks-modal 重构、排练房预订等)已迁移至项目 wiki。
 - 经验沉淀机制:项目级约定写进本文件;可复用操作流程写成 `.claude/skills/<名字>/SKILL.md`;会话中的偏好与决策背景由 Claude 记入其持久 memory。会话结束前可用 `.claude/skills/save-lesson` 的流程做沉淀。
 
@@ -165,24 +184,13 @@ src/app/
 
 vitest 默认不加载 `.env.local`。`vitest.config.ts` 中 `setupFiles: ["./src/__tests__/vitest-setup.ts"]` 手动解析注入 `process.env`。CI 通过 GitHub Actions secrets 注入相同变量。
 
-### Mailpit（本地 + CI SMTP 测试）
+### notify 邮件测试
 
-SMTP 测试用 Mailpit 替代 Ethereal（Ethereal 公网 SMTP 在北大校园网超时）。
+`src/__tests__/notify.test.ts` 是**纯单测**：转义、签名/模板的读取与静默降级、传输器选择、收件人过滤。用 `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` 的部分在缺失时自动跳过。
 
-- **本地**：`docker run -d --name mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit`
-- **CI**：`.github/workflows/ci.yml` 中 `services.mailpit` container
-- SMTP: `localhost:1025` 无认证；API: `http://localhost:8025/api/v1/messages` 验证
-- 测试通过 `process.env.CI` 或 `MAILPIT_ENABLED` 判断启用
+⚠️ **端到端邮件测试已丢失（未补回）**：这里曾经有一个 Mailpit SMTP 直连测试和一个「临时 admin → POST `/api/notify` → 查 Mailpit API → 清理」的端到端测试，配套 CI 里也有 `services.mailpit`。现在全仓已经搜不到任何 Mailpit 引用，`ci.yml` 里那个 mailpit service container 成了死配置（留着没删，要恢复端到端测试时能直接用）。**邮件链路的端到端保障目前是空的**——改发信链路请手工验证。
 
-### 端到端 notify 测试
-
-`src/__tests__/notify.test.ts`：
-
-- `e()` 转义 + `resolveTransporter()` 配置选择（9 个单测）
-- Mailpit SMTP 直连（1 个）
-- **端到端**（1 个）：临时 admin → POST /api/notify → Mailpit API 验证 → 清理
-
-需 `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`，缺则跳过。
+（历史选择：SMTP 测试用 Mailpit 而非 Ethereal，因为 Ethereal 公网 SMTP 在北大校园网超时。）
 
 ## ⚠️ 后端修改流程
 
@@ -196,10 +204,16 @@ SMTP 测试用 Mailpit 替代 Ethereal（Ethereal 公网 SMTP 在北大校园网
 
 ### 类型同步
 
-- `src/types/database.types.ts` 由 `pkuso-backend` 仓库 CI 自动生成
-- CI 检测到类型变更后会自动创建 PR 同步到本仓库 `dev` 分支
-- 合并该 PR 后前端 CI 即可正常通过类型检查
+- `src/types/database.types.ts` 由 `pkuso-backend` 仓库 CI 生成
+- 实际链路（`pkuso-backend/.github/workflows/sync-dev.yml`）：后端推 `main` → 把 migration 应用到 dev → 用 dev 的 schema 生成类型 → **`github-actions[bot]` 直接 `git push` 到本仓库 `main`**（commit message `chore: sync database types from pkuso-backend [skip ci]`）。
+  **不是 PR，也不走 `dev` 分支**——本仓库根本没有 `dev` 分支。
 - **不要手动编辑** `src/types/database.types.ts`，它始终由后端 CI 管理
+- 本仓库 CI 的 `gen-types-check` job 会重新拉远端 schema 与提交的文件比对，防止漂移
+- 手动同步（本地已有 `pkuso-backend` 克隆时）：`pnpm pull-types`，从 `../pkuso-backend/types/database.types.ts` 拷贝
+
+### 手写类型层 `src/types/database.ts`（#314 起）
+
+生成文件只是数据源。**取 `Database` 泛型或表类型的唯一入口是手写的 `src/types/database.ts`**——`src/lib/supabase.ts` / `supabase-server.ts` 都已改走它，不再直接 import 生成文件；要新别名请在这一层加，不要各处直接摸 `database.types.ts`。细节见 `.claude/SUPABASE_TYPE_SYNC.md`。
 
 ### 三个仓库的职责划分
 
@@ -217,6 +231,7 @@ SMTP 测试用 Mailpit 替代 Ethereal（Ethereal 公网 SMTP 在北大校园网
 - migration 写在 `pkuso-backend/supabase/migrations/` → 推 `main` → CI 自动应用到 dev；prod 手动触发 `Deploy to Prod`
 - 本仓库（pkuso-web）完全不碰数据库 schema
 - MCP 仅用于**只读**用途：查询现状、排查问题、审计。**任何写操作都不走 MCP**
+- 本仓库的 `.mcp.json` 只配置 `read_only=true` 的 server。**不要在这里加可写 server**——规矩挡不住手滑，配置才挡得住
 
 ## 数据库操作注意事项
 
@@ -415,7 +430,7 @@ const fetchAuthorName = async (scheduleId: string) => {
 
 ## 开发工作流
 
-**主智能体直接实现业务代码**，实现完成后由**独立的 subagent** 做两道评审。早先的多智能体编排流水线（implementer / tester / dba 分工）**已废弃**。
+**主智能体直接实现业务代码**，实现完成后由**独立的 subagent** 做两道评审。早先的多智能体编排流水线（implementer / tester / dba 分工）**已废弃**——对应的 agent 定义和 `pkuso-pipeline` skill 已从仓库删除，不要再按那个流程走。
 
 ```
 实现（主智能体） → 合规审查（subagent） → 对抗测试（subagent） → 提交

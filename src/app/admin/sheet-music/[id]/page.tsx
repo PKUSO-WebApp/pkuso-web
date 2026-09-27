@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
 import { UploadModal } from "../upload-modal";
 import { sortPartsForDisplay } from "../sort-parts";
+import { EditScoreModal } from "../components/edit-score-modal";
+import { EditFileModal } from "../components/edit-file-modal";
 
 interface SheetMusicFile {
   id: string;
@@ -56,17 +58,31 @@ export default function ScoreDetailPage() {
   const [loading, setLoading] = useState(true);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // 两个编辑弹窗都是**条件渲染**（见组件头部注释：初值靠重新挂载取，不靠 open 同步）
+  const [showEditScore, setShowEditScore] = useState(false);
+  const [editingFile, setEditingFile] = useState<{
+    file: SheetMusicFile;
+    part: SheetMusicPart;
+  } | null>(null);
 
   useEffect(() => {
     setTitle("曲子详情");
     setOnBack(router.back);
     setHeaderRight(
-      <button
-        onClick={() => setShowUploadModal(true)}
-        className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded-lg hover:opacity-90"
-      >
-        上传
-      </button>,
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setShowEditScore(true)}
+          className="px-3 py-1 text-sm text-text-muted border border-border rounded-lg hover:text-text"
+        >
+          编辑
+        </button>
+        <button
+          onClick={() => setShowUploadModal(true)}
+          className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded-lg hover:opacity-90"
+        >
+          上传
+        </button>
+      </div>,
     );
     return () => setHeaderRight(null);
   }, [setTitle, setOnBack, setHeaderRight, router]);
@@ -295,6 +311,14 @@ export default function ScoreDetailPage() {
                               下载
                             </button>
                             <button
+                              onClick={() => setEditingFile({ file, part })}
+                              className="p-1 text-text-muted hover:text-primary hover:bg-primary/10 rounded"
+                              aria-label={`编辑 ${file.file_name}`}
+                              title="编辑声部 / 乐器名 / 分声部"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
                               onClick={() => deleteFile(file)}
                               disabled={!!deletingId}
                               className="p-1 text-text-muted hover:text-danger hover:bg-danger/10 rounded disabled:opacity-50"
@@ -312,6 +336,28 @@ export default function ScoreDetailPage() {
           )}
         </div>
       </div>
+
+      {/* 两个编辑弹窗。曲目信息的初值取 `score`，一份谱的初值取被点的那一行 ——
+        两者都用条件渲染，关掉即卸载，下次打开拿到的是最新数据。 */}
+      {showEditScore && score && (
+        <EditScoreModal
+          onClose={() => setShowEditScore(false)}
+          scoreId={scoreId}
+          initial={{ title: score.title, composer: score.composer, notes: score.notes }}
+          onSaved={refetch}
+        />
+      )}
+
+      {editingFile && (
+        <EditFileModal
+          onClose={() => setEditingFile(null)}
+          scoreId={scoreId}
+          file={editingFile.file}
+          part={{ id: editingFile.part.id, section: editingFile.part.section }}
+          sourceFileCount={editingFile.part.files.length}
+          onSaved={refetch}
+        />
+      )}
 
       {showUploadModal && (
         <UploadModal

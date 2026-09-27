@@ -19,6 +19,7 @@ import {
 } from "./segmentation";
 import { fillMissingSubParts, generateFileName } from "./sub-parts";
 import { fileTargetsOf, normalizeExtraSections } from "./sections";
+import { getOrCreatePart } from "./parts-store";
 import { duplicateNames, openForSplit, splitRefusal } from "./split-pdf";
 import type { LlmAnalysis, UploadFile, UploadModalProps, UploadPhase } from "./upload-modal.types";
 import {
@@ -1200,33 +1201,6 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
     return new Set(duplicateNames(names).map((k) => idx[k].i));
   };
 
-  /**
-   * 声部现在是**闭集**，分组靠 `section` 而不是乐器名 —— 木琴与马林巴都归打击乐，
-   * 低音大管归大管。乐器名只进文件名与展示。
-   */
-  const getOrCreatePart = async (section: string): Promise<string | null> => {
-    const { data: existing } = await supabase
-      .from("sheet_music_parts")
-      .select("id")
-      .eq("sheet_music_id", scoreId)
-      .eq("section", section)
-      .maybeSingle();
-
-    if (existing) return existing.id;
-
-    const { data: newPart, error } = await supabase
-      .from("sheet_music_parts")
-      .insert({ sheet_music_id: scoreId, section })
-      .select("id")
-      .single();
-
-    if (error) {
-      console.error("Create part failed:", error);
-      return null;
-    }
-    return newPart.id;
-  };
-
   // 三个输入 handler 都顺手清 `error`：那是**上一次**拦截留下的红字，而它只在
   // 「下一次点确认上传且通过判据」时才被清掉 —— 用户明明改好了，红字还挂着，
   // 读起来像「改完还是不行」。（清 error 不会让漏填的行失去提示：
@@ -1312,8 +1286,12 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       // 声部：**按需建、同一个声部全批只发一次** SELECT+INSERT。
       //
       // 为什么不能让每个 worker 各自去建：getOrCreatePart 是「先 SELECT 再 INSERT」，
-      // 两个并发 worker 撞上同一个新声部会双双查空、双双插入 → **重复声部行**
-      // （表上还没有唯一约束）。这里用 Map 存**同一张票（promise）**，后到的 await 同一张，
+      // 两个并发 worker 撞上同一个新声部会双双查空、双双插入 —— 这时 `sheet_music_parts`
+      // 上的 `UNIQUE (sheet_music_id, section)`（迁移 `20260926120000`）会判其中一个
+      // 23505，而 `getOrCreatePart` 把它咽成 null → **那一行按「声部创建失败」报错**。
+      // （早先这里写的是「表上还没有唯一约束、会插出重复声部行」，**那句已过期**：
+      // 约束加上了，症状从「静默重复」变成「一次可重试的失败」——仍然要收口，
+      // 只是代价变了。）这里用 Map 存**同一张票（promise）**，后到的 await 同一张，
       // 竞态就没了 —— 靠的是一张票，而不是靠「先把全批串行建完」。
       //
       // 也**不能**先串行把全批声部建出来：取消（或中途失败）会留下一批**没有任何文件
@@ -1324,7 +1302,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         let ticket = partTickets.get(section);
         if (!ticket) {
           // get → 调用 → set 之间没有 await，两个 worker 不会各拿到一张票
-          ticket = getOrCreatePart(section);
+          ticket = getOrCreatePart(scoreId, section);
           partTickets.set(section, ticket);
         }
         return ticket;

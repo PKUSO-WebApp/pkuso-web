@@ -90,6 +90,34 @@ const INVISIBLE_IN_NAME =
   /[\p{Cc}\p{Cf}\p{Cs}\p{Default_Ignorable_Code_Point}\u2800\ufffc\p{Zs}\p{Zl}\p{Zp}]/u;
 
 /**
+ * **整串都由看不见的字符组成**时，返回其中第一个；否则 `null`。
+ *
+ * 它服务的是**不进文件名的自由文本**（目前只有曲名），补的是 `row-text.ts` 的 `isBlankName`
+ * 够不着的那一格：`isBlankName` 只剥 `\p{Cf}\p{Cc}` 再看 trim，而韩文填充符（U+3164）、
+ * 变体选择符这些的 Unicode 类别是 `Lo`/`Mn`，剥不掉 —— 一个只填了 U+3164 的曲名会**落库**，
+ * 然后渲染成一张没有标题的卡片，事后没人能指着它删。
+ *
+ * ⚠️ **不要把它并进 `isBlankName`**：那个函数是给**会进文件名/库值**的字段（乐器名、
+ * 声部名）用的，而那里「只填了 U+3164」的**正确出口**是 `findUnsafeInName` +
+ * 「有看不见的字符（U+3164），请手工重新输入」——比笼统的「请先填写」准确得多
+ * （`isBlankName` 的 docblock 里写着这句分工）。合并会把那句更准的话顶掉，
+ * 上传侧与库编辑的文案当场分叉。
+ *
+ * 判据用的是 `INVISIBLE_IN_NAME`（同一份正则），只额外放行**普通空格**：名字全由空格组成
+ * 归 `isBlankName` 管，不归这条。
+ *
+ * ⚠️ 只收「**整串**都看不见」这一种。夹在正常文字里的零宽字符不管 —— 曲名不进文件名、
+ * 也没有唯一约束，那种脏字符的危害与文件名那一侧不是一回事；按文件名那套去拦，
+ * 会让「肖五​」这种无害输入被拒。
+ */
+export function findInvisibleOnly(raw: string): string | null {
+  const chars = [...raw];
+  if (chars.length === 0) return null;
+  if (!chars.every((c) => c === " " || INVISIBLE_IN_NAME.test(c))) return null;
+  return chars.find((c) => INVISIBLE_IN_NAME.test(c)) ?? null;
+}
+
+/**
  * 名字里第一个不能用的东西；没有则 `null`。
  *
  * 返回命中的**原文**（`..` 是两个字符）而不是布尔：调用方要把它写进给用户看的文案里。

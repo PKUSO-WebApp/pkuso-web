@@ -1,4 +1,5 @@
 import { createServerSupabase } from "@/lib/supabase-server";
+import type { ProfileUpdate } from "@/types/database";
 import { NextResponse } from "next/server";
 
 /**
@@ -67,7 +68,7 @@ export async function POST(request: Request) {
 
         if (memberInfo) {
           // 构建需要更新的字段（仅填充空字段）
-          const updates: Record<string, unknown> = {};
+          const updates: ProfileUpdate = {};
 
           // 从 profiles 获取其他字段的当前值
           const { data: fullProfile } = await supabase

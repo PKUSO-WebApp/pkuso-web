@@ -1,4 +1,5 @@
 import { createServerSupabase } from "@/lib/supabase-server";
+import type { AnnouncementUpdate } from "@/types/database";
 import { NextResponse } from "next/server";
 
 /**
@@ -97,7 +98,7 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: "缺少公告内容" }, { status: 400 });
     }
 
-    const updates: Record<string, unknown> = { content };
+    const updates: AnnouncementUpdate = { content };
     if (title !== undefined) updates.title = title;
     if (end_time !== undefined) updates.end_time = end_time;
 

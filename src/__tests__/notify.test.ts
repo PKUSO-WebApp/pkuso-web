@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   e,
   resolveTransporter,
@@ -19,6 +19,22 @@ import {
   DEFAULT_SECTION_SUBJECT,
   DEFAULT_SECTION_BODY,
 } from "@/lib/email-template";
+
+// 替身是否真的被构造过 —— 下面那条哨兵断言用它守「替身仍生效」
+const resendStub = vi.hoisted(() => ({ constructed: false }));
+
+// resend 只在 resolveTransporter 的 resend 分支里 `await import("resend")`。
+// 这里是纯单测：不必真的加载并构造 resend —— 替身足够验「选到哪个传输器」，
+// 也免得把这条用例的成败绑在一次真实模块加载上。
+vi.mock("resend", () => ({
+  Resend: class Resend {
+    apiKey: string;
+    constructor(apiKey: string) {
+      this.apiKey = apiKey;
+      resendStub.constructed = true;
+    }
+  },
+}));
 
 // ============================================================
 // 1. HTML 转义
@@ -179,6 +195,9 @@ describe("resolveTransporter() — 传输器选择", () => {
     const result = await resolveTransporter();
     expect(result.mode).toBe("resend");
     expect(result.resend).toBeDefined();
+    // 哨兵：替身一旦失效（比如 import 换了 specifier），这里会红 ——
+    // 否则用例会悄悄退回真实模块加载，正是上面注释要避免的那件事
+    expect(resendStub.constructed).toBe(true);
   });
   it("NEXT_PUBLIC_RESEND_API_KEY 也可触发 resend", async () => {
     process.env.NEXT_PUBLIC_RESEND_API_KEY = "re_pub_456";

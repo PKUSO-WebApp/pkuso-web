@@ -1,4 +1,5 @@
 import { createServerSupabase } from "@/lib/supabase-server";
+import type { ProfileUpdate } from "@/types/database";
 import { NextResponse } from "next/server";
 
 /**
@@ -101,7 +102,7 @@ export async function POST(request: Request) {
       }
 
       // 构建更新字段（全量覆盖，但邮箱为空时不覆盖已有邮箱）
-      const updates: Record<string, unknown> = {};
+      const updates: ProfileUpdate = {};
 
       // 乐器/声部
       if (memberInfo.instrument_name) {

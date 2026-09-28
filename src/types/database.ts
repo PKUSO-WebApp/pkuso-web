@@ -25,6 +25,14 @@ export type NotificationRow = PublicSchema["Tables"]["notifications"]["Row"];
 export type FeedbackRow = PublicSchema["Tables"]["feedback"]["Row"];
 export type SystemNotificationRow = PublicSchema["Tables"]["system_notifications"]["Row"];
 
+// ---- 表写入类型(Update) ----
+// `.update()` 的载荷用这些别名，别用 `Record<string, unknown>`：
+// 后者把字段名和值一起放宽成 unknown（字段名写错也编译得过），
+// 而 postgrest-js 收紧载荷检查后（新版会拒收多余属性）更会直接编译不过。
+// 用到哪张表就加哪张。
+export type AnnouncementUpdate = PublicSchema["Tables"]["announcements"]["Update"];
+export type ProfileUpdate = PublicSchema["Tables"]["profiles"]["Update"];
+
 // ---- 枚举类型(从 database.types.ts Enums 派生) ----
 export type ProfileStatus = PublicSchema["Enums"]["profileStatus"];
 export type ProfileRole = PublicSchema["Enums"]["profileRole"];

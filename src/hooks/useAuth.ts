@@ -3,13 +3,15 @@
 import React from "react";
 import { supabase as defaultClient } from "@/lib/supabase";
 import type { ProfileRow } from "@/types/database";
+import type { UserRole } from "@/context/user-context";
 
 export type AuthState = {
   sessionUserId: string | null;
   sessionLoading: boolean;
   emailConfirmed: boolean | null;
   profileStatus: string | null;
-  profileRole: string | null;
+  /** 收紧到 UserRole：数据库枚举加了角色却忘了同步 `UserRole` 时，这里会编译不过 */
+  profileRole: UserRole | null;
   profileName: string | null;
   profileInstrument: string | null;
   profileEmail: string | null;
@@ -43,7 +45,7 @@ export function useAuth(
   const [sessionLoading, setSessionLoading] = React.useState(true);
   const [emailConfirmed, setEmailConfirmed] = React.useState<boolean | null>(null);
   const [profileStatus, setProfileStatus] = React.useState<string | null>(null);
-  const [profileRole, setProfileRole] = React.useState<string | null>(null);
+  const [profileRole, setProfileRole] = React.useState<UserRole | null>(null);
   const [profileName, setProfileName] = React.useState<string | null>(null);
   const [profileInstrument, setProfileInstrument] = React.useState<string | null>(null);
   const [profileEmail, setProfileEmail] = React.useState<string | null>(null);

@@ -132,6 +132,32 @@ vi.mock("xlsx", () => ({
   writeFile: mocks.mockWriteFile,
 }));
 
+/** 花名册只用到这几个字段，其余按现有夹具补齐（保留类型检查，不打 as 断言） */
+function profileRow(id: string, full_name: string, role: ProfileRow["role"]): ProfileRow {
+  return {
+    id,
+    full_name,
+    role,
+    instrument: "小提琴",
+    avatar_url: null,
+    college: null,
+    email: null,
+    hide_college: false,
+    hide_email: false,
+    hide_join_date: false,
+    hide_phone: false,
+    is_in_orchestra: true,
+    is_section_leader: false,
+    join_date: null,
+    phone_number: null,
+    session_started_at: null,
+    session_token: null,
+    status: null,
+    wechat_openid: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+  };
+}
+
 describe("AdminMembersPage 花名册 tab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -289,5 +315,26 @@ describe("AdminMembersPage 花名册 tab", () => {
     expect(screen.getByText(/团友/)).toBeInTheDocument();
     // 王小五 is_in_orchestra=null → 无后缀
     expect(screen.getByText(/王小五/)).toBeInTheDocument();
+  });
+
+  it("只列团员：admin 与 score_manager 不出现，role 为空不静默漏人", () => {
+    mocks.profiles.splice(
+      0,
+      0,
+      profileRow("u1", "张三", "member"),
+      profileRow("u2", "谱务甲", "score_manager"),
+      profileRow("u3", "管理员乙", "admin"),
+      profileRow("u4", "空角色丙", null),
+    );
+
+    renderWithProviders(<MembersPage />);
+    fireEvent.click(screen.getByRole("button", { name: "全团成员" }));
+
+    expect(screen.getByText("小提琴 - 张三")).toBeInTheDocument();
+    // role 为 NULL（列上没有 NOT NULL）按 member 算：宁可多显示，也不能从花名册里静默消失
+    expect(screen.getByText("小提琴 - 空角色丙")).toBeInTheDocument();
+    // 谱务与管理员都不算团员
+    expect(screen.queryByText("小提琴 - 谱务甲")).not.toBeInTheDocument();
+    expect(screen.queryByText("小提琴 - 管理员乙")).not.toBeInTheDocument();
   });
 });

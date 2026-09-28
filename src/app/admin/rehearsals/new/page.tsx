@@ -155,7 +155,11 @@ export default function AdminCreateRehearsalPage() {
       }
 
       // 新建排练时自动为所有已批准团员生成出勤记录（默认缺勤）
-      const members = (allProfiles as ProfileRow[]).filter((r) => (r.role ?? "") !== "admin");
+      // 只算团员（role === "member"）：管理员与 score_manager 都不是团员，不该进考勤名单。
+      // role 可空（列上没有 NOT NULL），空值按列默认值 member 算，别静默漏人
+      const members = (allProfiles as ProfileRow[]).filter(
+        (r) => (r.role ?? "member") === "member",
+      );
       if (members.length > 0) {
         const rows: AttendanceEntry[] = members.map((m) => ({
           rehearsal_id: rehearsalId,

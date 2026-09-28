@@ -2,7 +2,8 @@
 
 import React from "react";
 
-export type UserRole = "admin" | "member";
+/** 与数据库枚举 `profileRole` 对齐；谁能进 web 端、能进哪些路径见 `@/lib/access` */
+export type UserRole = "admin" | "member" | "score_manager";
 
 export type User = {
   id: string;

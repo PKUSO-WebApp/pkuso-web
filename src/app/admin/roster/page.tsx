@@ -18,8 +18,10 @@ export default function RosterPage() {
     error: rosterError,
     update: updateProfile,
   } = useProfiles({ status: "approved" });
+  // 只列团员：判据是「是 member」，不是「不是 admin」——管理员与 score_manager 都不算团员。
+  // role 可空（列上没有 NOT NULL），空值按列默认值 member 算：宁可按团员显示，也别静默漏人
   const rosterRows = React.useMemo(
-    () => allProfiles.filter((r) => (r.role ?? "") !== "admin") as ProfileRow[],
+    () => allProfiles.filter((r) => (r.role ?? "member") === "member") as ProfileRow[],
     [allProfiles],
   );
 

@@ -23,7 +23,11 @@ vi.mock("next/link", () => ({
 }));
 
 // ---- Mock next/navigation ----
-const mockReplace = vi.fn();
+// pathname 必须可变：守卫的判据是「角色 × 路径」，只测一个路径等于没测矩阵
+const { mockReplace, pathState } = vi.hoisted(() => ({
+  mockReplace: vi.fn(),
+  pathState: { current: "/admin" },
+}));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
     push: vi.fn(),
@@ -31,7 +35,7 @@ vi.mock("next/navigation", () => ({
     refresh: vi.fn(),
     back: vi.fn(),
   }),
-  usePathname: () => "/admin",
+  usePathname: () => pathState.current,
 }));
 
 // ---- Mock useUser（hoisted 以支持动态切换 user）----
@@ -62,6 +66,12 @@ const memberUser: User = {
   role: "member",
   section: "小提琴",
 };
+const scoreManagerUser: User = {
+  id: "score-1",
+  name: "谱务",
+  role: "score_manager",
+  section: "",
+};
 
 describe("AdminLayout", () => {
   let reloadSpy: ReturnType<typeof vi.fn>;
@@ -69,6 +79,7 @@ describe("AdminLayout", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setUser(null);
+    pathState.current = "/admin";
     sessionStorage.clear();
     reloadSpy = vi.fn();
     // jsdom 下 window.location.reload 不可单独 redefine（non-configurable），
@@ -131,6 +142,78 @@ describe("AdminLayout", () => {
       setUser(adminUser);
       render(<AdminLayout>children</AdminLayout>);
       expect(mockReplace).not.toHaveBeenCalled();
+    });
+  });
+
+  // ==========================================
+  // score_manager：只碰谱务（Issue #340）
+  // ==========================================
+  describe("score_manager 只碰谱务", () => {
+    it("谱务列表正常渲染 children，不跳转", () => {
+      setUser(scoreManagerUser);
+      pathState.current = "/admin/sheet-music";
+      render(
+        <AdminLayout>
+          <div data-testid="children-content">子内容</div>
+        </AdminLayout>,
+      );
+      expect(screen.getByTestId("children-content")).toBeInTheDocument();
+      expect(mockReplace).not.toHaveBeenCalled();
+    });
+
+    it("曲子详情（谱务子路径）正常渲染 children", () => {
+      setUser(scoreManagerUser);
+      pathState.current = "/admin/sheet-music/8f3a-1b";
+      render(
+        <AdminLayout>
+          <div data-testid="children-content">子内容</div>
+        </AdminLayout>,
+      );
+      expect(screen.getByTestId("children-content")).toBeInTheDocument();
+      expect(mockReplace).not.toHaveBeenCalled();
+    });
+
+    it("/admin 首页重定向到谱务列表（不是成员引导页 /）", async () => {
+      setUser(scoreManagerUser);
+      pathState.current = "/admin";
+      render(<AdminLayout>children</AdminLayout>);
+      await waitFor(() => {
+        expect(mockReplace).toHaveBeenCalledWith("/admin/sheet-music");
+      });
+    });
+
+    it("非谱务路径（个人设置 / 花名册 / 数据导入）同样回到谱务列表", async () => {
+      for (const path of ["/admin/profile", "/admin/roster", "/admin/config/import"]) {
+        cleanup(); // 逐条独立：别让上一轮挂载的组件替这一轮把 replace 打出来
+        mockReplace.mockClear();
+        setUser(scoreManagerUser);
+        pathState.current = path;
+        render(<AdminLayout>children</AdminLayout>);
+        await waitFor(() => {
+          expect(mockReplace).toHaveBeenCalledWith("/admin/sheet-music");
+        });
+      }
+    });
+
+    it("越界时不渲染 children，显示「正在跳转…」", () => {
+      setUser(scoreManagerUser);
+      pathState.current = "/admin/roster";
+      render(
+        <AdminLayout>
+          <div data-testid="children-content">子内容</div>
+        </AdminLayout>,
+      );
+      expect(screen.queryByTestId("children-content")).not.toBeInTheDocument();
+      expect(screen.getByText("正在跳转…")).toBeInTheDocument();
+    });
+
+    it("member 仍被弹回成员引导页（回归：没被 score_manager 的落点带偏）", async () => {
+      setUser(memberUser);
+      pathState.current = "/admin/sheet-music";
+      render(<AdminLayout>children</AdminLayout>);
+      await waitFor(() => {
+        expect(mockReplace).toHaveBeenCalledWith("/");
+      });
     });
   });
 

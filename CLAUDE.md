@@ -19,7 +19,9 @@ pnpm test         # vitest
 pnpm verify       # 一键:format → lint → typecheck → test
 ```
 
-验证改动 = `pnpm verify` + 起 dev 手动走一遍相关流程(详见 `.claude/skills/verify`)。CI 跑的和 `pnpm verify` 是同一条命令。
+验证改动 = `bash scripts/gate.sh` + 起 dev 手动走一遍相关流程(详见 `.claude/skills/verify`)。
+
+**闸门的唯一定义是 `scripts/gate.sh`**（= `pnpm verify` + `pnpm build`），CI 调的就是它。以前 CI 里写两步、文档里另抄一份，改一处另两处不会跟着变。
 
 ## 架构(跨分支稳定部分)
 

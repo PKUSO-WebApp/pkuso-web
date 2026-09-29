@@ -1,0 +1,33 @@
+# Dependabot 配置
+#
+# 背景（2026-09-29 审计）：三个仓库此前**都没有**这个文件，而 web 的关键依赖已经落后不少
+# —— `@supabase/supabase-js` 差 19 个 minor、`nodemailer` 跨 1 个大版本（它正是发信链路
+# 的核心）、`vitest`/`eslint`/`typescript` 各差 1~2 个大版本。没有自动提醒，落后是必然的。
+#
+# 两条与本仓库其它机制的衔接，别删：
+#   1. `ci.yml` 的 `branch-name` job 会跳过 dependabot 分支 —— 否则它要求 `<type>/<简述>`
+#      前缀，而 Dependabot 的分支叫 `dependabot/npm_and_yarn/...`，每个 PR 都会假红。
+#   2. 本仓库 `main` 的 ruleset 要求 `verify` 通过 —— Dependabot PR 会正常接受这道闸门。
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      # 本仓库强制 Conventional Commits，Dependabot 默认的 "Bump x from a to b" 不合规
+      prefix: "chore(deps)"
+    groups:
+      # 把 minor/patch 合成一个 PR：solo 维护下，五个小版本各开一个 PR 只会被忽略
+      minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "ci(deps)"

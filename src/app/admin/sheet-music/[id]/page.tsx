@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Pencil, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { STORAGE_BUCKETS } from "@/lib/storage";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
 import { UploadModal } from "../upload-modal";
 import { sortPartsForDisplay } from "../sort-parts";
@@ -138,7 +139,7 @@ export default function ScoreDetailPage() {
 
   const removeStorageFiles = async (paths: string[]) => {
     if (paths.length === 0) return;
-    await supabase.storage.from("sheet-music").remove(paths);
+    await supabase.storage.from(STORAGE_BUCKETS.sheetMusic).remove(paths);
   };
 
   const refetch = async () => {
@@ -220,7 +221,9 @@ export default function ScoreDetailPage() {
   };
 
   const downloadFile = async (storagePath: string, fileName: string) => {
-    const { data, error } = await supabase.storage.from("sheet-music").download(storagePath);
+    const { data, error } = await supabase.storage
+      .from(STORAGE_BUCKETS.sheetMusic)
+      .download(storagePath);
 
     if (error) {
       console.error("Download error:", error);

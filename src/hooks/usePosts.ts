@@ -2,6 +2,7 @@
 
 import React from "react";
 import { supabase as defaultClient } from "@/lib/supabase";
+import { STORAGE_BUCKETS, storagePathFromUrl } from "@/lib/storage";
 
 export function usePosts(options?: {
   client?: typeof defaultClient;
@@ -155,12 +156,10 @@ export function usePosts(options?: {
       // 行删除成功后再清理存储图片（best-effort，失败不影响删除结果）
       if (imageUrl) {
         try {
-          // 从 URL 中提取 storage 路径：...community-images/<path>
-          const idx = imageUrl.indexOf("community-images/");
-          if (idx !== -1) {
-            const encodedPath = imageUrl.slice(idx + "community-images/".length);
-            const filePath = decodeURIComponent(encodedPath);
-            await client.storage.from("community-images").remove([filePath]);
+          // 从 URL 中提取 storage 路径：...community-images/<path>（唯一入口见 lib/storage.ts）
+          const filePath = storagePathFromUrl(imageUrl, STORAGE_BUCKETS.communityImages);
+          if (filePath) {
+            await client.storage.from(STORAGE_BUCKETS.communityImages).remove([filePath]);
           }
         } catch {
           // 删除存储文件失败不影响数据库删除结果
@@ -182,10 +181,12 @@ export function usePosts(options?: {
       const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, "-") || "image";
       const path = `${userId}/${Date.now()}-${safeName}`;
       const { error: uploadError } = await client.storage
-        .from("community-images")
+        .from(STORAGE_BUCKETS.communityImages)
         .upload(path, file, { upsert: false });
       if (uploadError) return { error: uploadError.message };
-      const { data: urlData } = client.storage.from("community-images").getPublicUrl(path);
+      const { data: urlData } = client.storage
+        .from(STORAGE_BUCKETS.communityImages)
+        .getPublicUrl(path);
       return { url: urlData.publicUrl };
     },
     [client],

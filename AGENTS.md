@@ -147,7 +147,7 @@ Web 端**只服务管理员**，没有「两端独立」这回事了。新功能
 - **组件复用**: 写新 UI 前先查 `src/components/ui/`(Modal/Toggle/Card/Toast)和该功能域自己的 `components/` 子目录(如 `src/app/admin/rehearsals/components/`)。Button 暂不统一(变体很多,待设计系统定型)。
 - **暗色模式**: `<html data-theme="dark">` 即可全局切换,所有组件应双模式可用。测试时亮/暗都过一遍。
 - **0 行更新必须检测**: 带状态守卫的 update 要链 `.select("id")`,0 行(RLS 静默失败/并发已处理)时 return false,且**在任何副作用(如删附件)之前检测**。
-- **附件路径提取**: storage 路径从 URL 提取统一用 `indexOf("bucket/")` + `decodeURIComponent`,try/catch 兜底(参考 `usePosts.remove`)。
+- **附件路径提取**: 统一走 `src/lib/storage.ts` 的 `storagePathFromUrl(url, bucket)`，bucket 名也从那里取（`STORAGE_BUCKETS`），**不要在调用处写字面量**。自己写 `indexOf` + `decodeURIComponent` 的代价是**静默失败**：bucket 改名或对象名含中文时，上传照常成功而删除悄悄删不掉，界面上看不出任何异常。抠不出路径时它返回 `null`（而不是猜一个键），调用方要显式处理。
 - **blob URL 必须 revoke**: `URL.createObjectURL` 生成的预览在关闭/换图/卸载时配对 `URL.revokeObjectURL`。
 - **竞态守卫用递增序号**: 快速切换的异步读取用 `const seq = ++ref.current` + 回调内比较(优于存 ID 模式,支持任意次快速切换)。
 - **状态机集中注释**: 复杂交互状态机(如请假流程、卡片按钮矩阵)在文件头集中注释声明规则,前后端一致。

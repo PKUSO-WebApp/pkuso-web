@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { LogOut, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { canVisitAdminPath } from "@/lib/access";
+import { STORAGE_BUCKETS } from "@/lib/storage";
 import { useUser } from "@/context/user-context";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
 import { Modal } from "@/components/ui/Modal";
@@ -232,7 +233,9 @@ export default function SheetMusicPage() {
           );
 
         if (files && files.length > 0) {
-          await supabase.storage.from("sheet-music").remove(files.map((f) => f.storage_path));
+          await supabase.storage
+            .from(STORAGE_BUCKETS.sheetMusic)
+            .remove(files.map((f) => f.storage_path));
         }
       }
 

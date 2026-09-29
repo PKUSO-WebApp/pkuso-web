@@ -62,12 +62,25 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: 验证远端 schema 与提交的类型文件一致
+      # 比对目标是 **dev**，而且这个 project ref 是**故意写死在这里的**（2026-09-29 起）。
+      #
+      # 为什么是 dev：本仓库 `main` 上装的类型由 pkuso-backend 的 sync-dev.yml 独家写入、
+      # 内容取自 **dev** schema。检查必须比对照同一个环境，否则就是假红 —— 实测
+      # 2026-09-27 run 36312148142：提交的文件含 client_error_logs（dev 已有），
+      # 而当时链接的 prod 没有，红得毫无信息量，随后被所有人忽略。
+      #
+      # 为什么写死、而不是再用一个 secret：**这次出问题的根因，恰恰是「比对的是哪个环境」
+      # 藏在一个看不见的 secret 里**（`SUPABASE_PROJECT_REF` 名字中性，值指向 prod，
+      # 从 diff 里永远看不出来）。project ref 不是凭据 —— 它在每个请求的 URL 里，
+      # 也公开写在本仓 `.mcp.json` 与 pkuso-backend 的 CLAUDE.md 里。真正需要保密的
+      # `SUPABASE_ACCESS_TOKEN` 仍然走 secret。把环境显式写出来，正是为了让评审能看到它。
+      #
+      # ⚠️ 改这里之前先读 pkuso-backend/CLAUDE.md 的「类型同步的目标分支」一节。
+      - name: 验证 dev schema 与提交的类型文件一致
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
         run: |
-          supabase link --project-ref "$SUPABASE_PROJECT_REF"
+          supabase link --project-ref qibssimzuhusvutubbey
           supabase gen types typescript --linked > /tmp/remote.ts
           # 比对表列结构(忽略分号/缩进等 CLI 版本间格式差异)
           node .github/scripts/compare-db-types.mjs src/types/database.types.ts /tmp/remote.ts

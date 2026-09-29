@@ -132,13 +132,26 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // 更新 profiles
-      const { error: updateError } = await supabase.from("profiles").update(updates).eq("id", p.id);
+      // 更新 profiles：链 .select("id") 做 0 行检测 —— 命中 0 行时无 error
+      // （RLS 静默拒绝 / 行已被并发删除），若按成功处理会把它计进 updatedCount，
+      // 并继续往下改 Auth 层邮箱（Issue #368）
+      const { data: updatedRows, error: updateError } = await supabase
+        .from("profiles")
+        .update(updates)
+        .eq("id", p.id)
+        .select("id");
 
       if (updateError) {
         errorCount++;
         errors.push(`${p.full_name}: ${updateError.message}`);
         console.error(`[SyncProfiles] 更新 ${p.full_name} 失败:`, updateError.message);
+        continue;
+      }
+      if (!updatedRows || updatedRows.length === 0) {
+        const msg = "没有匹配的记录（该成员可能已被删除）";
+        errorCount++;
+        errors.push(`${p.full_name}: ${msg}`);
+        console.error(`[SyncProfiles] 更新 ${p.full_name} 失败:`, msg);
         continue;
       }
 

@@ -25,6 +25,16 @@ const h = vi.hoisted(() => ({
   /** ⚠️ 必须是 `signOut` 而不是 `logout` —— 后者只清内存态，不结束会话（见下面用例） */
   signOut: vi.fn(),
   scores: [] as unknown[],
+  /** 删除曲目时先查的声部 / 文件（0 行检测用例要能给出「有附件」的形状） */
+  parts: [] as { id: string }[],
+  files: [] as { storage_path: string }[],
+  /** `.single()` / `.maybeSingle()` 的返回（本页不用，留着避免桩被别的调用打穿） */
+  singleRow: { data: null, error: null } as { data: unknown; error: unknown },
+  /** `sheet_music.delete()` 的返回（用例内改）：默认命中 1 行；`[]` = 0 行 */
+  deleteResult: { data: [{ id: "s1" }], error: null } as { data: unknown; error: unknown },
+  deletes: [] as { table: string; cols: string; selected: boolean }[],
+  /** storage.remove 收到的路径 —— 「0 行时不许动附件」的断言看它 */
+  storageRemoves: [] as string[][],
 }));
 
 /**
@@ -52,15 +62,72 @@ vi.mock("next/navigation", () => ({ useRouter: () => nav.router }));
 // 本页只在弹窗打开时用它，而它拖着一堆渲染/OCR 依赖进 jsdom 没有意义
 vi.mock("./upload-modal", () => ({ UploadModal: () => null }));
 
+/**
+ * supabase 桩。按表 + 操作分别给结果（Issue #368 的删除用例要控制
+ * `sheet_music.delete()` 命中几行），并把每次写操作与 storage 删除记下来供断言。
+ */
 vi.mock("@/lib/supabase", () => {
-  const resolve = () => ({ data: h.scores, error: null });
-  const chain: Record<string, unknown> = {};
-  for (const m of ["select", "order", "eq", "delete", "insert", "update"]) {
-    chain[m] = () => chain;
-  }
-  chain.order = () => Promise.resolve(resolve());
-  chain.then = (f: (v: unknown) => unknown) => Promise.resolve(resolve()).then(f);
-  return { supabase: { from: () => chain } };
+  const builder = (table: string) => {
+    let op: "select" | "delete" | "insert" | "update" = "select";
+    /** 这次 select 要过哪些列 —— `sheet_music_parts` 那条只取 id/storage_path */
+    let cols = "*";
+    let selected = false;
+    const o: Record<string, unknown> = {};
+    const passthrough = () => o;
+    Object.assign(o, {
+      eq: passthrough,
+      in: passthrough,
+      order: passthrough,
+      gte: passthrough,
+      lte: passthrough,
+      neq: passthrough,
+      is: passthrough,
+      select: (c?: string) => {
+        if (op !== "select") selected = true; // 写链上的 .select(...)
+        cols = c ?? cols;
+        return o;
+      },
+      single: () => Promise.resolve(h.singleRow),
+      maybeSingle: () => Promise.resolve(h.singleRow),
+      delete: () => {
+        op = "delete";
+        return o;
+      },
+      insert: () => {
+        op = "insert";
+        return o;
+      },
+      update: () => {
+        op = "update";
+        return o;
+      },
+      then: (resolve: (v: unknown) => void) => {
+        if (op === "delete") {
+          h.deletes.push({ table, cols, selected });
+          // 与真实 SDK 同语义：没接 `.select(...)` 就返回 `{ data: null }`（拿不到行）
+          return resolve(selected ? h.deleteResult : { data: null, error: null });
+        }
+        if (op !== "select") return resolve({ data: null, error: null });
+        if (table === "sheet_music_parts") return resolve({ data: h.parts, error: null });
+        if (table === "sheet_music_files") return resolve({ data: h.files, error: null });
+        return resolve({ data: h.scores, error: null });
+      },
+    });
+    return o;
+  };
+  return {
+    supabase: {
+      from: (table: string) => builder(table),
+      storage: {
+        from: () => ({
+          remove: (paths: string[]) => {
+            h.storageRemoves.push(paths);
+            return Promise.resolve({ data: null, error: null });
+          },
+        }),
+      },
+    },
+  };
 });
 
 /**
@@ -99,6 +166,12 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   h.user = null;
+  h.scores = [];
+  h.parts = [];
+  h.files = [];
+  h.deleteResult = { data: [{ id: "s1" }], error: null };
+  h.deletes = [];
+  h.storageRemoves = [];
 });
 
 describe("谱务列表页的顶栏", () => {
@@ -154,5 +227,57 @@ describe("谱务列表页的顶栏", () => {
     expect(h.signOut).toHaveBeenCalledTimes(1);
     // `replace` 而不是 `push`：不退的话本页会留在历史里，退出后按后退又回到这儿
     expect(nav.router.replace).toHaveBeenCalledWith("/login");
+  });
+});
+
+/**
+ * 删曲目的 0 行检测（Issue #368）。
+ *
+ * 原实现是「**先**删 storage 附件、**再**删库行」：命中 0 行时（RLS 静默拒绝 /
+ * 已被并发删除）DB 那行还在，附件却已经被删掉了。契约要求副作用排在检测之后。
+ */
+describe("谱务列表页删曲目（0 行检测）", () => {
+  let confirmSpy: ReturnType<typeof vi.spyOn>;
+  let alertSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    h.user = { id: "u1", role: "admin" };
+    h.scores = [{ id: "s1", title: "第五交响曲", composer: null, notes: null, created_at: null }];
+    h.parts = [{ id: "p1" }];
+    h.files = [{ storage_path: "s1/p1.pdf" }];
+  });
+
+  afterEach(() => {
+    confirmSpy.mockRestore();
+    alertSpy.mockRestore();
+  });
+
+  it("命中 0 行 → 报「删除失败」，**一个附件都不删**、列表里那行留着", async () => {
+    h.deleteResult = { data: [], error: null };
+    renderPage();
+    await waitFor(() => expect(screen.getByText("第五交响曲")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByLabelText("删除 第五交响曲"));
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith("删除失败"));
+    // 契约第 1 条：删除链必须能拿回被影响的行
+    expect(h.deletes).toEqual([{ table: "sheet_music", cols: "id", selected: true }]);
+    // 契约第 4 条：0 行检测之前不许删附件（否则库里还在、附件先没）
+    expect(h.storageRemoves).toEqual([]);
+    // 本地列表也不许移除：库里那行还在
+    expect(screen.getByText("第五交响曲")).toBeInTheDocument();
+  });
+
+  it("命中 1 行 → 照常删附件并从列表移除（成功路径不回归）", async () => {
+    renderPage();
+    await waitFor(() => expect(screen.getByText("第五交响曲")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByLabelText("删除 第五交响曲"));
+
+    await waitFor(() => expect(h.storageRemoves).toEqual([["s1/p1.pdf"]]));
+    await waitFor(() => expect(screen.queryByText("第五交响曲")).not.toBeInTheDocument());
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 });

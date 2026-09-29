@@ -102,7 +102,7 @@ type PendingSubmitData = {
 };
 
 export default function AdminSchedulePage() {
-  const { data: schedules, loading, fetch, checkConflict, remove } = useSchedule();
+  const { data: schedules, loading, fetch, checkConflict, remove, getLastError } = useSchedule();
   const { user } = useUser();
   const { setTitle, setHeaderRight } = useAdminPageHeader();
   const [selectedDate, setSelectedDate] = React.useState<string>(getLocalDateString());
@@ -319,9 +319,24 @@ export default function AdminSchedulePage() {
 
     const { error: insertError } = await supabase.from("schedules").insert(payloads);
     if (insertError) {
-      // 回滚：删除已创建的 group
-      if (groupId) {
-        await supabase.from("schedule_groups").delete().eq("id", groupId);
+      // 回滚：删除已创建的 group。这里没有 group 可回滚时就没有副作用，直接按原文案
+      if (!groupId) {
+        setFormError("添加预约失败，请重试");
+        return;
+      }
+      // 链 .select("id") 做 0 行检测：删不掉会把刚建的 group 留成**没有预约的空壳**
+      // （列表里多一条空重复组）。0 行时无 error（RLS 静默拒绝 / 组已被并发删除），
+      // 而 group 是几行前刚建成功的，所以 0 行几乎只可能是没删掉 —— 不能按成功处理（Issue #368）
+      const { data: rolledBack, error: rollbackError } = await supabase
+        .from("schedule_groups")
+        .delete()
+        .eq("id", groupId)
+        .select("id");
+      if (rollbackError || !rolledBack || rolledBack.length === 0) {
+        console.error("[Schedule] 回滚预约组失败:", rollbackError?.message ?? "命中 0 行");
+        // 说清残留，用户才知道要去列表里清掉那条空组（宁留可见残留，不静默）
+        setFormError("添加预约失败，且自动回滚未生效，可能残留空的重复预约组");
+        return;
       }
       setFormError("添加预约失败，请重试");
       return;
@@ -422,6 +437,7 @@ export default function AdminSchedulePage() {
             schedules={filteredSchedules}
             user={user}
             remove={remove}
+            removeError={getLastError}
             selectedDate={selectedDate}
             isExpanded={isGanttExpanded}
           />

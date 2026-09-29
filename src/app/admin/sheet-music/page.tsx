@@ -216,7 +216,8 @@ export default function SheetMusicPage() {
 
     setDeletingId(score.id);
     try {
-      // 查所有声部的文件，删 storage
+      // 先**只查**（不改状态、不删附件）所有声部的 storage 路径：删行之后就查不到了
+      const storagePaths: string[] = [];
       const { data: parts } = await supabase
         .from("sheet_music_parts")
         .select("id")
@@ -232,13 +233,26 @@ export default function SheetMusicPage() {
           );
 
         if (files && files.length > 0) {
-          await supabase.storage.from("sheet-music").remove(files.map((f) => f.storage_path));
+          storagePaths.push(...files.map((f) => f.storage_path));
         }
       }
 
-      // DB CASCADE 删除 parts + files
-      const { error } = await supabase.from("sheet_music").delete().eq("id", score.id);
+      // DB CASCADE 删除 parts + files：链 .select("id") 做 0 行检测 —— 0 行时无 error
+      // （RLS 静默拒绝 / 已被并发删除），若按成功处理会先把 storage 删掉而库里那行还在。
+      // 附件删除是副作用，必须排在检测之后（usePosts.remove 的同款顺序，Issue #368）
+      const { data: deleted, error } = await supabase
+        .from("sheet_music")
+        .delete()
+        .eq("id", score.id)
+        .select("id");
       if (error) throw error;
+      if (!deleted || deleted.length === 0) throw new Error("没有匹配的记录，曲目可能已被删除");
+
+      // 行删除成功后再清 storage（best-effort，失败不影响删除结果）
+      if (storagePaths.length > 0) {
+        await supabase.storage.from("sheet-music").remove(storagePaths);
+      }
+
       setScores((prev) => prev.filter((s) => s.id !== score.id));
     } catch (error) {
       console.error("Delete score error:", error);
@@ -282,6 +296,8 @@ export default function SheetMusicPage() {
                     deleteScore(score);
                   }}
                   disabled={!!deletingId}
+                  aria-label={`删除 ${score.title}`}
+                  title="删除曲目"
                   className="ml-3 p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded shrink-0 disabled:opacity-50"
                 >
                   <Trash2 className="w-4 h-4" />

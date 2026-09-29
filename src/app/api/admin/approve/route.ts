@@ -42,11 +42,21 @@ export async function POST(request: Request) {
     }
 
     // 3. 执行批准
-    const { error } = await supabase.from("profiles").update({ status: "approved" }).eq("id", id);
+    // 链 .select("id") 做 0 行检测：命中 0 行时无 error（RLS 静默拒绝 / 目标已被并发处理），
+    // 若按成功处理，审批界面会显示「已批准」而库里没变（Issue #368）
+    const { data: approved, error } = await supabase
+      .from("profiles")
+      .update({ status: "approved" })
+      .eq("id", id)
+      .select("id");
 
     if (error) {
       console.error("[Admin Approve] 批准失败:", error.message);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    if (!approved || approved.length === 0) {
+      console.error("[Admin Approve] 没有匹配的记录，id =", id);
+      return NextResponse.json({ error: "没有匹配的记录，申请不存在或已被处理" }, { status: 404 });
     }
 
     // 4. 尝试从 member_info 预填 profile（仅填充空字段）
@@ -91,7 +101,18 @@ export async function POST(request: Request) {
 
           // 如果有需要更新的字段
           if (Object.keys(updates).length > 0) {
-            await supabase.from("profiles").update(updates).eq("id", id);
+            // 链 .select("id") 做 0 行检测：预填本身是 best-effort，但 0 行时**不能**打
+            // 「已预填」那句日志 —— 那会把一次没生效的写入记成成功（Issue #368）。
+            // 抛进下面的 catch 只记失败，批准流程照常返回成功。
+            const { data: prefilled, error: prefillError } = await supabase
+              .from("profiles")
+              .update(updates)
+              .eq("id", id)
+              .select("id");
+            if (prefillError) throw prefillError;
+            if (!prefilled || prefilled.length === 0) {
+              throw new Error("没有匹配的记录，预填未生效");
+            }
             console.log("[Admin Approve] 已从 member_info 预填 profile:", updates);
           }
         }

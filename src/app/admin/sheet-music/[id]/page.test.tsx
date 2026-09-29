@@ -41,7 +41,16 @@ const h = vi.hoisted(() => ({
   existingPartId: null as string | null,
   /** 每一次 update 的入参（表名 + 载荷）—— 接线错没错全看它 */
   updates: [] as { table: string; payload: Record<string, unknown> }[],
-  deletes: [] as { table: string; value: unknown }[],
+  deletes: [] as { table: string; value: unknown; cols?: string }[],
+  /** 删除链的返回（用例内改）：默认命中 1 行；`[]` = 0 行（Issue #368） */
+  deleteResult: { data: [{ id: "deleted" }], error: null } as { data: unknown; error: unknown },
+  /** storage.remove 收到的路径 —— 「0 行时不许动附件」的断言看它 */
+  storageRemoves: [] as string[][],
+  /**
+   * 已发出的**读**查询次数。用来钉住 `refetch()` 的位置：0 行时不许重取，
+   * 一次新读都不该发 —— 只断言「列表长啥样」抓不到「重取被上移」（重取完照样 throw）。
+   */
+  reads: 0,
 }));
 
 /**
@@ -77,9 +86,13 @@ vi.mock("@/lib/supabase", () => {
       return { data: [{ id: "ok" }], error: null };
     }
     if (req.op === "delete") {
-      h.deletes.push({ table: req.table, value: req.filters[0]?.value });
-      return { data: null, error: null };
+      // 记下 `.select(...)` 的列名 —— 没有它就拿不回被影响的行（Issue #368）
+      h.deletes.push({ table: req.table, value: req.filters[0]?.value, cols: req.cols });
+      // 与真实 SDK 同语义：没接 `.select(...)` 就返回 `{ data: null }`（拿不到行）
+      return req.cols ? h.deleteResult : { data: null, error: null };
     }
+    // 走到这里就是一次读查询（update/delete 已在上面 return）
+    h.reads += 1;
     if (req.table === "sheet_music") return { data: h.score, error: null };
     if (req.table === "sheet_music_parts") {
       // 同一张表上两种读法：页面读整行（`*`），`getOrCreatePart` 只读 id
@@ -129,7 +142,15 @@ vi.mock("@/lib/supabase", () => {
           chain({ table, op: "update", payload, filters: [] }),
         delete: () => chain({ table, op: "delete", filters: [] }),
       }),
-      storage: { from: () => ({ remove: vi.fn(), download: vi.fn() }) },
+      storage: {
+        from: () => ({
+          remove: (paths: string[]) => {
+            h.storageRemoves.push(paths);
+            return Promise.resolve({ data: null, error: null });
+          },
+          download: vi.fn(),
+        }),
+      },
     },
   };
 });
@@ -184,6 +205,9 @@ afterEach(() => {
   h.existingPartId = null;
   h.updates = [];
   h.deletes = [];
+  h.deleteResult = { data: [{ id: "deleted" }], error: null };
+  h.storageRemoves = [];
+  h.reads = 0;
 });
 
 function seedOneScore() {
@@ -282,5 +306,87 @@ describe("曲谱详情页", () => {
       payload: { title: "肖五", composer: "肖斯塔科维奇", notes: null },
     });
     await waitFor(() => expect(screen.getByTestId("header-title").textContent).toBe("肖五"));
+  });
+});
+
+/**
+ * 删除的 0 行检测（Issue #368）—— 两处：删文件、删声部。
+ *
+ * 原实现是「**先**删 storage 附件、**再**删库行」：0 行（RLS 静默拒绝 / 并发已删）时
+ * DB 那行还在，附件却已经被删掉了。契约要求副作用排在 0 行检测**之后**。
+ */
+describe("曲谱详情页的删除（0 行检测）", () => {
+  let confirmSpy: ReturnType<typeof vi.spyOn>;
+  let alertSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    confirmSpy.mockRestore();
+    alertSpy.mockRestore();
+  });
+
+  it("删文件命中 0 行 → 返回失败：**不动 storage 附件**、弹「删除失败」", async () => {
+    seedOneScore();
+    h.deleteResult = { data: [], error: null };
+    renderPage();
+    await waitFor(() => expect(screen.getByText("F调圆号1.pdf")).toBeTruthy());
+
+    const readsBefore = h.reads;
+    fireEvent.click(screen.getByLabelText("删除 F调圆号1.pdf"));
+
+    await waitFor(() => expect(h.deletes).toHaveLength(1));
+    // 契约第 1 条：删除链必须能拿回被影响的行（记下 `.select("id")`）
+    expect(h.deletes[0]).toEqual({ table: "sheet_music_files", value: "file-1", cols: "id" });
+    // 契约第 4 条：0 行检测之前不许删附件 —— 库里那行还在，附件不能先没
+    expect(h.storageRemoves).toEqual([]);
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith("删除失败"));
+    // 契约第 4 条（同一件事的另一半）：`refetch()` 也是副作用，同样要排在检测之后。
+    // 只断言「附件没删 / 列表没变」抓不到它被上移 —— 重取完照样 throw。所以直接数读查询。
+    expect(h.reads).toBe(readsBefore);
+  });
+
+  it("删文件命中 1 行 → 照常清 storage（成功路径不回归）", async () => {
+    seedOneScore();
+    renderPage();
+    await waitFor(() => expect(screen.getByText("F调圆号1.pdf")).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText("删除 F调圆号1.pdf"));
+
+    await waitFor(() => expect(h.storageRemoves).toHaveLength(1));
+    expect(h.storageRemoves[0]).toEqual(["score-1/file-1.pdf"]);
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it("删声部命中 0 行 → 不动 storage 附件、弹「删除失败」", async () => {
+    seedOneScore();
+    h.deleteResult = { data: [], error: null };
+    renderPage();
+    await waitFor(() => expect(screen.getByText("圆号")).toBeTruthy());
+
+    const readsBefore = h.reads;
+    fireEvent.click(screen.getAllByText("删除声部")[0]);
+
+    await waitFor(() => expect(h.deletes).toHaveLength(1));
+    expect(h.deletes[0]).toEqual({ table: "sheet_music_parts", value: "part-1", cols: "id" });
+    // 整组的附件都不能在「库行还在」的前提下降动
+    expect(h.storageRemoves).toEqual([]);
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith("删除失败"));
+    // 同 deleteFile：`refetch()` 也必须排在 0 行检测之后
+    expect(h.reads).toBe(readsBefore);
+  });
+
+  it("删声部命中 1 行 → 照常清 storage（成功路径不回归）", async () => {
+    seedOneScore();
+    renderPage();
+    await waitFor(() => expect(screen.getByText("圆号")).toBeTruthy());
+
+    fireEvent.click(screen.getAllByText("删除声部")[0]);
+
+    await waitFor(() => expect(h.storageRemoves).toHaveLength(1));
+    expect(h.storageRemoves[0]).toEqual(["score-1/file-1.pdf"]);
   });
 });

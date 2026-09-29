@@ -19,7 +19,20 @@ vi.mock("next/navigation", () => ({
 // 所有 mock 变量都放在 vi.hoisted 中，避免 vitest hoist 机制导致的"Cannot access before initialization"
 const mocks = vi.hoisted(() => {
   const mockSelectSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-  const mockDelete = vi.fn().mockReturnThis();
+  /**
+   * `schedule_groups` 删除链的结果（用例内改）。
+   * `select("id")` 是 Issue #368 的 0 行检测：没有它就**拿不回被影响的行** ——
+   * 桩按真实语义建模（见 `mockGroupDeleteSelect` 的断言）。
+   */
+  const groupDelete: { data: unknown; error: unknown } = { data: null, error: null };
+  const mockGroupDeleteSelect = vi.fn((cols: string) => {
+    void cols;
+    return Promise.resolve({ data: groupDelete.data, error: groupDelete.error });
+  });
+  // `.delete().eq(...)` 之后再 `.select("id")` —— 0 行时 data 为空数组、error 仍是 null
+  const mockDelete = vi.fn(() => ({
+    eq: vi.fn(() => ({ select: mockGroupDeleteSelect })),
+  }));
   const mockSelect = vi.fn().mockReturnValue({
     eq: vi.fn().mockReturnValue({ single: mockSelectSingle }),
   });
@@ -28,7 +41,7 @@ const mocks = vi.hoisted(() => {
     delete: mockDelete,
     insert: vi.fn().mockResolvedValue({ error: null }),
   });
-  return { mockSelectSingle, mockDelete, mockSelect, mockFrom };
+  return { mockSelectSingle, groupDelete, mockGroupDeleteSelect, mockDelete, mockSelect, mockFrom };
 });
 
 vi.mock("@/lib/supabase", () => ({
@@ -63,6 +76,8 @@ const mockSchedules = [
 describe("AdminScheduleGantt 组件", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.groupDelete.data = null;
+    mocks.groupDelete.error = null;
     // 默认模拟 author 查询成功
     mocks.mockSelectSingle.mockImplementation((table: string) => {
       if (table === "profiles") {
@@ -289,6 +304,32 @@ describe("AdminScheduleGantt 组件", () => {
       expect(screen.queryByText("删除此预约")).not.toBeInTheDocument();
     });
 
+    it("单条删除失败 → 显示 hook 报的**具体原因**，而不是通用文案（Issue #368 第 7 条）", async () => {
+      const remove = vi.fn().mockResolvedValue(false);
+      render(
+        <AdminScheduleGantt
+          {...defaultProps}
+          remove={remove}
+          removeError={() => "没有匹配的记录，预约可能已被删除"}
+        />,
+      );
+
+      const bar = screen
+        .getAllByText("测试预约A")[0]
+        .closest(".absolute.left-2.right-2.rounded-lg.cursor-pointer");
+      fireEvent.click(bar as HTMLElement);
+      await waitFor(() => expect(screen.getByText("删除此预约")).toBeInTheDocument());
+      fireEvent.click(screen.getByText("删除此预约"));
+      fireEvent.click(screen.getByText("确认删除"));
+
+      // hook 的 error 只置在 state 上时，这里读到的是旧值 ⇒ 永远只剩通用文案。
+      // 走同步出口才谈得上「可见的 error」。
+      await waitFor(() =>
+        expect(screen.getByText("没有匹配的记录，预约可能已被删除")).toBeInTheDocument(),
+      );
+      expect(screen.queryByText("删除失败，请稍后重试")).not.toBeInTheDocument();
+    });
+
     it("删除失败时应显示错误提示", async () => {
       const remove = vi.fn().mockResolvedValue(false);
       render(<AdminScheduleGantt {...defaultProps} remove={remove} />);
@@ -307,6 +348,75 @@ describe("AdminScheduleGantt 组件", () => {
       await waitFor(() => {
         expect(screen.getByText("删除失败，请稍后重试")).toBeInTheDocument();
       });
+    });
+  });
+
+  // ==========================================
+  // 删除重复预约组：0 行检测（Issue #368）
+  // ==========================================
+  describe("删除重复预约组（0 行检测）", () => {
+    const groupedSchedule = { ...mockSchedules[0], id: 7, group_id: "group-1" };
+    const groupedProps = {
+      ...defaultProps,
+      schedules: [groupedSchedule] as unknown as ScheduleRow[],
+    };
+
+    /** 打开弹窗 -> 进入「删除整组」确认态 */
+    async function openGroupDeleteConfirm() {
+      render(<AdminScheduleGantt {...groupedProps} />);
+      const bar = screen
+        .getAllByText("测试预约A")[0]
+        .closest(".absolute.left-2.right-2.rounded-lg.cursor-pointer");
+      fireEvent.click(bar as HTMLElement);
+      await waitFor(() => expect(screen.getByText("删除所有重复预约")).toBeInTheDocument());
+      fireEvent.click(screen.getByText("删除所有重复预约"));
+      await waitFor(() => expect(screen.getByText("确认删除")).toBeInTheDocument());
+    }
+
+    it("命中 1 行 → 关掉弹窗，且写链上接了 .select(...)", async () => {
+      mocks.groupDelete.data = [{ id: "group-1" }];
+
+      await openGroupDeleteConfirm();
+      fireEvent.click(screen.getByText("确认删除"));
+
+      // ⚠️ 用弹窗标题（「预约详情」）判「关没关」，不能用「确认删除」——
+      // handleDelete 无论成败都会 setDeleteMode(null)，那个按钮在 0 行时也照样消失。
+      await waitFor(() => expect(screen.queryByText("预约详情")).not.toBeInTheDocument());
+      // 契约第 1 条：写链必须能拿回被影响的行。去掉 `.select("id")` 时这两条都会红
+      //（那一步之后 `await` 拿到的不是 thenable，0 行分支会把「成功」判成失败）。
+      expect(mocks.mockGroupDeleteSelect).toHaveBeenCalledWith("id");
+      expect(groupedProps.remove).not.toHaveBeenCalled();
+    });
+
+    it("命中 0 行 → 报「没有匹配的记录」且**弹窗不关**（关掉就等于宣称「已删除」）", async () => {
+      mocks.groupDelete.data = [];
+
+      await openGroupDeleteConfirm();
+      fireEvent.click(screen.getByText("确认删除"));
+
+      // 文案必须与「真报错」区分开：0 行意味着那组**已经不存在**，
+      // 重试永远不会成功，所以不能沿用「请稍后重试」
+      await waitFor(() =>
+        expect(screen.getByText("没有匹配的记录，该预约组可能已被删除")).toBeInTheDocument(),
+      );
+      expect(screen.queryByText("删除预约组失败，请稍后重试")).not.toBeInTheDocument();
+      // 0 行 = 库里那组还在 ⇒ 不能走 handleCloseModal 把弹窗关掉
+      expect(screen.getByText("预约详情")).toBeInTheDocument();
+      expect(groupedProps.remove).not.toHaveBeenCalled();
+    });
+
+    it("真报错 → 仍用「请稍后重试」文案（两条失败路径不混同）", async () => {
+      mocks.groupDelete.error = { message: "permission denied" };
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await openGroupDeleteConfirm();
+      fireEvent.click(screen.getByText("确认删除"));
+
+      await waitFor(() =>
+        expect(screen.getByText("删除预约组失败，请稍后重试")).toBeInTheDocument(),
+      );
+      expect(screen.getByText("预约详情")).toBeInTheDocument();
+      err.mockRestore();
     });
   });
 

@@ -10,6 +10,22 @@ export function useSchedule(client: typeof defaultClient = defaultClient) {
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
 
+  /**
+   * 最近一次 error 的**同步可读**副本，经 `getLastError()` 出给调用方。
+   *
+   * 为什么光有 `error` state 不够（这正是「置一个**可见**的 error」落不了地的原因）：
+   * 调用方是在 `await remove(...)` / `await update(...)` 返回后的**同一个闭包**里决定
+   * 文案的（如甘特图失败时那句提示），而 `setError` 要到下一次渲染才进那个闭包
+   * ⇒ 那里读 `error` 拿到的是**上一次**的值（首次失败时是 `null`），
+   * 于是「没有匹配的记录，…」永远显示不出来、只剩通用文案。
+   */
+  const lastErrorRef = React.useRef<string | null>(null);
+  const reportError = React.useCallback((message: string | null) => {
+    lastErrorRef.current = message;
+    setError(message);
+  }, []);
+  const getLastError = React.useCallback(() => lastErrorRef.current, []);
+
   const fetch = React.useCallback(
     async (date?: string) => {
       setLoading(true);
@@ -28,13 +44,13 @@ export function useSchedule(client: typeof defaultClient = defaultClient) {
       const { data: rows, error: dbError } = await query;
       setLoading(false);
       if (dbError) {
-        setError(dbError.message);
+        reportError(dbError.message);
         setData([]);
         return;
       }
       setData((rows as ScheduleRow[]) ?? []);
     },
-    [client],
+    [client, reportError],
   );
 
   React.useEffect(() => {
@@ -48,49 +64,65 @@ export function useSchedule(client: typeof defaultClient = defaultClient) {
       const { error: dbError } = await client.from("schedules").insert([payload] as never);
       setSaving(false);
       if (dbError) {
-        setError(dbError.message);
+        reportError(dbError.message);
         return false;
       }
-      setError(null);
+      reportError(null);
       await fetch(date);
       return true;
     },
-    [client, fetch],
+    [client, fetch, reportError],
   );
 
   const update = React.useCallback(
     async (id: number, payload: Record<string, unknown>, date?: string) => {
       setSaving(true);
-      const { error: dbError } = await client
+      // 链 .select("id") 做 0 行检测：命中 0 行时无 error（RLS 静默拒绝 / 记录已被并发删除），
+      // 若按成功处理会重取列表后显示「没变」而宣称成功（Issue #368）
+      const { data: updated, error: dbError } = await client
         .from("schedules")
         .update(payload as never)
-        .eq("id", id);
+        .eq("id", id)
+        .select("id");
       setSaving(false);
       if (dbError) {
-        setError(dbError.message);
+        reportError(dbError.message);
         return false;
       }
-      setError(null);
+      if (!updated || updated.length === 0) {
+        reportError("没有匹配的记录，预约可能已被删除");
+        return false;
+      }
+      reportError(null);
       await fetch(date);
       return true;
     },
-    [client, fetch],
+    [client, fetch, reportError],
   );
 
   const remove = React.useCallback(
     async (id: number, date?: string) => {
       setSaving(true);
-      const { error: dbError } = await client.from("schedules").delete().eq("id", id);
+      // 同 update：0 行时不能报成功（Issue #368）
+      const { data: deleted, error: dbError } = await client
+        .from("schedules")
+        .delete()
+        .eq("id", id)
+        .select("id");
       setSaving(false);
       if (dbError) {
-        setError(dbError.message);
+        reportError(dbError.message);
         return false;
       }
-      setError(null);
+      if (!deleted || deleted.length === 0) {
+        reportError("没有匹配的记录，预约可能已被删除");
+        return false;
+      }
+      reportError(null);
       await fetch(date);
       return true;
     },
-    [client, fetch],
+    [client, fetch, reportError],
   );
 
   // 检查时间冲突（不支持跨天预约）
@@ -161,5 +193,16 @@ export function useSchedule(client: typeof defaultClient = defaultClient) {
     [client],
   );
 
-  return { data, loading, error, saving, fetch, create, update, remove, checkConflict };
+  return {
+    data,
+    loading,
+    error,
+    saving,
+    fetch,
+    create,
+    update,
+    remove,
+    checkConflict,
+    getLastError,
+  };
 }

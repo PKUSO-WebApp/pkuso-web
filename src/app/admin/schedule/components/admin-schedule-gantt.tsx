@@ -11,6 +11,14 @@ type Props = {
   schedules: ScheduleRow[];
   user: { id: string } | null | undefined;
   remove: (id: number, date?: string) => Promise<boolean>;
+  /**
+   * `remove` 那份 hook（`useSchedule`）的**同步**错误出口，通常直接传 `getLastError`。
+   *
+   * 为什么不直接传 `error` 字符串：`remove()` 是在本组件的闭包里被 await 的，
+   * 而 hook 的 `setError` 要下一次渲染才进这个闭包 ⇒ 此处读 `error` 只会拿到旧值，
+   * 「没有匹配的记录，…」就永远显示不出来。给了它才谈得上「可见的 error」。
+   */
+  removeError?: () => string | null;
   selectedDate: string;
   isExpanded?: boolean;
 };
@@ -42,7 +50,13 @@ function formatTime(timeStr: string | null): string {
   return date.toTimeString().slice(0, 5);
 }
 
-export function AdminScheduleGantt({ schedules, remove, selectedDate, isExpanded }: Props) {
+export function AdminScheduleGantt({
+  schedules,
+  remove,
+  removeError,
+  selectedDate,
+  isExpanded,
+}: Props) {
   const router = useRouter();
   const [selectedSchedule, setSelectedSchedule] = React.useState<ScheduleRow | null>(null);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
@@ -98,18 +112,36 @@ export function AdminScheduleGantt({ schedules, remove, selectedDate, isExpanded
     let success = false;
 
     if (deleteMode === "group" && selectedSchedule.group_id) {
-      // 删除组时只需要删除 schedule_groups，ON DELETE CASCADE 会自动删除关联的 schedules
-      const { error: deleteGroupError } = await supabase
+      // 删除组时只需要删除 schedule_groups：关联的 schedules 由外键级联删除。
+      // 依据是 prod 实测的 `pg_get_constraintdef`（ON DELETE **CASCADE**，`confdeltype = 'c'`），
+      // 与本仓的 DDL 记录一致：
+      //   supabase/migrations/20260722021000_add_schedules_group_id_fkey.sql
+      // ⚠️ **dev 上这条约束分叉成了 ON DELETE SET NULL**（同一句查询在 dev 返回 SET NULL
+      // ⇒ 只把 `schedules.group_id` 置空、不删行）。因此「在 dev/本地看到删组不删 schedules」
+      // 是**环境差异，不是线上行为** —— 判断这段代码的效果时以 prod 为准，别拿 dev 的观察
+      // 反过来改这里的逻辑或断定界面在说谎。
+      // 链 .select("id") 做 0 行检测：命中 0 行时无 error（RLS 静默拒绝 / 组已被并发删除），
+      // 若按成功处理会关掉弹窗宣称「已删除」而库里还在（Issue #368）
+      const { data: deletedGroups, error: deleteGroupError } = await supabase
         .from("schedule_groups")
         .delete()
-        .eq("id", selectedSchedule.group_id);
+        .eq("id", selectedSchedule.group_id)
+        .select("id");
       if (deleteGroupError) {
+        // 真报错可能是暂时的（网络/权限），所以文案是「请稍后重试」
+        console.error("删除预约组失败:", deleteGroupError.message);
         setError("删除预约组失败，请稍后重试");
         setDeleting(false);
         setDeleteMode(null);
         return;
       }
-      // ON DELETE CASCADE 会自动删除关联的 schedules
+      if (!deletedGroups || deletedGroups.length === 0) {
+        // 0 行 = 那组已经不在库里了 —— 重试永远不会成功，所以文案不能用「请稍后重试」
+        setError("没有匹配的记录，该预约组可能已被删除");
+        setDeleting(false);
+        setDeleteMode(null);
+        return;
+      }
       success = true;
     } else {
       success = await remove(selectedSchedule.id, selectedDate);
@@ -118,7 +150,8 @@ export function AdminScheduleGantt({ schedules, remove, selectedDate, isExpanded
     if (success) {
       handleCloseModal();
     } else {
-      setError("删除失败，请稍后重试");
+      // 优先显示 hook 报的具体原因（如「没有匹配的记录，预约可能已被删除」）
+      setError(removeError?.() ?? "删除失败，请稍后重试");
     }
     setDeleting(false);
     setDeleteMode(null);

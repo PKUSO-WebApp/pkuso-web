@@ -23,6 +23,21 @@ pnpm verify       # 一键:format → lint → typecheck → test
 
 **闸门的唯一定义是 `scripts/gate.sh`**（= `pnpm verify` + `pnpm build`），CI 调的就是它。以前 CI 里写两步、文档里另抄一份，改一处另两处不会跟着变。
 
+### git hook（本地便利，**不是**门）
+
+```bash
+git config core.hooksPath .githooks     # 每个克隆一次，没法提交
+```
+
+装好之后推 `main` 会先跑一次闸门（推 WIP 分支不挡——挡那种是反效果，会把人逼去 `--no-verify`）。
+
+⚠️ **但它不是可靠的门，两条原因都别忘**：
+
+1. **没装就是没有** —— `core.hooksPath` 在 `.git/config` 里，不进版本控制。新克隆、换台机器、别的 harness 起的会话，全都是没有的状态。
+2. **可以 `git push --no-verify` 绕过。**
+
+**真正的兜底是 CI 的必需检查**（规则集里的 `required_status_checks: verify`）—— 那个决定 PR 能不能合，绕不过去。hook 的价值只是让你**在推之前**就知道，不是让别人绕不过去。
+
 ## 架构(跨分支稳定部分)
 
 ### 数据层:Supabase

@@ -102,7 +102,17 @@ jobs:
     # Dependabot 的分支叫 `dependabot/npm_and_yarn/...`，永远不满足下面的 `<type>/<简述>`
     # 正则。不排除它的话，**每一个依赖更新 PR 一开出来就是红的** —— 而这种「反正一直是红的」
     # 会被所有人忽略，等真正需要看这条检查时它已经没有信号了。
-    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+    #
+    # ⚠️ 这里判的是 **PR 的作者**，不是 `github.actor`。两者的区别有实测依据
+    #    （2026-09-29：#348 被人 reopen 之后本 job 重新变红）：
+    #      · 需要 secret 的两个 job（下面 verify 的 build 段、gen-types-check）
+    #        用 `github.actor` —— 那正好对应 GitHub 扣留 secrets 的条件
+    #        （实测：人 reopen 后 secrets 就被发放了，那两个 job 随即变绿）。
+    #      · 本 job 要判的是「这个 PR 是不是 Dependabot 开的」，与谁触发无关。
+    #        用 actor 的话，人点一次 reopen / 重跑就会让它重新变红。
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.user.login != 'dependabot[bot]'
 
     steps:
       - name: 校验分支命名规范

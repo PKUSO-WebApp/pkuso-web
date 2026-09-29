@@ -119,7 +119,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
 function AdminHeader() {
   const router = useRouter();
-  const { title, headerRight, onBack, headerLoading, hideBackButton } = useAdminPageHeader();
+  const { title, headerLeft, headerRight, onBack, headerLoading, hideBackButton } =
+    useAdminPageHeader();
   const hasTitle = title.length > 0;
 
   const handleBack = React.useCallback(() => {
@@ -132,7 +133,11 @@ function AdminHeader() {
 
   return (
     <header className="flex items-center px-4 py-3 border-b border-border bg-surface/95 backdrop-blur sticky top-0 z-10">
-      {hasTitle && !hideBackButton ? (
+      {/* 左侧槽优先于「返回」：设了它就是**取代**，不是并排（见 context 里的说明）。
+          不设的页面走下面原样分支，行为与引入本槽之前逐字一致。 */}
+      {headerLeft ? (
+        headerLeft
+      ) : hasTitle && !hideBackButton ? (
         <button
           type="button"
           onClick={handleBack}

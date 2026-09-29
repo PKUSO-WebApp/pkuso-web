@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2 } from "lucide-react";
+import { LogOut, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { canVisitAdminPath } from "@/lib/access";
+import { useUser } from "@/context/user-context";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
 import { Modal } from "@/components/ui/Modal";
 import { UploadModal } from "./upload-modal";
@@ -21,9 +23,16 @@ interface SheetMusic {
   created_at: string | null;
 }
 
+/**
+ * `AdminHeader` 里 `handleBack` 的默认返回目标（本页不设 `onBack`，所以走的就是它）。
+ * 拿它去问 `canVisitAdminPath`，就知道「这个角色的返回键是不是死按钮」。
+ */
+const BACK_TARGET = "/admin";
+
 export default function SheetMusicPage() {
   const router = useRouter();
-  const { setTitle, setHeaderRight } = useAdminPageHeader();
+  const { user, signOut } = useUser();
+  const { setTitle, setHeaderLeft, setHeaderRight } = useAdminPageHeader();
   const [scores, setScores] = useState<SheetMusic[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -41,8 +50,58 @@ export default function SheetMusicPage() {
   // 不该再动当前表单 —— 否则会把用户刚敲进去的内容清空，还替他弹出上传弹窗。
   const formTokenRef = useRef(0);
 
+  const role = user?.role;
+
+  // `signOut`（结束 Supabase 会话）而不是 `logout`（只清内存态）——
+  // 后者会让「退出登录」变成装饰性的：守卫只看 `sessionUserId`，按后退就免密回来了。
+  //
+  // 用 `replace` 而不是 `push`：`push` 会把本页留在历史里，退出后按浏览器后退会回到
+  // 这儿（此时已无会话，再被弹去 /login），用户看到的是「后退键按了没反应」。
+  // `auth-gate.tsx` 守护页那个「退出登录」用的也是 replace。
+  //
+  // 不 await：signOut 失败也要把人送到登录页（失败由 context 里记日志）。
+  const handleLogout = useCallback(() => {
+    void signOut();
+    router.replace("/login");
+  }, [signOut, router]);
+
+  // `setTitle` 会把 `hideBackButton` 重置为 false，而**那一步是必需的**：
+  // `/admin` 首页有意置 true（为把右侧槽换成设置齿轮），本页要的是 false
+  // （右侧槽给「新增」）。所以 `setTitle` 必须在最前，且之后别再动 `hideBackButton`。
   useEffect(() => {
     setTitle("谱务管理");
+
+    // 判据走 `lib/access.ts`，**不内联角色比较**（那个文件头写着「判据必须收在一处」，
+    // `AdminLayout` 里也写着别处照做）。这里的语义正是「默认的返回目标对这个角色越界吗」——
+    // 内联 `role === "score_manager"` 的话，将来按那个文件的文档加第四个角色时，
+    // 这个死按钮会**原样复活**，而且没有任何测试会红。
+    if (!canVisitAdminPath(BACK_TARGET, role)) {
+      // 本页没设 onBack，走 `AdminHeader` 里 `handleBack` 的默认分支（跳 BACK_TARGET）；
+      // 而对这类角色 BACK_TARGET 越界 ⇒ 那个「返回」是按了被弹回原地的死按钮。
+      // 用退出登录取代它 —— 这也基本是他唯一的出口（`/admin/profile` 对他同样越界）。
+      // 曲子详情页的「返回」不动：那里的 setOnBack(router.back) 是有用的。
+      //
+      // ⚠️ **不要在这里调 `setHideBackButton(true)`。** 它名字像「隐藏返回键」，但
+      // `AdminHeader` 里**右侧槽**的判据也是它（`hasTitle && !hideBackButton ? headerRight
+      // : <设置齿轮>`）—— 置 true 会把「新增」换成设置齿轮，而齿轮指向 `/admin/profile`，
+      // 对这类角色同样越界 ⇒ **等于拿一个死按钮换掉本页唯一的建谱入口**。
+      // 左侧根本不需要它：`AdminHeader` 的左槽是 `headerLeft ? headerLeft : …`，已被抢占。
+      setHeaderLeft(
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="flex h-8 shrink-0 items-center gap-1 rounded-lg px-2.5 text-xs font-medium text-danger transition-colors hover:bg-muted"
+        >
+          <LogOut className="h-4 w-4" />
+          退出登录
+        </button>,
+      );
+    } else {
+      // 这个角色的「返回」指向 BACK_TARGET 且他不越界 ⇒ 对他有意义，保留原样，
+      // 只清掉左侧槽（防止上一屏残留）。
+      setHeaderLeft(null);
+    }
+
     setHeaderRight(
       <button
         onClick={() => {
@@ -59,8 +118,11 @@ export default function SheetMusicPage() {
         新增
       </button>,
     );
-    return () => setHeaderRight(null);
-  }, [setTitle, setHeaderRight]);
+    return () => {
+      setHeaderRight(null);
+      setHeaderLeft(null);
+    };
+  }, [role, handleLogout, setTitle, setHeaderLeft, setHeaderRight]);
 
   useEffect(() => {
     (async () => {

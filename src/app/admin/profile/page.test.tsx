@@ -7,8 +7,9 @@ import { useRouter } from "next/navigation";
 import { renderWithProviders } from "@/__tests__/render-with-providers";
 
 // ---- Mock supabase ----
-const { mockUpdateUser } = vi.hoisted(() => ({
+const { mockUpdateUser, mockSignOut } = vi.hoisted(() => ({
   mockUpdateUser: vi.fn(),
+  mockSignOut: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -38,6 +39,9 @@ vi.mock("@/context/user-context", () => ({
   useUser: vi.fn(() => ({
     user: { name: "管理员", email: "admin@example.com", role: "admin" },
     logout: vi.fn(),
+    // ⚠️ 页面用的是 `signOut`（结束会话）而不是 `logout`（只清内存态）。
+    // 桩里少给这个键的话，`void signOut()` 会直接 TypeError。
+    signOut: mockSignOut,
   })),
 }));
 
@@ -201,15 +205,18 @@ describe("ProfilePage", () => {
     expect(screen.getByRole("button", { name: /外观/ })).toBeInTheDocument();
   });
 
-  it("点击退出登录：调用 logout 并跳转到 /login", async () => {
+  it("点击退出登录：调用 signOut（**真的结束会话**）并跳转到 /login", async () => {
     renderWithProviders(<ProfilePage />);
 
     fireEvent.click(screen.getByRole("button", { name: /退出登录/ }));
 
     await waitFor(() => {
-      // user.logout is mocked in useUser
-      expect(mockPush).toHaveBeenCalledWith("/login");
+      // `replace` 而不是 `push`：不退的话本页会留在历史里，退出后按后退又回到这儿
+      expect(mockReplace).toHaveBeenCalledWith("/login");
     });
+    // ⚠️ 改这个断言前先读 `user-context.tsx` 里 `logout` 与 `signOut` 的分工说明。
+    // 用 `logout` 的话这里照样过、界面照样跳 /login，但会话还在 —— 静默失效。
+    expect(mockSignOut).toHaveBeenCalledTimes(1);
   });
 
   it("修改密码成功后 Modal 关闭时重置表单", async () => {

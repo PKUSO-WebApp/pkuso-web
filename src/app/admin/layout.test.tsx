@@ -2,7 +2,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
+import { useEffect, type ReactNode } from "react";
 import AdminLayout from "./layout";
+import { useAdminPageHeader } from "@/context/admin-page-header-context";
 import type { User } from "@/context/user-context";
 
 // ---- Mock next/link（jsdom 下避免 Next 路由上下文缺失）----
@@ -501,5 +503,90 @@ describe("AdminLayout", () => {
       });
       expect(screen.getByText("加载较久，即将自动刷新页面…")).toHaveClass("text-text-subtle");
     });
+  });
+});
+
+// ==========================================
+// 顶栏的**渲染**：左槽抢占 与 hideBackButton 的重载
+// ==========================================
+//
+// ⚠️ 这一组是**补出来的**，不是锦上添花。
+//
+// 本文件此前每一次渲染传的 children 都是裸字符串或裸 div，**没有任何东西去 setTitle**
+// ⇒ `title` 恒为 ""、`hasTitle` 恒为 false。于是 `AdminHeader` 里「有标题」的那几支
+// 从来没有被渲染过 —— 包括新增的 `headerLeft` 抢占分支。
+// 实测：把左槽改回让「返回」优先（`headerLeft` 不再抢占），全量测试**照样全绿**。
+//
+// 探针子组件通过 `useAdminPageHeader()` 真的去设置状态（那个 context 在本文件里
+// **没有**被 mock），所以渲染出来的是真实顶栏。
+// ⚠️ 传进去的 ReactNode 必须是**模块级常量**：每次渲染新建元素的话，探针 effect 的
+// 依赖每轮都变 → 无限重渲染（本仓踩过，症状是 vitest worker 约 90 秒后 V8 fatal）。
+
+const LEFT_SLOT = <span data-testid="left-slot">退出登录</span>;
+const RIGHT_SLOT = <span data-testid="right-slot">新增</span>;
+
+function HeaderSetter({
+  title,
+  left,
+  right,
+  hideBack,
+}: {
+  title?: string;
+  left?: ReactNode;
+  right?: ReactNode;
+  hideBack?: boolean;
+}) {
+  const { setTitle, setHeaderLeft, setHeaderRight, setHideBackButton } = useAdminPageHeader();
+  useEffect(() => {
+    if (title !== undefined) setTitle(title);
+    if (left !== undefined) setHeaderLeft(left);
+    if (right !== undefined) setHeaderRight(right);
+    if (hideBack !== undefined) setHideBackButton(hideBack);
+  }, [title, left, right, hideBack, setTitle, setHeaderLeft, setHeaderRight, setHideBackButton]);
+  return null;
+}
+
+describe("顶栏渲染：左槽抢占与 hideBackButton 的重载", () => {
+  const renderHeader = (props: Parameters<typeof HeaderSetter>[0]) => {
+    setUser(adminUser);
+    pathState.current = "/admin/sheet-music";
+    render(
+      <AdminLayout>
+        <HeaderSetter {...props} />
+      </AdminLayout>,
+    );
+  };
+
+  it("设了 headerLeft ⇒ 左槽是它，且「返回」不渲染", () => {
+    renderHeader({ title: "谱务管理", left: LEFT_SLOT, right: RIGHT_SLOT });
+
+    expect(screen.getByTestId("left-slot")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "返回" })).not.toBeInTheDocument();
+  });
+
+  it("没设 headerLeft ⇒ 仍是「返回」（本次改动的另一半：不回归）", () => {
+    renderHeader({ title: "谱务管理", right: RIGHT_SLOT });
+
+    expect(screen.getByRole("button", { name: "返回" })).toBeInTheDocument();
+    expect(screen.queryByTestId("left-slot")).not.toBeInTheDocument();
+  });
+
+  it("⚠️ hideBackButton 同时驱动右槽：置 true 会把 headerRight 换成设置齿轮", () => {
+    renderHeader({ title: "谱务管理", left: LEFT_SLOT, right: RIGHT_SLOT, hideBack: true });
+
+    // 这条钉的是本次栽过的那个坑：左槽已被 headerLeft 抢占，所以 hideBackButton
+    // 对**左侧**零作用；但它同时是右槽的判据，于是「新增」被换成设置齿轮，
+    // 而齿轮指向 /admin/profile —— 对 score_manager 越界，等于换个死按钮。
+    expect(screen.queryByTestId("right-slot")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "设置" })).toBeInTheDocument();
+    // 左槽不受 hideBackButton 影响
+    expect(screen.getByTestId("left-slot")).toBeInTheDocument();
+  });
+
+  it("hideBackButton 为 false ⇒ 右槽是 headerRight（页面的实际状态）", () => {
+    renderHeader({ title: "谱务管理", left: LEFT_SLOT, right: RIGHT_SLOT, hideBack: false });
+
+    expect(screen.getByTestId("right-slot")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "设置" })).not.toBeInTheDocument();
   });
 });

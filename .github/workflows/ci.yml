@@ -28,16 +28,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm verify
+      # 闸门的唯一定义在 scripts/gate.sh（= pnpm verify + pnpm build）。
+      # 以前这两步写在这里、AGENTS/CLAUDE.md 里另抄一份，改一处另两处不会跟着变。
+      - run: bash scripts/gate.sh
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-
-      - run: pnpm build
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
 
   gen-types-check:
     runs-on: ubuntu-latest
@@ -88,7 +85,10 @@ jobs:
   branch-name:
     runs-on: ubuntu-latest
     timeout-minutes: 1
-    if: github.event_name == 'pull_request'
+    # Dependabot 的分支叫 `dependabot/npm_and_yarn/...`，永远不满足下面的 `<type>/<简述>`
+    # 正则。不排除它的话，**每一个依赖更新 PR 一开出来就是红的** —— 而这种「反正一直是红的」
+    # 会被所有人忽略，等真正需要看这条检查时它已经没有信号了。
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
 
     steps:
       - name: 校验分支命名规范

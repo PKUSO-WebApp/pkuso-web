@@ -207,7 +207,8 @@ vitest 默认不加载 `.env.local`。`vitest.config.ts` 中 `setupFiles: ["./sr
 - 实际链路（`pkuso-backend/.github/workflows/sync-dev.yml`）：后端推 `main` → 把 migration 应用到 dev → 用 dev 的 schema 生成类型 → **`github-actions[bot]` 直接 `git push` 到本仓库 `main`**（commit message `chore: sync database types from pkuso-backend [skip ci]`）。
   **不是 PR，也不走 `dev` 分支**——本仓库根本没有 `dev` 分支。
 - **不要手动编辑** `src/types/database.types.ts`，它始终由后端 CI 管理
-- 本仓库 CI 的 `gen-types-check` job 会重新拉远端 schema 与提交的文件比对，防止漂移
+- **本仓库 `main` 上装的是 dev schema 的类型**（不是 prod 的）。这是有意的：本仓库没有 `dev` 分支、单线合并即部署，而「先写前端代码、再用后端新列」要求类型先到——装 prod 类型会死锁（PR 的 `tsc` 失败，手动补类型又会被 `gen-types-check` 拒掉）。
+- 本仓库 CI 的 `gen-types-check` job 会重新拉 **dev** schema 与提交的文件比对，防止漂移。`pkuso-backend/CLAUDE.md` 的「类型同步的目标分支」一节是这条规矩的完整定义——**改类型同步前先读它**。
 - 手动同步（本地已有 `pkuso-backend` 克隆时）：`pnpm pull-types`，从 `../pkuso-backend/types/database.types.ts` 拷贝
 
 ### 手写类型层 `src/types/database.ts`（#314 起）

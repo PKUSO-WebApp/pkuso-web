@@ -31,23 +31,18 @@ jobs:
       # 闸门的唯一定义在 scripts/gate.sh（= pnpm verify + pnpm build）。
       # 以前这两步写在这里、AGENTS/CLAUDE.md 里另抄一份，改一处另两处不会跟着变。
       #
-      # ⚠️ Dependabot 的 PR 走 `--no-build`：**GitHub 不把仓库 secrets 提供给
-      #    Dependabot 触发的 workflow**（官方行为），而 build 要预渲染
-      #    `src/lib/supabase.ts`（它在模块作用域 createClient，缺 env 即抛
-      #    `supabaseUrl is required.`）。不跳过的话，**每一个依赖更新 PR 都必然红**，
-      #    而原因和被升的依赖毫无关系 —— 那种「反正一直是红的」会把这个闸门废掉。
-      #    `pnpm verify` 那半不需要 secret，照跑。
+      # 注：这里**不再需要**按 Dependabot 分支走不同路径。此前 build 要预渲染
+      # `src/lib/supabase.ts`，而它曾在模块作用域 createClient、缺 env 即抛
+      # —— Dependabot 的 PR 拿不到 secrets，于是必然红。现在那个模块在缺 env 时
+      # 返回「取用才抛」的替身，**构建不再依赖 env**，所以依赖更新 PR 也能跑完整闸门。
+      # （secrets 仍然要传：`pnpm verify` 里的若干测试会在缺 env 时**静默跳过**，
+      #  那样等于悄悄丢了覆盖 —— 那种「缺了就降级」正是本仓库列为陷阱的一类。）
       - name: 闸门
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: |
-          if [ "${{ github.actor }}" = "dependabot[bot]" ]; then
-            bash scripts/gate.sh --no-build
-          else
-            bash scripts/gate.sh
-          fi
+        run: bash scripts/gate.sh
 
   gen-types-check:
     runs-on: ubuntu-latest

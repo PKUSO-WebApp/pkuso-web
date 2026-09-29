@@ -5,8 +5,14 @@
 #   bash scripts/gate.sh
 #
 # 组成：
+#   node scripts/sync-skills.mjs --check   = 两套 skill 目录是否一致（瞬时）
 #   pnpm verify  = format → lint → typecheck → test
 #   pnpm build   = 生产构建
+#
+# 为什么 skill 同步也算闸门的一部分：`.agents/skills/` 是真源、`.claude/skills/`
+# 是生成出来的适配层，而**Claude Code 只读后者**。真源改了忘了同步 ⇒ 适配层是旧的，
+# 而它不报错、只是 agent 照着过期的说明干活（2026-09-30 实测：`supabase` 那份
+# 只存在于真源，Claude Code 完全看不到它）。详见 `scripts/sync-skills.mjs` 的注释。
 #
 # ⚠️ `pnpm build` 单独跑**替代不了** `pnpm typecheck` —— Next 16 的 build 默认不做
 #    tsc 类型检查（CLAUDE.md 的「常用命令」已注明）。两者都跑才算过闸门。
@@ -24,6 +30,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+echo "▶ skill 同步（.agents/skills → .claude/skills）"
+node scripts/sync-skills.mjs --check
+
+echo
 echo "▶ verify（format → lint → typecheck → test）"
 pnpm verify
 

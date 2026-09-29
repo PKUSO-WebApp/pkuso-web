@@ -192,7 +192,8 @@ Web 端**只服务管理员**，没有「两端独立」这回事了。新功能
 - **`supabase/` 文件夹保持 git 追踪**：**新迁移不要添加到这里**——所有新 schema 变更必须提交到 `pkuso-backend` 仓库。
   注意这个目录不只是「参考和审计」材料：`pkuso-backend` 的迁移里 2026-09-08 之前的部分只有 stub 占位文件（内容为 `-- Applied directly to dev database. Stub file for migration version compatibility.`），**本目录是那之前 schema 的唯一真实 DDL 记录**，别再往里加东西，也别删。
 - 历代功能 spec(颜色系统、admin/member 拆分、hooks-modal 重构、排练房预订等)已迁移至项目 wiki。
-- 经验沉淀机制:项目级约定写进本文件;可复用操作流程写成 `.claude/skills/<名字>/SKILL.md`;会话中的偏好与决策背景由 Claude 记入其持久 memory。会话结束前可用 `.claude/skills/save-lesson` 的流程做沉淀。
+- 经验沉淀机制:项目级约定写进本文件;可复用操作流程写成 **`.agents/skills/<名字>/SKILL.md`**;会话中的偏好与决策背景由 Claude 记入其持久 memory。会话结束前可用 `save-lesson` 的流程做沉淀。
+  ⚠️ **写 `.agents/skills/`,不是 `.claude/skills/`** —— 后者是**生成出来的**适配层（Claude Code 只读它,但别手改）。改完跑 `node scripts/sync-skills.mjs`,否则闸门会红。两套目录为什么这么分、以及实测到的漂移事故,见 `.agents/skills/README.md`。
 
 ## 测试基础设施
 

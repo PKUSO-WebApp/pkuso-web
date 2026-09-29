@@ -210,10 +210,15 @@ describe("AdminPostDetailPage 公告详情（Issue #179：Modal→页面）", ()
     const update = vi.fn<UpdateFn>().mockResolvedValue(false);
     renderDetail(makePost(), { update });
     fireEvent.click(screen.getByText("锁定"));
+    // ⚠️ 等的是 **alert**，不是「update 被调用」。
+    // handler 的顺序是 `setLockingId(null)` → `alert("操作失败")`，两者都在
+    // update resolve **之后**；只等调用点就会在断言跑的时机上输掉竞态
+    // —— 实测在 CI 上红过（2026-09-29，本文件连续两次 flaky）。
+    // 等 alert 同时也就蕴含了「按钮已恢复」，因为 setLockingId(null) 在它前面。
     await waitFor(() => {
-      expect(update).toHaveBeenCalledWith("post-1", { is_locked: true });
+      expect(alertSpy).toHaveBeenCalledWith("操作失败");
     });
-    expect(alertSpy).toHaveBeenCalledWith("操作失败");
+    expect(update).toHaveBeenCalledWith("post-1", { is_locked: true });
     expect((screen.getByText("锁定") as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -221,10 +226,11 @@ describe("AdminPostDetailPage 公告详情（Issue #179：Modal→页面）", ()
     const remove = vi.fn<RemoveFn>().mockResolvedValue(false);
     renderDetail(makePost(), { remove });
     fireEvent.click(screen.getByText("删除"));
+    // 同上：等 alert，不等 remove 的调用点
     await waitFor(() => {
-      expect(remove).toHaveBeenCalledWith("post-1");
+      expect(alertSpy).toHaveBeenCalledWith("删除失败");
     });
-    expect(alertSpy).toHaveBeenCalledWith("删除失败");
+    expect(remove).toHaveBeenCalledWith("post-1");
     expect((screen.getByText("删除") as HTMLButtonElement).disabled).toBe(false);
   });
 

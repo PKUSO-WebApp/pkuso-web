@@ -14,6 +14,7 @@ import {
 } from "./components/create-schedule-modal";
 import { Modal } from "@/components/ui/Modal";
 import { getLocalDateString, parseLocalISO, formatDisplayDate } from "@/lib/date-utils";
+import { randomId } from "@/lib/random-id";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
 
 function generateWeeklyDates(
@@ -190,7 +191,7 @@ export default function AdminSchedulePage() {
         return;
       }
 
-      const groupId = form.repeatMode !== "single" ? crypto.randomUUID() : null;
+      const groupId = form.repeatMode !== "single" ? randomId() : null;
       let dates: Date[] = [];
       let dateError: string | null = null;
       let skippedMonths: string[] = [];

@@ -7,6 +7,7 @@ import { X } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { supabase } from "@/lib/supabase";
 import { runWithConcurrency } from "@/lib/concurrency";
+import { randomId } from "@/lib/random-id";
 import { FULL_SCORE_SECTION } from "@/constants/instruments";
 import {
   boundarySpan,
@@ -488,7 +489,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         pageCount: walk?.pageCount,
         // 存储键要在**分析完成时**就定下来（每行一次、重试复用），
         // 而不是每次点上传现生成 —— 否则失败重传会不断产生新对象。
-        storageId: crypto.randomUUID(),
+        storageId: randomId(),
         // 「从没动过」的判据是 **Edit 仍等于 Guess** —— 不是「与开工时相同」：
         // 用户在**点重试之前**就选好声部的情形同样要保护（合规审查实测的那个路径）。
         ...(cur.sectionEdit === cur.sectionGuess
@@ -901,7 +902,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       return;
     }
 
-    const groupId = crypto.randomUUID();
+    const groupId = randomId();
 
     const rows: UploadFile[] = segments.map((seg, k) => ({
       // 源文件**共用同一个 File 对象**（不可变）：上传时按 groupId 只 load 一次
@@ -943,7 +944,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       // 取不到（那一页 OCR 失败）时是 undefined，那一段就保留继承来的判断。
       segHeadText: f.pageTexts?.find((p) => p.page === seg.from)?.text,
       // 每段一个存储键：重试覆盖的是**这一段自己**，不会串到别的段
-      storageId: crypto.randomUUID(),
+      storageId: randomId(),
       splitOf: {
         groupId,
         from: seg.from,
@@ -1421,7 +1422,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           // ⚠️ 但那只在**落点集不变**时成立（路径按落点**位置**派生）：若一次尝试传成功、
           // 批量 insert 失败、用户又把落点数改小，多出来的 `${base}-1` 就没人引用了，
           // 而详情页的删除路径是按行枚举对象的，从界面上删不掉。见 `storageId` 的说明。
-          const baseStorageId = uploadFile.storageId ?? crypto.randomUUID();
+          const baseStorageId = uploadFile.storageId ?? randomId();
           // 与 `targets` **逐位对应**的存储路径（下标 k 的落点用 `paths[k]`）。
           // 不用「给 target 挂一个可变字段」的写法：`FileTarget` 是纯数据，
           // 往它身上塞运行期的副作用会让 `fileTargetsOf` 的返回值不再是纯函数的结果。

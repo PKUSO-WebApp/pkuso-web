@@ -115,10 +115,13 @@ export async function POST(request: Request) {
 
     const rehearsalType: TemplateType = type === "section" ? "section" : "full";
 
+    // 收件人只算团员（role = "member"）：admin 与 score_manager 都不是团员，不该收排练通知。
+    // 名单在这里生成（不是前端传的），所以过滤必须落在这条查询上。
     const { data: recipients, error: dbError } = await supabaseServer
       .from("profiles")
       .select("email, is_in_orchestra, instrument")
       .eq("status", "approved")
+      .eq("role", "member")
       .not("email", "is", null)
       .neq("email", "");
     if (dbError || !recipients?.length)

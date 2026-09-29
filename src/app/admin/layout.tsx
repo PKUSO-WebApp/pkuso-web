@@ -1,23 +1,29 @@
 "use client";
 
 import React from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useUser } from "@/context/user-context";
 import { AdminPageHeaderProvider, useAdminPageHeader } from "@/context/admin-page-header-context";
+import { canVisitAdminPath, landingPathFor } from "@/lib/access";
 import { ArrowLeft, Settings as Gear } from "lucide-react";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { user } = useUser();
+  const pathname = usePathname();
   const router = useRouter();
 
-  // 非管理员自动跳转到成员端
+  // 当前路径不在本角色允许范围内时弹走：member / 未知角色 → 成员引导页；
+  // score_manager 越界（非谱务路径，含 /admin 本身与 /admin/profile）→ 谱务列表。
+  // 判据只有一份（lib/access），别再内联角色比较。
   React.useEffect(() => {
-    if (user && user.role !== "admin") router.replace("/");
-  }, [user, router]);
+    if (!user) return;
+    if (canVisitAdminPath(pathname, user.role)) return;
+    router.replace(landingPathFor(user.role) ?? "/");
+  }, [user, pathname, router]);
 
   // 拆分"加载中"与"未授权"两种状态
   const isLoading = !user;
-  const isUnauthorized = !!user && user.role !== "admin";
+  const isUnauthorized = !!user && !canVisitAdminPath(pathname, user.role);
   const isGuarding = isLoading || isUnauthorized;
 
   const [showReloadHint, setShowReloadHint] = React.useState(false);

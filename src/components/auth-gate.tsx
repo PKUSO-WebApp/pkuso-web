@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useUser } from "@/context/user-context";
 import type { UserRole } from "@/context/user-context";
 import { useAuth } from "@/hooks/useAuth";
+import { canVisitAdminPath, landingPathFor } from "@/lib/access";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { login, logout } = useUser();
@@ -55,22 +56,23 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }, [sessionLoading, sessionUserId, isAuthPage, router]);
 
-  // 管理员用户自动路由到 admin 端
+  // web 端角色（admin / score_manager）在非管理端页面时，送回各自的落点
   React.useEffect(() => {
     const isAdminPage = pathname === "/admin" || pathname.startsWith("/admin/");
     // 邮箱未验证时不进行路由跳转，等待邮箱验证状态确认
     if (emailConfirmed === false) return;
+    const landing = landingPathFor(profileRole);
     if (
       !sessionLoading &&
       !profileLoading &&
       sessionUserId &&
       emailConfirmed === true &&
-      profileRole === "admin" &&
+      landing !== null &&
       profileStatus === "approved" &&
       !isAuthPage &&
       !isAdminPage
     ) {
-      router.replace("/admin");
+      router.replace(landing);
     }
   }, [
     sessionLoading,
@@ -84,7 +86,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     router,
   ]);
 
-  // 非 admin 用户访问 admin 路由时自动跳转到成员端
+  // 停在管理端路由但没资格停留：member / 未知角色 → 成员引导页；score_manager 越界 → 谱务列表
+  // （落点与判据都走 lib/access，别再内联角色比较）
   React.useEffect(() => {
     const isAdminPage = pathname === "/admin" || pathname.startsWith("/admin/");
     // 邮箱未验证时不进行路由跳转，等待邮箱验证状态确认
@@ -94,12 +97,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       !profileLoading &&
       sessionUserId &&
       emailConfirmed === true &&
-      profileRole !== "admin" &&
       profileStatus === "approved" &&
       !isAuthPage &&
-      isAdminPage
+      isAdminPage &&
+      !canVisitAdminPath(pathname, profileRole)
     ) {
-      router.replace("/");
+      router.replace(landingPathFor(profileRole) ?? "/");
     }
   }, [
     sessionLoading,

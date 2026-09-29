@@ -20,9 +20,11 @@ vi.mock("@/lib/supabase", () => ({
   },
 }));
 
+const { mockReplace } = vi.hoisted(() => ({ mockReplace: vi.fn() }));
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
-    replace: vi.fn(),
+    replace: mockReplace,
   }),
 }));
 
@@ -155,7 +157,9 @@ describe("LoginPage", () => {
     fireEvent.submit(form);
 
     await waitFor(() => {
-      expect(screen.getByText("成员不允许进行web端登录")).toBeInTheDocument();
+      expect(
+        screen.getByText("成员请使用微信小程序登录（网页端仅限管理员与谱务账号）"),
+      ).toBeInTheDocument();
     });
     expect(supabase.auth.signOut).toHaveBeenCalled();
   });
@@ -179,8 +183,61 @@ describe("LoginPage", () => {
     fireEvent.submit(form);
 
     await waitFor(() => {
-      expect(screen.getByText("成员不允许进行web端登录")).toBeInTheDocument();
+      expect(
+        screen.getByText("成员请使用微信小程序登录（网页端仅限管理员与谱务账号）"),
+      ).toBeInTheDocument();
     });
     expect(supabase.auth.signOut).toHaveBeenCalled();
+  });
+
+  // ==========================================
+  // score_manager 放行 + 落点分角色（Issue #340）
+  // ==========================================
+  describe("角色闸门与落点", () => {
+    /** 登录成功 + 指定角色，返回提交后的断言入口 */
+    async function submitWithRole(role: string | null) {
+      (supabase.auth.signInWithPassword as Mock).mockResolvedValue({ error: null });
+      (supabase.from as Mock).mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: role === null ? null : { role }, error: null }),
+      });
+
+      const { container } = render(<LoginPage />);
+      fireEvent.change(screen.getByPlaceholderText("name@example.com"), {
+        target: { value: `${role ?? "none"}@example.com` },
+      });
+      fireEvent.change(screen.getByPlaceholderText("请输入密码"), {
+        target: { value: "password123" },
+      });
+      fireEvent.submit(container.querySelector("form")!);
+    }
+
+    it("admin 登录落到 /admin", async () => {
+      await submitWithRole("admin");
+      await waitFor(() => {
+        expect(mockReplace).toHaveBeenCalledWith("/admin");
+      });
+      expect(supabase.auth.signOut).not.toHaveBeenCalled();
+    });
+
+    it("score_manager 登录放行，落到谱务列表", async () => {
+      await submitWithRole("score_manager");
+      await waitFor(() => {
+        expect(mockReplace).toHaveBeenCalledWith("/admin/sheet-music");
+      });
+      expect(supabase.auth.signOut).not.toHaveBeenCalled();
+    });
+
+    it("未知角色（未在枚举内）仍被拦截", async () => {
+      await submitWithRole("superadmin");
+      await waitFor(() => {
+        expect(
+          screen.getByText("成员请使用微信小程序登录（网页端仅限管理员与谱务账号）"),
+        ).toBeInTheDocument();
+      });
+      expect(supabase.auth.signOut).toHaveBeenCalled();
+      expect(mockReplace).not.toHaveBeenCalled();
+    });
   });
 });

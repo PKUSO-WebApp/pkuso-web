@@ -3,6 +3,7 @@
 import React from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { landingPathFor } from "@/lib/access";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -11,7 +12,9 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = React.useState(false);
   const [errorMsg, setErrorMsg] = React.useState("");
 
-  const MEMBER_BLOCKED_MSG = "成员不允许进行web端登录";
+  // 不再写「成员不允许进行web端登录」：那句话对 score_manager 是误导（他不是团员）。
+  // 改为说清网页端服务哪些角色、团员该去哪。
+  const LOGIN_BLOCKED_MSG = "成员请使用微信小程序登录（网页端仅限管理员与谱务账号）";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,7 +38,7 @@ export default function LoginPage() {
       return;
     }
 
-    // 管理员校验：非管理员立即登出并阻断
+    // 角色校验：只有 admin | score_manager 有落点，其余（含 profile 查不到）立即登出阻断
     const userId = (await supabase.auth.getUser()).data.user?.id;
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
@@ -43,15 +46,17 @@ export default function LoginPage() {
       .eq("id", userId ?? "")
       .single();
 
-    if (profileError || !profile || profile.role !== "admin") {
+    const landing = profileError || !profile ? null : landingPathFor(profile.role);
+
+    if (!landing) {
       await supabase.auth.signOut();
       setSubmitting(false);
-      setErrorMsg(MEMBER_BLOCKED_MSG);
+      setErrorMsg(LOGIN_BLOCKED_MSG);
       return;
     }
 
     setSubmitting(false);
-    router.replace("/");
+    router.replace(landing);
   };
 
   return (

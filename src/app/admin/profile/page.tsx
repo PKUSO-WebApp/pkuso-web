@@ -11,7 +11,7 @@ import { useAdminPageHeader } from "@/context/admin-page-header-context";
 
 export default function ProfilePage() {
   const router = useRouter();
-  const { logout } = useUser();
+  const { signOut } = useUser();
   const { setTitle, setOnBack } = useAdminPageHeader();
 
   React.useEffect(() => {
@@ -26,9 +26,16 @@ export default function ProfilePage() {
 
   const [isThemeModalOpen, setIsThemeModalOpen] = React.useState(false);
 
+  // `signOut`（结束会话）而不是 `logout`（只清内存态）—— 见 user-context 里的说明。
+  //
+  // 用 `replace` 而不是 `push`：`push` 会把本页留在历史里，退出后按浏览器后退会回到
+  // 这儿（此时已无会话，再被弹去 /login），用户看到的是「后退键按了没反应」。
+  // `auth-gate.tsx` 守护页那个「退出登录」用的也是 replace。
+  //
+  // 不 await：signOut 失败也要把人送到登录页（失败由 context 里记日志）。
   const handleLogout = () => {
-    logout();
-    router.push("/login");
+    void signOut();
+    router.replace("/login");
   };
 
   const handleUpdatePassword = async (e: React.FormEvent) => {

@@ -6,6 +6,7 @@
 #
 # 组成：
 #   node scripts/sync-skills.mjs --check   = 两套 skill 目录是否一致（瞬时）
+#   node scripts/check-design-debt.mjs     = 设计债棘轮（god file 不许变长、样式不许再抄）
 #   pnpm verify  = format → lint → typecheck → test
 #   pnpm build   = 生产构建
 #
@@ -13,6 +14,11 @@
 # 是生成出来的适配层，而**Claude Code 只读后者**。真源改了忘了同步 ⇒ 适配层是旧的，
 # 而它不报错、只是 agent 照着过期的说明干活（2026-09-30 实测：`supabase` 那份
 # 只存在于真源，Claude Code 完全看不到它）。详见 `scripts/sync-skills.mjs` 的注释。
+#
+# 为什么设计债棘轮也算：它拦的两件事（god file 继续长大、同一段样式被复制到第 N 处）
+# **都不会让任何测试变红** —— 之前唯一的拦法是散文（「写新 UI 前先查现有原语」），
+# 而那正是最容易不发生的事。棘轮是「只许变好」，既有的债可以慢慢还，但不能变多。
+# 详见 `scripts/check-design-debt.mjs` 的注释。
 #
 # ⚠️ `pnpm build` 单独跑**替代不了** `pnpm typecheck` —— Next 16 的 build 默认不做
 #    tsc 类型检查（CLAUDE.md 的「常用命令」已注明）。两者都跑才算过闸门。
@@ -32,6 +38,10 @@ cd "$(dirname "$0")/.."
 
 echo "▶ skill 同步（.agents/skills → .claude/skills）"
 node scripts/sync-skills.mjs --check
+
+echo
+echo "▶ 设计债棘轮"
+node scripts/check-design-debt.mjs
 
 echo
 echo "▶ verify（format → lint → typecheck → test）"

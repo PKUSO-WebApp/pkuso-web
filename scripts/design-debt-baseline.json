@@ -1,0 +1,14 @@
+{
+  "fileLines": {
+    "src/app/admin/components/leave-management.tsx": 450,
+    "src/app/admin/config/import/page.tsx": 536,
+    "src/app/admin/members/page.tsx": 529,
+    "src/app/admin/rehearsals/components/map-picker.tsx": 440,
+    "src/app/admin/schedule/page.tsx": 468,
+    "src/app/admin/sheet-music/components/file-row.tsx": 451,
+    "src/app/admin/sheet-music/row-text.ts": 551,
+    "src/app/admin/sheet-music/upload-modal.tsx": 1808,
+    "src/components/email-template-editor.tsx": 472
+  },
+  "duplicatedClassOccurrences": 99
+}

@@ -59,7 +59,13 @@ export async function invokeErrorDetail(error: unknown): Promise<string> {
       }
     }
   }
-  return (error instanceof Error ? error.message : String(error)) + cause;
+  // 与上面的 `describeCause` 同一道理：**结构化读 message，不依赖原型链**。
+  // 实测（写这个函数的用例时发现）：`{ message: "boom" }` 这种「看着像 Error 的纯对象」
+  // 走 `instanceof Error` 会落到 `String(error)` 那一支，得到 `[object Object]` ——
+  // 原话被吞掉，而这正是这个函数存在的意义（不吞服务端的报错）。
+  // 空串也当作没有 message（它同样不携带信息），仍退回 `String(error)`。
+  const message = (error as { message?: unknown } | null | undefined)?.message;
+  return (typeof message === "string" && message ? message : String(error)) + cause;
 }
 
 /** base64 长度换算回实际图片字节数 */

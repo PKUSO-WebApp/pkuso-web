@@ -30,17 +30,31 @@ jobs:
 
       # 闸门的唯一定义在 scripts/gate.sh（= pnpm verify + pnpm build）。
       # 以前这两步写在这里、AGENTS/CLAUDE.md 里另抄一份，改一处另两处不会跟着变。
-      - run: bash scripts/gate.sh
+      #
+      # ⚠️ Dependabot 的 PR 走 `--no-build`：**GitHub 不把仓库 secrets 提供给
+      #    Dependabot 触发的 workflow**（官方行为），而 build 要预渲染
+      #    `src/lib/supabase.ts`（它在模块作用域 createClient，缺 env 即抛
+      #    `supabaseUrl is required.`）。不跳过的话，**每一个依赖更新 PR 都必然红**，
+      #    而原因和被升的依赖毫无关系 —— 那种「反正一直是红的」会把这个闸门废掉。
+      #    `pnpm verify` 那半不需要 secret，照跑。
+      - name: 闸门
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ "${{ github.actor }}" = "dependabot[bot]" ]; then
+            bash scripts/gate.sh --no-build
+          else
+            bash scripts/gate.sh
+          fi
 
   gen-types-check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: >-
-      !(github.event_name == 'pull_request' && github.head_ref == 'chore/sync-types-from-backend')
+      github.actor != 'dependabot[bot]'
+      && !(github.event_name == 'pull_request' && github.head_ref == 'chore/sync-types-from-backend')
       && !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore: sync database types'))
 
     steps:

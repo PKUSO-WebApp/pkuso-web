@@ -91,8 +91,29 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: "包含非法字符" }, { status: 400 });
 
     if (trimmed === "") {
-      const { error } = await auth.supabaseServer.from("app_settings").delete().eq("key", typedKey);
+      // ⚠️ **Issue #368 在本处的结论是反的：0 行按成功处理。** 判据是这条 DELETE 的
+      // **语义**，不是「客户端不好改」：
+      //   · 它不是「删除某条已知存在的记录」，而是 `saveSetting(key, "")` 的落地形式，
+      //     意图是**让这个键不存在**；
+      //   · 「本来就不存在」正是它想要的结果 ⇒ 0 行 == 目标状态已达成，不是失败。
+      // 对照其余各处：那些是按主键/外键**定向**的写（`.eq("id", …)`），0 行意味着
+      // 「我要改/删的那一行没动过」，所以才是假成功。分界是**定向写 vs 幂等写**，
+      // 不是「这是第几处」。同属幂等那一侧的还有 `useRehearsals.remove` 里清考勤子行
+      // 那一步（子行已被 CASCADE 带走，0 行同样是目标状态）。
+      // 「要防 RLS 静默拒绝」这条理由在这里也不成立：本路由用的是 `supabaseServer`
+      // （service role，绕过 RLS，只用在 API route 里），0 行只可能来自「本来就没有」。
+      //
+      // `.select("key")` 仍然保留：`app_settings` 的主键就是 `key`（没有 id 列），
+      // 它是契约第 1 条要求的「拿回被影响的行」那条链（本仓既有约定，也是写链审计的
+      // 判据），只是本处**不据此判失败**。
+      const { error } = await auth.supabaseServer
+        .from("app_settings")
+        .delete()
+        .eq("key", typedKey)
+        .select("key");
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      // 0 行与删掉 1 行返回**同一个**响应（回归守卫见 route.test.ts 里
+      // 「email-settings 整 tab 全字段保存」那条）
       return NextResponse.json({ success: true }, { status: 200 });
     }
 

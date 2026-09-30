@@ -76,7 +76,7 @@ export default function AdminEditRehearsalPage() {
 
 function EditForm({ item }: { item: RehearsalRow }) {
   const router = useRouter();
-  const { update } = useRehearsals();
+  const { update, getLastError } = useRehearsals();
   const { checkConflict } = useSchedule();
   const id = item.id;
 
@@ -176,7 +176,8 @@ function EditForm({ item }: { item: RehearsalRow }) {
 
       const ok = await update(id, payload);
       if (!ok) {
-        alert("更新失败");
+        // 同排练详情页的删除：`getLastError()` 是同步出口，`error` state 在这里读是旧值
+        alert(getLastError() ?? "更新失败");
         return;
       }
 

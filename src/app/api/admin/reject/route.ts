@@ -41,11 +41,21 @@ export async function POST(request: Request) {
     }
 
     // 3. 执行拒绝
-    const { error } = await supabase.from("profiles").update({ status: "rejected" }).eq("id", id);
+    // 链 .select("id") 做 0 行检测：命中 0 行时无 error（RLS 静默拒绝 / 目标已被并发处理），
+    // 若按成功处理，审批界面会显示「已驳回」而库里没变（Issue #368）
+    const { data: rejected, error } = await supabase
+      .from("profiles")
+      .update({ status: "rejected" })
+      .eq("id", id)
+      .select("id");
 
     if (error) {
       console.error("[Admin Reject] 拒绝失败:", error.message);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    if (!rejected || rejected.length === 0) {
+      console.error("[Admin Reject] 没有匹配的记录，id =", id);
+      return NextResponse.json({ error: "没有匹配的记录，申请不存在或已被处理" }, { status: 404 });
     }
 
     return NextResponse.json({ success: true });

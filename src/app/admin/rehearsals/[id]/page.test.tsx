@@ -36,6 +36,8 @@ function makeRehearsal(id: number, startISO: string | null, repertoire: string):
 const mocks = vi.hoisted(() => ({
   rehearsals: [] as RehearsalRow[],
   remove: vi.fn().mockResolvedValue(true),
+  /** hook 的同步错误出口（Issue #368 第 7 条：error 光置在 state 上，这个闭包里读不到） */
+  getLastError: vi.fn().mockReturnValue(null),
   router: {
     push: vi.fn(),
     replace: vi.fn(),
@@ -60,6 +62,7 @@ vi.mock("@/hooks/useRehearsals", () => ({
     create: vi.fn(),
     update: vi.fn(),
     remove: mocks.remove,
+    getLastError: mocks.getLastError,
   }),
 }));
 
@@ -116,6 +119,43 @@ describe("AdminRehearsalDetailPage（Issue #173：详情页路由）", () => {
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
     expect(confirmSpy).toHaveBeenCalledWith("确定删除该排练？");
     expect(mocks.remove).not.toHaveBeenCalled();
+  });
+
+  it("删除失败 → alert 显示 hook 报的**具体原因**，不是通用「删除失败」", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    mocks.remove.mockResolvedValue(false);
+    // 0 行时 hook 置的就是这句；它只能经 getLastError() 同步读到
+    mocks.getLastError.mockReturnValue("没有匹配的记录，排练可能已被删除");
+
+    setData([makeRehearsal(1, "2026-08-16T20:00:00", "明天排练")]);
+    render(
+      <AdminPageHeaderProvider>
+        <AdminRehearsalDetailPage />
+      </AdminPageHeaderProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith("没有匹配的记录，排练可能已被删除"));
+    expect(alertSpy).not.toHaveBeenCalledWith("删除失败");
+    expect(mocks.router.push).not.toHaveBeenCalled();
+  });
+
+  it("删除失败但 hook 没给原因 → 回落通用「删除失败」", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    mocks.remove.mockResolvedValue(false);
+    mocks.getLastError.mockReturnValue(null);
+
+    setData([makeRehearsal(1, "2026-08-16T20:00:00", "明天排练")]);
+    render(
+      <AdminPageHeaderProvider>
+        <AdminRehearsalDetailPage />
+      </AdminPageHeaderProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith("删除失败"));
   });
 
   it("未找到该排练：空态文案", () => {

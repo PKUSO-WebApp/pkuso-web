@@ -187,9 +187,17 @@ export default function ScoreDetailPage() {
 
     setDeletingId(file.id);
     try {
-      await removeStorageFiles([file.storage_path]);
-      const { error } = await supabase.from("sheet_music_files").delete().eq("id", file.id);
+      // 先删库行、**再**删 storage：链 .select("id") 做 0 行检测 —— 0 行时无 error
+      // （RLS 静默拒绝 / 行已被并发删除），若按成功处理会把附件先删掉而库里那行还在。
+      // 附件删除是副作用，必须排在检测之后（usePosts.remove 的同款顺序，Issue #368）
+      const { data: deleted, error } = await supabase
+        .from("sheet_music_files")
+        .delete()
+        .eq("id", file.id)
+        .select("id");
       if (error) throw error;
+      if (!deleted || deleted.length === 0) throw new Error("没有匹配的记录，文件可能已被删除");
+      await removeStorageFiles([file.storage_path]);
       await refetch();
     } catch (error) {
       console.error("Delete file error:", error);
@@ -206,10 +214,16 @@ export default function ScoreDetailPage() {
 
     setDeletingId(part.id);
     try {
+      // 同 deleteFile：先删库行（带 0 行检测）再删 storage —— 0 行时不动附件（Issue #368）
       const storagePaths = part.files.map((f) => f.storage_path);
-      await removeStorageFiles(storagePaths);
-      const { error } = await supabase.from("sheet_music_parts").delete().eq("id", part.id);
+      const { data: deleted, error } = await supabase
+        .from("sheet_music_parts")
+        .delete()
+        .eq("id", part.id)
+        .select("id");
       if (error) throw error;
+      if (!deleted || deleted.length === 0) throw new Error("没有匹配的记录，声部可能已被删除");
+      await removeStorageFiles(storagePaths);
       await refetch();
     } catch (error) {
       console.error("Delete part error:", error);
@@ -321,6 +335,8 @@ export default function ScoreDetailPage() {
                             <button
                               onClick={() => deleteFile(file)}
                               disabled={!!deletingId}
+                              aria-label={`删除 ${file.file_name}`}
+                              title="删除文件"
                               className="p-1 text-text-muted hover:text-danger hover:bg-danger/10 rounded disabled:opacity-50"
                             >
                               <Trash2 className="w-3.5 h-3.5" />

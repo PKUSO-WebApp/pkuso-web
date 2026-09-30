@@ -102,11 +102,21 @@ export async function PUT(request: Request) {
     if (title !== undefined) updates.title = title;
     if (end_time !== undefined) updates.end_time = end_time;
 
-    const { error } = await supabase.from("announcements").update(updates).eq("id", id);
+    // 链 .select("id") 做 0 行检测：命中 0 行时无 error（RLS 静默拒绝 / 公告已被并发删除），
+    // 若按成功处理，管理界面会显示「已更新」而库里没变（Issue #368）
+    const { data: updatedRows, error } = await supabase
+      .from("announcements")
+      .update(updates)
+      .eq("id", id)
+      .select("id");
 
     if (error) {
       console.error("[Admin Announcement] 更新公告失败:", error.message);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    if (!updatedRows || updatedRows.length === 0) {
+      console.error("[Admin Announcement] 没有匹配的记录，id =", id);
+      return NextResponse.json({ error: "没有匹配的记录，公告不存在或已被删除" }, { status: 404 });
     }
 
     return NextResponse.json({ success: true });
@@ -147,11 +157,20 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: "缺少公告 ID" }, { status: 400 });
     }
 
-    const { error } = await supabase.from("announcements").delete().eq("id", targetId);
+    // 同 PUT：链 .select("id") 做 0 行检测，0 行时不能报成功（Issue #368）
+    const { data: deletedRows, error } = await supabase
+      .from("announcements")
+      .delete()
+      .eq("id", targetId)
+      .select("id");
 
     if (error) {
       console.error("[Admin Announcement] 删除公告失败:", error.message);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    if (!deletedRows || deletedRows.length === 0) {
+      console.error("[Admin Announcement] 没有匹配的记录，id =", targetId);
+      return NextResponse.json({ error: "没有匹配的记录，公告不存在或已被删除" }, { status: 404 });
     }
 
     return NextResponse.json({ success: true });

@@ -135,7 +135,12 @@ describe("真切一份（pdf-lib 往返）", () => {
     return doc.getPages().map((p) => Math.round(p.getWidth()));
   };
 
-  it("按 4 段切：每段页数对、页序对", async () => {
+  // ⚠️ 显式给 20 秒：这一条是真正跑 pdf-lib 的**创建 + 装载 + 4 次抽取**，
+  // 空跑约 1.3 秒，但全量套件并行跑（4 个 fork）时会顶到默认的 5 秒上限 ——
+  // 实测在闸门里偶发超时 5069ms / 5279ms，而单跑这个文件 1.34 秒。
+  // 那种红与代码无关，却会挡住必需检查 `verify`（本仓的 PR 门），所以把上限让开，
+  // 而不是留着一个「重跑一次就好了」的信号。
+  it("按 4 段切：每段页数对、页序对", { timeout: 20000 }, async () => {
     const file = await makeFile(19);
     const src = await openForSplit(file);
     expect(src.pageCount).toBe(19);

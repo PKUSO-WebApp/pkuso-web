@@ -4,6 +4,7 @@ import React from "react";
 import { Upload, RefreshCw, Plus, Trash2, ListPlus } from "lucide-react";
 import { resolveInstrumentName } from "@/constants/instrument-aliases";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
+import { useProfileSync } from "@/hooks/useProfileSync";
 import { MemberImportModal } from "@/app/admin/members/components/member-import-modal";
 
 /** 后端定义的可选字段 */
@@ -42,49 +43,7 @@ export default function ImportConfigPage() {
   // 导入数据 Modal
   const [showImportModal, setShowImportModal] = React.useState(false);
   // 同步状态
-  const [syncing, setSyncing] = React.useState(false);
-
-  const handleSyncProfiles = React.useCallback(async () => {
-    if (
-      !confirm(
-        "确认要使用 member_info 数据同步所有已通过用户的 profile 吗？\n\n此操作会覆盖现有数据，但邮箱为空时不会覆盖已有邮箱。",
-      )
-    ) {
-      return;
-    }
-
-    setSyncing(true);
-    try {
-      const { supabase } = await import("@/lib/supabase");
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session?.access_token) {
-        throw new Error("未登录");
-      }
-
-      const response = await fetch("/api/admin/sync-profiles", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "同步失败");
-      }
-
-      alert(result.message || "同步完成");
-      window.location.reload();
-    } catch (err) {
-      alert(`同步失败: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setSyncing(false);
-    }
-  }, []);
+  const { syncing, syncProfiles } = useProfileSync();
 
   // 字段映射状态
   const [fieldMappings, setFieldMappings] = React.useState<FieldMapping[]>([]);
@@ -329,7 +288,7 @@ export default function ImportConfigPage() {
         </button>
         <button
           type="button"
-          onClick={() => void handleSyncProfiles()}
+          onClick={() => void syncProfiles()}
           disabled={syncing}
           className="flex items-center gap-1 rounded-lg bg-success/10 px-2 py-1.5 text-xs text-success hover:bg-success/20 disabled:opacity-50"
         >
@@ -338,7 +297,7 @@ export default function ImportConfigPage() {
         </button>
       </div>,
     );
-  }, [setTitle, setHeaderRight, syncing, handleSyncProfiles]);
+  }, [setTitle, setHeaderRight, syncing, syncProfiles]);
 
   return (
     <div className="flex h-full min-h-0 flex-col space-y-4">

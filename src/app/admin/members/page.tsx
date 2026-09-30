@@ -4,6 +4,7 @@ import React from "react";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { useRehearsals } from "@/hooks/useRehearsals";
+import { useProfileSync } from "@/hooks/useProfileSync";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useAttendanceEditor } from "@/hooks/useAttendanceEditor";
 import { AttendanceModal } from "@/components/attendance-modal";
@@ -61,51 +62,9 @@ export default function MembersPage() {
   const { setTitle, setHeaderRight } = useAdminPageHeader();
   const [currentView, setCurrentView] = React.useState<ViewMode>("attendance");
   const [showImportModal, setShowImportModal] = React.useState(false);
-  const [syncing, setSyncing] = React.useState(false);
+  const { syncing, syncProfiles } = useProfileSync();
 
   // 同步 profiles
-  const handleSyncProfiles = React.useCallback(async () => {
-    if (
-      !confirm(
-        "确认要使用 member_info 数据同步所有已通过用户的 profile 吗？\n\n此操作会覆盖现有数据，但邮箱为空时不会覆盖已有邮箱。",
-      )
-    ) {
-      return;
-    }
-
-    setSyncing(true);
-    try {
-      const { supabase } = await import("@/lib/supabase");
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session?.access_token) {
-        throw new Error("未登录");
-      }
-
-      const response = await fetch("/api/admin/sync-profiles", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "同步失败");
-      }
-
-      alert(result.message || "同步完成");
-      window.location.reload();
-    } catch (err) {
-      alert(`同步失败: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setSyncing(false);
-    }
-  }, []);
-
   React.useEffect(() => {
     setTitle("成员");
     setHeaderRight(
@@ -120,7 +79,7 @@ export default function MembersPage() {
         </button>
         <button
           type="button"
-          onClick={() => void handleSyncProfiles()}
+          onClick={() => void syncProfiles()}
           disabled={syncing}
           className="flex items-center gap-1 rounded-lg bg-success/10 px-2 py-1.5 text-xs text-success hover:bg-success/20 disabled:opacity-50"
         >
@@ -136,7 +95,7 @@ export default function MembersPage() {
         </Link>
       </div>,
     );
-  }, [setTitle, setHeaderRight, handleSyncProfiles, syncing]);
+  }, [setTitle, setHeaderRight, syncProfiles, syncing]);
 
   // 花名册
   const {

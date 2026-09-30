@@ -73,6 +73,11 @@ import { FileRow } from "./components/file-row";
  */
 const DUPLICATE_SEGMENT_ERROR = "与同组的其他段重名，请改乐器名或号";
 
+/** 总谱那一行在识别结果栏里的固定文案（三处渲染分支共用，改口吻时只改这里） */
+const FULL_SCORE_RESULT = "识别结果: 总谱（整份）—— 不参与分段";
+/** 排队等 LLM 时的占位文案（两处入队分支共用） */
+const WAITING_LLM = "等待 LLM 分析...";
+
 // OCR 文本去空白后少于这么多字符就当成「没读到」，触发回退整页。
 // OCR 偶尔会返回单个字符或纯标点，严格判空会漏掉这种情况。
 const MIN_OCR_CHARS = 5;
@@ -357,7 +362,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             // 标题区读到的字太少就不值得送 LLM，直接进下一次尝试（同 MIN_OCR_CHARS）
             if (!attempt.full && page.cropped && text.trim().length < MIN_OCR_CHARS) continue;
 
-            updateFile(i, { llmResult: "等待 LLM 分析..." });
+            updateFile(i, { llmResult: WAITING_LLM });
             let got: LlmAnalysis;
             try {
               got = await runLlmAnalysis(file.originalName, text);
@@ -402,7 +407,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         // 用户明明已经关窗走人，配额还在烧（对抗测试实测：卸载后 llm 调用 0→1，
         // body 里只有文件名）。
         if (cancelledRef.current) return;
-        updateFile(i, { llmResult: "等待 LLM 分析..." });
+        updateFile(i, { llmResult: WAITING_LLM });
         analysis = await runLlmAnalysis(file.originalName, ocrText);
       }
 
@@ -432,9 +437,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         // 从 `error` 重试回来的 —— 不清的话「失败: …」那句红字会挂在一条**已经成功**的
         // 行上，读起来像「重试也没用」。这与三个输入 handler 顺手清 `error` 是同一条理由。
         error: undefined,
-        llmResult: isFullScore
-          ? "识别结果: 总谱（整份）—— 不参与分段"
-          : analysisSummary(section, instrument, subParts),
+        llmResult: isFullScore ? FULL_SCORE_RESULT : analysisSummary(section, instrument, subParts),
         sectionGuess: isFullScore ? FULL_SCORE_SECTION : section,
         instrumentGuess: isFullScore ? FULL_SCORE_SECTION : instrument,
         // ⚠️ **Edit 那两个字段是「用户的表态」**（本文件上面写过：一旦动过就属于用户），
@@ -543,7 +546,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             instrumentEdit: instrument,
             extraSectionsGuess: normalizeExtraSections(got.section, got.extraSections),
             llmResult: got.isFullScore
-              ? "识别结果: 总谱（整份）—— 不参与分段"
+              ? FULL_SCORE_RESULT
               : analysisSummary(got.section, got.instrument, got.subParts),
             evidence: got.evidence,
             evidenceFound: got.evidenceFound,
@@ -1045,7 +1048,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             ...(cur.instrumentEdit === cur.instrumentGuess ? { instrumentEdit: instrument } : {}),
             extraSectionsGuess: normalizeExtraSections(got.section, got.extraSections),
             llmResult: got.isFullScore
-              ? "识别结果: 总谱（整份）—— 不参与分段"
+              ? FULL_SCORE_RESULT
               : analysisSummary(got.section, got.instrument, got.subParts),
             evidence: got.evidence,
             evidenceFound: got.evidenceFound,

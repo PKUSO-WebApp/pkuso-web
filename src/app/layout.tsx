@@ -3,7 +3,6 @@ import localFont from "next/font/local";
 import "./globals.css";
 import { AuthGate } from "@/components/auth-gate";
 import { ErrorBoundary } from "@/components/error-boundary";
-import { ToastProvider } from "@/components/ui/Toast";
 import { ThemeProvider } from "@/context/theme-context";
 import { UserProvider } from "@/context/user-context";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
@@ -59,11 +58,9 @@ export default function RootLayout({
             须在根 layout 挂载（首帧脚本负责预置，provider 负责 hydration 后的实时跟随） */}
         <ThemeProvider>
           <UserProvider>
-            <ToastProvider>
-              <ErrorBoundary>
-                <AuthGate>{children}</AuthGate>
-              </ErrorBoundary>
-            </ToastProvider>
+            <ErrorBoundary>
+              <AuthGate>{children}</AuthGate>
+            </ErrorBoundary>
           </UserProvider>
         </ThemeProvider>
       </body>

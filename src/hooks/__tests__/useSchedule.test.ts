@@ -19,6 +19,8 @@ function mockClient<T>(responses: T[]) {
       order: (...args: unknown[]) => record("order", ...args),
       limit: (...args: unknown[]) => record("limit", ...args),
       delete: (...args: unknown[]) => record("delete", ...args),
+      // 写链上的 0 行检测（update/delete 之后接 .select("id")，Issue #368）
+      select: (...args: unknown[]) => record("select", ...args),
       gte: (...args: unknown[]) => record("gte", ...args),
       lte: (...args: unknown[]) => record("lte", ...args),
       neq: (...args: unknown[]) => record("neq", ...args),
@@ -28,24 +30,43 @@ function mockClient<T>(responses: T[]) {
         Promise.resolve(res).then(resolve, reject),
     };
   };
+  /** 写链有没有接 `.select(...)` —— 没有它就拿不回被影响的行（Issue #368） */
+  const writeSelects: { table: string; selected: boolean }[] = [];
+  /**
+   * 写链（`update`/`delete` 之后）。**按真实 SDK 语义建模**：没接 `.select(...)` 就
+   * 拿不到行、返回 `{ data: null }` —— 于是「去掉 `.select("id")`」会让走成功路径的
+   * 用例由 true 变 false 而变红。
+   */
+  const writeChain = (table: string, res: T) => {
+    let selected = false;
+    const o: Record<string, unknown> = {};
+    Object.assign(o, {
+      eq: (...args: unknown[]) => {
+        calls.push(`eq(${args.map((a) => JSON.stringify(a)).join(", ")})`);
+        return o;
+      },
+      select: () => {
+        selected = true;
+        return o;
+      },
+      then: (resolve: (v: unknown) => void) => {
+        writeSelects.push({ table, selected });
+        return resolve(selected ? res : { data: null, error: null });
+      },
+    });
+    return o;
+  };
   return {
-    from: () => ({
+    from: (table: string) => ({
       select: () => chain(responses[i++]),
       insert: () => chain(responses[i++]),
-      update: () => ({
-        eq: (...args: unknown[]) => {
-          calls.push(`eq(${args.map((a) => JSON.stringify(a)).join(", ")})`);
-          return chain(responses[i++]);
-        },
-      }),
-      delete: () => ({
-        eq: (...args: unknown[]) => {
-          calls.push(`eq(${args.map((a) => JSON.stringify(a)).join(", ")})`);
-          return chain(responses[i++]);
-        },
-      }),
+      update: () => ({ eq: () => writeChain(table, responses[i++]) }),
+      delete: () => ({ eq: () => writeChain(table, responses[i++]) }),
     }),
+    writeSelects,
     __calls: calls,
+    /** 已发出的查询次数 —— 直接量「有没有多打一次往返」（如 0 行时不该重取） */
+    __consumed: () => i,
   };
 }
 
@@ -82,7 +103,7 @@ describe("useSchedule", () => {
   it("remove 删除并重取", async () => {
     const c = mockClient([
       { data: [{ id: 1 }], error: null }, // fetch
-      { data: null, error: null }, // schedules.delete
+      { data: [{ id: 1 }], error: null }, // schedules.delete .select("id") 命中 1 行
       { data: [], error: null }, // re-fetch
     ]);
     const { result } = renderHook(() => useSchedule(c as never));
@@ -91,7 +112,70 @@ describe("useSchedule", () => {
     await act(async () => {
       await result.current.remove(1);
     });
+    // 契约第 1 条：写链必须能拿回被影响的行（去掉 `.select("id")` 时这条会红）
+    expect(c.writeSelects).toEqual([{ table: "schedules", selected: true }]);
     await waitFor(() => expect(result.current.data).toEqual([]));
+  });
+
+  it("update 命中 1 行 → true 并重取（成功路径不回归）", async () => {
+    const c = mockClient([
+      { data: [{ id: 1, title: "原标题" }], error: null }, // fetch
+      { data: [{ id: 1 }], error: null }, // update .select("id") 命中 1 行
+      { data: [{ id: 1, title: "新标题" }], error: null }, // re-fetch
+    ]);
+    const { result } = renderHook(() => useSchedule(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let ok = false;
+    await act(async () => {
+      ok = await result.current.update(1, { title: "新标题" });
+    });
+    expect(ok).toBe(true);
+    expect(result.current.error).toBeNull();
+    // 契约第 1 条：写链必须能拿回被影响的行（去掉 `.select("id")` 时这条会红）
+    expect(c.writeSelects).toEqual([{ table: "schedules", selected: true }]);
+    await waitFor(() => expect(result.current.data[0].title).toBe("新标题"));
+  });
+
+  it("update 0 行 → false + 可见 error，且不重取（不宣称成功）", async () => {
+    const c = mockClient([
+      { data: [{ id: 1, title: "原标题" }], error: null }, // fetch
+      { data: [], error: null }, // update 命中 0 行（无 error 的假成功）
+    ]);
+    const { result } = renderHook(() => useSchedule(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.update(1, { title: "新标题" });
+    });
+    expect(ok).toBe(false);
+    expect(result.current.error).toBe("没有匹配的记录，预约可能已被删除");
+    // 首屏 fetch 与本次 update 各 1 次查询；0 行时不重取（重取会让「没变」看着像成功）
+    expect((c as unknown as { __consumed: () => number }).__consumed()).toBe(2);
+    expect(result.current.data[0].title).toBe("原标题");
+  });
+
+  it("remove 0 行 → false + 可见 error，且不重取（列表里那行必须留着）", async () => {
+    const c = mockClient([
+      { data: [{ id: 1, title: "预约" }], error: null }, // fetch
+      { data: [], error: null }, // schedules.delete 命中 0 行（RLS 静默拒绝/并发已删）
+    ]);
+    const { result } = renderHook(() => useSchedule(c as never));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.remove(1);
+    });
+    expect(ok).toBe(false);
+    expect(result.current.error).toBe("没有匹配的记录，预约可能已被删除");
+    // 同步出口也必须是这句：调用方是在 await 之后的**同一个闭包**里取文案的，
+    // 那时 `error` state 还没进闭包（见 hook 里 lastErrorRef 的注释）
+    expect(result.current.getLastError()).toBe("没有匹配的记录，预约可能已被删除");
+    expect(result.current.data).toHaveLength(1);
+    // 同样不许重取：界面里那行必须留着（库里还在）
+    expect((c as unknown as { __consumed: () => number }).__consumed()).toBe(2);
   });
 
   it("按日期筛选 fetch", async () => {

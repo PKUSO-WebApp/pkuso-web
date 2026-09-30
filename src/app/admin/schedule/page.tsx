@@ -5,6 +5,7 @@ import type { Database } from "@/types/database";
 import { Expand, Minimize2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useSchedule } from "@/hooks/useSchedule";
+import { rollbackGroupAfterInsertFailure } from "./group-ops";
 import { useUser } from "@/context/user-context";
 import { AdminScheduleGantt } from "./components/admin-schedule-gantt";
 import { DateSelector } from "./components/date-selector";
@@ -102,7 +103,7 @@ type PendingSubmitData = {
 };
 
 export default function AdminSchedulePage() {
-  const { data: schedules, loading, fetch, checkConflict, remove } = useSchedule();
+  const { data: schedules, loading, fetch, checkConflict, remove, getLastError } = useSchedule();
   const { user } = useUser();
   const { setTitle, setHeaderRight } = useAdminPageHeader();
   const [selectedDate, setSelectedDate] = React.useState<string>(getLocalDateString());
@@ -319,11 +320,9 @@ export default function AdminSchedulePage() {
 
     const { error: insertError } = await supabase.from("schedules").insert(payloads);
     if (insertError) {
-      // 回滚：删除已创建的 group
-      if (groupId) {
-        await supabase.from("schedule_groups").delete().eq("id", groupId);
-      }
-      setFormError("添加预约失败，请重试");
+      // 回滚：删掉本次刚建的 group，并把「这一刻该显示什么」交给 helper
+      // （它同时负责 0 行检测 —— 删不掉会留下没有预约的空壳组。见 group-ops.ts）
+      setFormError(await rollbackGroupAfterInsertFailure(groupId));
       return;
     }
 
@@ -422,6 +421,7 @@ export default function AdminSchedulePage() {
             schedules={filteredSchedules}
             user={user}
             remove={remove}
+            removeError={getLastError}
             selectedDate={selectedDate}
             isExpanded={isGanttExpanded}
           />

@@ -3,6 +3,7 @@
 import React from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { deleteScheduleGroup } from "../group-ops";
 import { Modal } from "@/components/ui/Modal";
 import { parseLocalISO } from "@/lib/date-utils";
 import type { ProfileRow, ScheduleRow, ScheduleGroupRow } from "@/types/database";
@@ -11,6 +12,9 @@ type Props = {
   schedules: ScheduleRow[];
   user: { id: string } | null | undefined;
   remove: (id: number, date?: string) => Promise<boolean>;
+  /** `useSchedule` 的**同步**错误出口（传 `getLastError`）。不能传 `error` 字符串：`remove()`
+   *  在本组件闭包里 await，而 `setError` 要下一次渲染才进得来 ⇒ 读到的永远是旧值。 */
+  removeError?: () => string | null;
   selectedDate: string;
   isExpanded?: boolean;
 };
@@ -42,7 +46,13 @@ function formatTime(timeStr: string | null): string {
   return date.toTimeString().slice(0, 5);
 }
 
-export function AdminScheduleGantt({ schedules, remove, selectedDate, isExpanded }: Props) {
+export function AdminScheduleGantt({
+  schedules,
+  remove,
+  removeError,
+  selectedDate,
+  isExpanded,
+}: Props) {
   const router = useRouter();
   const [selectedSchedule, setSelectedSchedule] = React.useState<ScheduleRow | null>(null);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
@@ -98,18 +108,14 @@ export function AdminScheduleGantt({ schedules, remove, selectedDate, isExpanded
     let success = false;
 
     if (deleteMode === "group" && selectedSchedule.group_id) {
-      // 删除组时只需要删除 schedule_groups，ON DELETE CASCADE 会自动删除关联的 schedules
-      const { error: deleteGroupError } = await supabase
-        .from("schedule_groups")
-        .delete()
-        .eq("id", selectedSchedule.group_id);
-      if (deleteGroupError) {
-        setError("删除预约组失败，请稍后重试");
+      // 删组 + 级联的取舍、0 行意味着什么，都在 `group-ops.ts` 里讲
+      const groupError = await deleteScheduleGroup(selectedSchedule.group_id);
+      if (groupError) {
+        setError(groupError);
         setDeleting(false);
         setDeleteMode(null);
         return;
       }
-      // ON DELETE CASCADE 会自动删除关联的 schedules
       success = true;
     } else {
       success = await remove(selectedSchedule.id, selectedDate);
@@ -118,7 +124,8 @@ export function AdminScheduleGantt({ schedules, remove, selectedDate, isExpanded
     if (success) {
       handleCloseModal();
     } else {
-      setError("删除失败，请稍后重试");
+      // 优先显示 hook 报的具体原因（如「没有匹配的记录，预约可能已被删除」）
+      setError(removeError?.() ?? "删除失败，请稍后重试");
     }
     setDeleting(false);
     setDeleteMode(null);

@@ -12,7 +12,7 @@ export default function AdminRehearsalDetailPage() {
   const params = useParams<{ id: string }>();
   const { setTitle, setOnBack } = useAdminPageHeader();
   const id = Number(params.id);
-  const { data: schedules, loading, remove } = useRehearsals();
+  const { data: schedules, loading, remove, getLastError } = useRehearsals();
   const [deletingId, setDeletingId] = React.useState<number | null>(null);
 
   React.useEffect(() => {
@@ -33,7 +33,9 @@ export default function AdminRehearsalDetailPage() {
     const ok = await remove(item.id);
     setDeletingId(null);
     if (!ok) {
-      alert("删除失败");
+      // 走 `getLastError()` 而不是 `error` state：后者要下一次渲染才进本闭包，
+      // 这里读到的还是旧值（首次失败时是 null），具体原因就永远显示不出来
+      alert(getLastError() ?? "删除失败");
       return;
     }
     router.push("/admin/rehearsals");

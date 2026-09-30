@@ -8,7 +8,7 @@
  *
  * ## 它守的是什么
  *
- * **不是存储路径**。键是 `{scoreId}/{行 id}.pdf`（见 `upload-modal.tsx` 的 `pathOf`），
+ * **不是存储路径**。键是 `{scoreId}/{行 id}.pdf`（见 `lib/storage.ts` 的 `sheetMusicPath`），
  * 声部与乐器名都进不去。守的是另外两处：
  *
  * - `sheet_music_files.file_name` —— 用户下载时经 `a.download` **落到自己文件系统上**的名字

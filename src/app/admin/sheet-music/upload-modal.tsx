@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui/Modal";
 import { supabase } from "@/lib/supabase";
 import { runWithConcurrency } from "@/lib/concurrency";
 import { randomId } from "@/lib/random-id";
+import { STORAGE_BUCKETS, sheetMusicPath } from "@/lib/storage";
 import { FULL_SCORE_SECTION } from "@/constants/instruments";
 import {
   boundarySpan,
@@ -61,24 +62,6 @@ import { FileRow } from "./components/file-row";
  * 加一行，而新乐器是无限的，注定追不上（它把 Bassoon 译成「巴松管」，与项目标准
  * 的「大管」冲突，就是这个割裂的产物）。
  */
-
-/**
- * 存储键：`{scoreId}/{行 id}.pdf`。
- *
- * ⚠️ **不能用声部/乐器名做路径段** —— Supabase Storage 的键只允许
- * 字母数字与 `_ - . ' , ! * & $ @ = ; : + ? ( )` 和空白，**中日韩字符一律被
- * 拒为 `Invalid key`**（官方文档 *File names restrictions*）。中文名此前一直
- * 写在路径里，所以这个上传功能**从来没有成功过一次**（`sheet_music_files` 长期 0 行
- * 就是这个原因，不是"新功能还没用"）。
- *
- * 人类可读的名字改放 DB：`sheet_music_files.file_name` 与 `.instrument` 两列，
- * 下载时由客户端 `a.download = file_name` 还原文件名（`storage.download(path)`
- * 拿回 blob 后自己触发下载，**不走 `download` 选项**）。用行自己的 id 还顺带让
- * 「两个文件算出同一条路径互相覆盖」由**构造**消失（每个键唯一），不再需要批内查重。
- */
-function pathOf(scoreId: string, storageId: string): string {
-  return `${scoreId}/${storageId}.pdf`;
-}
 
 /**
  * 「同组段重名」的拦截文案。
@@ -1428,9 +1411,12 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           // 往它身上塞运行期的副作用会让 `fileTargetsOf` 的返回值不再是纯函数的结果。
           const paths: string[] = [];
           for (let k = 0; k < targets.length; k++) {
-            const filePath = pathOf(scoreId, k === 0 ? baseStorageId : `${baseStorageId}-${k}`);
+            const filePath = sheetMusicPath(
+              scoreId,
+              k === 0 ? baseStorageId : `${baseStorageId}-${k}`,
+            );
             const { error: uploadError } = await supabase.storage
-              .from("sheet-music")
+              .from(STORAGE_BUCKETS.sheetMusic)
               .upload(filePath, blob, { contentType: "application/pdf", upsert: true });
             if (uploadError) {
               updateFile(i, { status: "error", error: uploadError.message });

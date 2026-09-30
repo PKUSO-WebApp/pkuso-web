@@ -73,9 +73,7 @@ export default function AdminRehearsalsPage() {
           onChange={setCurrentType}
         />
 
-        <section
-          className={`${currentType === "历史合排" ? "max-h-[520px]" : "max-h-[520px]"} space-y-3 overflow-y-auto`}
-        >
+        <section className="max-h-[520px] space-y-3 overflow-y-auto">
           {loading && <p className="py-6 text-center text-xs text-text-subtle">加载中…</p>}
           {!loading &&
             list.map((item) => (

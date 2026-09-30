@@ -9,8 +9,8 @@ type ModalProps = {
   children?: React.ReactNode;
   /** 标题行右侧附加内容（位于标题与「关闭」按钮之间）；不传时行为与现状一致 */
   headerExtra?: React.ReactNode;
-  /** 底部弹出(默认)｜居中｜全屏铺满 */
-  position?: "bottom" | "center" | "fullscreen";
+  /** 底部弹出(默认)｜全屏铺满。**没有「居中」** —— 它曾经有，但一个调用点都没有（见 git 历史） */
+  position?: "bottom" | "fullscreen";
   /** 点击遮罩关闭,默认 true */
   closeOnOverlay?: boolean;
 };
@@ -99,16 +99,8 @@ function ModalDialog({
   // 并改成 flex column 让内容自己用 flex-1 min-h-0 划滚动区。
   // **焦点机制一行没动** —— 这正是复用原语而不是另写全屏组件的原因。
   const isFullscreen = position === "fullscreen";
-  const align = isFullscreen
-    ? "items-stretch"
-    : position === "center"
-      ? "items-center"
-      : "items-end";
-  const radius = isFullscreen
-    ? "rounded-none"
-    : position === "center"
-      ? "rounded-2xl"
-      : "rounded-t-3xl sm:rounded-2xl";
+  const align = isFullscreen ? "items-stretch" : "items-end";
+  const radius = isFullscreen ? "rounded-none" : "rounded-t-3xl sm:rounded-2xl";
 
   return (
     <div

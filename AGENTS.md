@@ -144,7 +144,7 @@ Web 端**只服务管理员**，没有「两端独立」这回事了。新功能
 - **移动端优先**: 页面宽 `max-w-md`(448px),Modal 默认底部弹出(`position="bottom"`),底部安全区 `pb-safe`。
 - **罗列内容必须可滚动**: AuthGate 外层是 `h-screen` + `overflow-hidden` 的列,页面因此是固定视口。页面根节点按 `flex h-full min-h-0 flex-col` 铺满,罗列性质的内容**必须自带滚动容器**(`flex-1 min-h-0 overflow-y-auto` 或 `max-h-[Npx] overflow-y-auto`);含筛选控件的列表页,控件+列表整体放滚动区(矮屏可到达)。现役 admin 页面都遵循这个骨架,可参照 `admin/roster`、`admin/members`、`admin/sheet-music`、`admin/page.tsx`。
 - **多行文本框可拉长**: textarea 保持默认可拖拽调整大小(resize: both),除全屏铺满等豁免场景外**不要加 `resize-none`**,且避免 `.input` 固定高度类覆盖 rows。
-- **组件复用**: 写新 UI 前先查 `src/components/ui/`(Modal/Toggle/Card/Toast)和该功能域自己的 `components/` 子目录(如 `src/app/admin/rehearsals/components/`)。Button 暂不统一(变体很多,待设计系统定型)。
+- **组件复用**: 写新 UI 前先查 `src/components/ui/`(Modal/Toggle/Card)和该功能域自己的 `components/` 子目录(如 `src/app/admin/rehearsals/components/`)。Button 暂不统一(变体很多,待设计系统定型)。
 - **暗色模式**: `<html data-theme="dark">` 即可全局切换,所有组件应双模式可用。测试时亮/暗都过一遍。
 - **0 行更新必须检测**: 带状态守卫的 update 要链 `.select("id")`,0 行(RLS 静默失败/并发已处理)时 return false,且**在任何副作用(如删附件)之前检测**。
 - **附件路径提取**: 统一走 `src/lib/storage.ts` 的 `storagePathFromUrl(url, bucket)`，bucket 名也从那里取（`STORAGE_BUCKETS`），**不要在调用处写字面量**。自己写 `indexOf` + `decodeURIComponent` 的代价是**静默失败**：bucket 改名或对象名含中文时，上传照常成功而删除悄悄删不掉，界面上看不出任何异常。抠不出路径时它返回 `null`（而不是猜一个键），调用方要显式处理。

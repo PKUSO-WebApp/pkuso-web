@@ -76,12 +76,13 @@ describe("Modal", () => {
     expect(headerRow.children).toHaveLength(2);
   });
 
-  it("position=center 渲染居中样式", () => {
+  it("默认是底部弹出（items-end）—— 「居中」变体已删，别再让它悄悄回来", () => {
     const { container } = render(
-      <Modal open onClose={vi.fn()} position="center">
-        <p>居中</p>
+      <Modal open onClose={vi.fn()}>
+        <p>底部</p>
       </Modal>,
     );
-    expect(container.querySelector(".items-center")).toBeTruthy();
+    expect(container.querySelector(".items-end")).toBeTruthy();
+    expect(container.querySelector(".items-center")).toBeNull();
   });
 });

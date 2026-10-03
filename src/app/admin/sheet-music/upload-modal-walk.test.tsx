@@ -84,6 +84,10 @@ const h = vi.hoisted(() => ({
   upsertError: null as { code: string; message: string } | null,
   /** `storage.upload` 收到的路径 */
   uploaded: [] as string[],
+  /** 页图对象的上传路径（contentType image/jpeg，见 page-previews.ts），与 PDF 分开记 */
+  uploadedPages: [] as string[],
+  /** 置 true 时页图上传返回 error（造「页图失败」路径，#378） */
+  failPageUpload: false,
   /** 只想让**某几个文件**的 LLM 失败时用（OCR 文本里含这些名字就失败） */
   llmFailFor: [] as string[],
   /**
@@ -184,10 +188,17 @@ vi.mock("@/lib/supabase", () => {
       }),
       storage: {
         from: vi.fn(() => ({
-          upload: async (path: string) => {
+          upload: async (path: string, _body: unknown, opts?: { contentType?: string }) => {
             // 需要「上传还在飞」的窗口时挂在这里（phase === "uploading" 的禁用态要用它）
             if (h.uploadGate) await h.uploadGate;
-            h.uploaded.push(path);
+            // 页图（image/jpeg）与 PDF 分开记：既有断言都在数「PDF 落点」，
+            // 混在一起会被页图（页数 × 落点数 条）撑爆
+            if (opts?.contentType === "application/pdf") {
+              h.uploaded.push(path);
+            } else {
+              if (h.failPageUpload) return { error: { message: "页图上传失败（测试）" } };
+              h.uploadedPages.push(path);
+            }
             return { error: null };
           },
         })),
@@ -323,6 +334,8 @@ beforeEach(() => {
   h.upsertOnConflict = null;
   h.upsertError = null;
   h.uploaded.length = 0;
+  h.uploadedPages.length = 0;
+  h.failPageUpload = false;
   h.llmFailFor = [];
   h.llmGate = null;
   h.uploadGate = null;
@@ -1079,12 +1092,43 @@ describe("跨声部的共用分谱：一份文件落成两行", () => {
     expect(h.uploaded).toHaveLength(2);
     expect(new Set(rows.map((r) => r.storage_path)).size).toBe(2);
     expect(rows.map((r) => r.storage_path)).toEqual(h.uploaded);
+    // 页图（#378）：假 pdfjs 报 3 页 ⇒ 两行都写 page_count = 3（阅读器走页图的开关）
+    expect(rows.map((r) => r.page_count)).toEqual([3, 3]);
+    // 页图（#378）：**每个落点各一套** —— 页图前缀集合必须与 PDF 落点集合逐一对应
+    expect(new Set(h.uploadedPages.map((p) => p.replace(/\/p\d+\.jpg$/, "")))).toEqual(
+      new Set(h.uploaded.map((p) => p.replace(/\.pdf$/, ""))),
+    );
     // 第 0 个沿用行自己的 storageId（既有形态不变），其余按序号派生 —— 于是**重试
     // 仍落在同一条路径**上、走 upsert 不会堆孤儿对象。这里断言的是**派生规则**，
     // 不断言具体 uuid（那是分析阶段随机生成的，写死等于编一个值）。
     const base = h.uploaded[0]!.replace(/\.pdf$/, "");
     expect(base.startsWith("score-1/")).toBe(true);
     expect(h.uploaded[1]).toBe(`${base}-1.pdf`);
+  });
+
+  it("页图上传失败 → page_count 键**存在且为 null**（不是缺失键），PDF 与行照常落库", async () => {
+    h.failPageUpload = true;
+    h.user = { id: "u1" };
+    h.llmReply = {
+      success: true,
+      section: "大提琴",
+      instrument: "大提琴",
+      subParts: [],
+      isFullScore: false,
+    };
+    await runAnalysis();
+
+    fireEvent.click(screen.getByText(/确认上传/));
+    await waitFor(() => expect(h.fileInserts.length).toBeGreaterThan(0), { timeout: 10000 });
+
+    const rows = h.fileInserts[0] as Array<Record<string, unknown>>;
+    // ⚠️ 键必须**存在且为 null**。写成 `?? undefined` 时键会被 JSON.stringify 丢掉，
+    // 而 upsert 只更新载荷里出现过的列 ⇒ 重传同名文件时旧 page_count 保留、storage_path
+    // 已换新 ⇒ 行声称有页图而新路径下一张都没有 ⇒ 阅读器永不回退（#378 对抗测出的阻塞项）
+    expect(rows[0]).toHaveProperty("page_count", null);
+    // 失败不阻塞（契约第 6 条）：PDF 照常上传、行照常落库
+    expect(h.uploaded).toHaveLength(1);
+    expect(h.uploadedPages).toHaveLength(0);
   });
 
   it("界面上把额外声部摆明 —— 否则用户看到的落库结果与预览对不上", async () => {

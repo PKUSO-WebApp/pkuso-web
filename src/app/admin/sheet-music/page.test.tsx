@@ -120,6 +120,8 @@ vi.mock("@/lib/supabase", () => {
       from: (table: string) => builder(table),
       storage: {
         from: () => ({
+          // removeSheetMusicObjects 先 list 页图前缀、再合批 remove（#378）；这里模拟老文件
+          list: () => Promise.resolve({ data: [], error: null }),
           remove: (paths: string[]) => {
             h.storageRemoves.push(paths);
             return Promise.resolve({ data: null, error: null });

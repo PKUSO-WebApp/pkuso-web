@@ -38,6 +38,7 @@ import {
   uploadBlocker,
 } from "./row-text";
 import { renderPagesForAnalysis } from "./pdf-render";
+import { uploadPagePreviews } from "./page-previews";
 import {
   analysisSettled,
   estimateAnalysisOcrCalls,
@@ -1428,6 +1429,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             paths.push(filePath);
           }
 
+          // 预渲染页图（#378）：失败不阻塞——串行链、上传、降级都在 page-previews.ts
+          const pageCount = await uploadPagePreviews(blob, paths, () => cancelledRef.current);
+
           // 声部按需建（同一张票，见 `ensurePart`）。**先把所有声部建齐，再插文件行**：
           // 建失败时一行文件都没插，不会留下「半条」记录。
           //
@@ -1461,6 +1465,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
               sub_parts: subParts,
               file_size: blob.size,
               uploaded_by: user.id,
+              // ⚠️ 必须显式写 null，不能 `?? undefined`：`undefined` 的键会被 JSON 丢掉，
+              // 而 upsert 只更新载荷里出现的列 —— 重传同名文件时旧 page_count 留下、而
+              // storage_path 已换新 ⇒ 行声称有页图、实际全 404、阅读器永不回退（对抗测出）
+              page_count: pageCount,
             });
           }
 

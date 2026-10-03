@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { LogOut, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { canVisitAdminPath } from "@/lib/access";
-import { STORAGE_BUCKETS } from "@/lib/storage";
+import { removeSheetMusicObjects } from "./storage-cleanup";
 import { useUser } from "@/context/user-context";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
 import { Modal } from "@/components/ui/Modal";
@@ -249,9 +249,9 @@ export default function SheetMusicPage() {
       if (error) throw error;
       if (!deleted || deleted.length === 0) throw new Error("没有匹配的记录，曲目可能已被删除");
 
-      // 行删除成功后再清 storage（best-effort，失败不影响删除结果）
+      // 行删除成功后再清 storage（best-effort，失败不影响删除结果）；连带页图
       if (storagePaths.length > 0) {
-        await supabase.storage.from(STORAGE_BUCKETS.sheetMusic).remove(storagePaths);
+        await removeSheetMusicObjects(storagePaths);
       }
 
       setScores((prev) => prev.filter((s) => s.id !== score.id));

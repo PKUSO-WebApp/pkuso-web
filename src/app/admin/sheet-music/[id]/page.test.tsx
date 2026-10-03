@@ -46,6 +46,8 @@ const h = vi.hoisted(() => ({
   deleteResult: { data: [{ id: "deleted" }], error: null } as { data: unknown; error: unknown },
   /** storage.remove 收到的路径 —— 「0 行时不许动附件」的断言看它 */
   storageRemoves: [] as string[][],
+  /** `storage.list` 的返回（页图对象）——默认空 = 老文件没有页图；用例可造出页图 */
+  pageObjects: [] as { name: string }[],
   /**
    * 已发出的**读**查询次数。用来钉住 `refetch()` 的位置：0 行时不许重取，
    * 一次新读都不该发 —— 只断言「列表长啥样」抓不到「重取被上移」（重取完照样 throw）。
@@ -144,6 +146,9 @@ vi.mock("@/lib/supabase", () => {
       }),
       storage: {
         from: () => ({
+          // removeSheetMusicObjects 先 list 页图前缀、再合批 remove（#378）。
+          // 默认空 = 从未生成过页图的老文件；用例可设 h.pageObjects 造出页图
+          list: () => Promise.resolve({ data: h.pageObjects, error: null }),
           remove: (paths: string[]) => {
             h.storageRemoves.push(paths);
             return Promise.resolve({ data: null, error: null });
@@ -207,6 +212,7 @@ afterEach(() => {
   h.deletes = [];
   h.deleteResult = { data: [{ id: "deleted" }], error: null };
   h.storageRemoves = [];
+  h.pageObjects = [];
   h.reads = 0;
 });
 
@@ -388,5 +394,22 @@ describe("曲谱详情页的删除（0 行检测）", () => {
 
     await waitFor(() => expect(h.storageRemoves).toHaveLength(1));
     expect(h.storageRemoves[0]).toEqual(["score-1/file-1.pdf"]);
+  });
+
+  it("有页图时：删除连带清掉页图对象（#378 契约第 8 条）", async () => {
+    seedOneScore();
+    h.pageObjects = [{ name: "p1.jpg" }, { name: "p2.jpg" }];
+    renderPage();
+    await waitFor(() => expect(screen.getByText("圆号")).toBeTruthy());
+
+    fireEvent.click(screen.getAllByText("删除声部")[0]);
+
+    await waitFor(() => expect(h.storageRemoves).toHaveLength(1));
+    // PDF 本体 + 该前缀下的全部页图（前缀由 storage_path 推导：score-1/file-1/）
+    expect(h.storageRemoves[0]).toEqual([
+      "score-1/file-1.pdf",
+      "score-1/file-1/p1.jpg",
+      "score-1/file-1/p2.jpg",
+    ]);
   });
 });

@@ -79,7 +79,7 @@ function makePreview(canvas: HTMLCanvasElement, maxWidth = 260): string {
   return url;
 }
 
-function canvasToJpegBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+export function canvasToJpegBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise<Blob | null>((resolve) =>
     canvas.toBlob(resolve, "image/jpeg", OCR_JPEG_QUALITY),
   ).then((blob) => {

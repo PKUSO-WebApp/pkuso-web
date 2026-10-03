@@ -93,3 +93,23 @@ export function storagePathFromUrl(
 export function sheetMusicPath(scoreId: string, storageId: string): string {
   return `${scoreId}/${storageId}.pdf`;
 }
+
+/**
+ * 页图对象的前缀，**由 PDF 的 storage_path 推导**：`…/x.pdf` → `…/x/`。
+ *
+ * 为什么以 PDF 路径为输入而不是 `(scoreId, storageId)`：三处调用方手里拿到的都是
+ * storage_path（上传流程的 `paths[k]`、删除流程的行数据、小程序阅读器的 `storage_path`），
+ * 让它们各自去拆 scoreId/storageId 会散出三套解析。一个规则、一个函数。
+ *
+ * 页图是「上传时预渲染的整页 JPEG」（最长边 2400 / q0.8），小程序阅读器直接显示它，
+ * 不再在小程序里跑 pdf.js 的纯 JS 解码（一页 300dpi 扫描件约 6 秒）。
+ * PDF 本身**始终保留**——打印/转发/管理端依赖它。
+ */
+export function sheetMusicPagePrefix(pdfStoragePath: string): string {
+  return `${pdfStoragePath.replace(/\.pdf$/, "")}/`;
+}
+
+/** 第 n 页页图的对象键（n 从 1 起）。路径段全部 ASCII（CJK 会被 Storage 拒为 Invalid key）。 */
+export function sheetMusicPagePath(pdfStoragePath: string, pageNo: number): string {
+  return `${sheetMusicPagePrefix(pdfStoragePath)}p${pageNo}.jpg`;
+}

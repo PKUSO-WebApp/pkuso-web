@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Pencil, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { STORAGE_BUCKETS } from "@/lib/storage";
+import { removeSheetMusicObjects } from "../storage-cleanup";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
 import { UploadModal } from "../upload-modal";
 import { sortPartsForDisplay } from "../sort-parts";
@@ -137,10 +138,7 @@ export default function ScoreDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scoreId]);
 
-  const removeStorageFiles = async (paths: string[]) => {
-    if (paths.length === 0) return;
-    await supabase.storage.from(STORAGE_BUCKETS.sheetMusic).remove(paths);
-  };
+  const removeStorageFiles = (paths: string[]) => removeSheetMusicObjects(paths);
 
   const refetch = async () => {
     try {

@@ -26,13 +26,14 @@ vi.mock("next/link", () => ({
 
 // ---- Mock next/navigation ----
 // pathname 必须可变：守卫的判据是「角色 × 路径」，只测一个路径等于没测矩阵
-const { mockReplace, pathState } = vi.hoisted(() => ({
+const { mockReplace, mockPush, pathState } = vi.hoisted(() => ({
   mockReplace: vi.fn(),
+  mockPush: vi.fn(),
   pathState: { current: "/admin" },
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
-    push: vi.fn(),
+    push: mockPush,
     replace: mockReplace,
     refresh: vi.fn(),
     back: vi.fn(),
@@ -524,25 +525,41 @@ describe("AdminLayout", () => {
 
 const LEFT_SLOT = <span data-testid="left-slot">退出登录</span>;
 const RIGHT_SLOT = <span data-testid="right-slot">新增</span>;
+const RIGHT_SLOT_2 = <span data-testid="right-slot-2">添加预约</span>;
 
 function HeaderSetter({
   title,
   left,
   right,
   hideBack,
+  onBack,
 }: {
   title?: string;
   left?: ReactNode;
   right?: ReactNode;
   hideBack?: boolean;
+  onBack?: () => void;
 }) {
-  const { setTitle, setHeaderLeft, setHeaderRight, setHideBackButton } = useAdminPageHeader();
+  const { setTitle, setHeaderLeft, setHeaderRight, setHideBackButton, setOnBack } =
+    useAdminPageHeader();
   useEffect(() => {
     if (title !== undefined) setTitle(title);
     if (left !== undefined) setHeaderLeft(left);
     if (right !== undefined) setHeaderRight(right);
     if (hideBack !== undefined) setHideBackButton(hideBack);
-  }, [title, left, right, hideBack, setTitle, setHeaderLeft, setHeaderRight, setHideBackButton]);
+    if (onBack !== undefined) setOnBack(onBack);
+  }, [
+    title,
+    left,
+    right,
+    hideBack,
+    onBack,
+    setTitle,
+    setHeaderLeft,
+    setHeaderRight,
+    setHideBackButton,
+    setOnBack,
+  ]);
   return null;
 }
 
@@ -588,5 +605,143 @@ describe("顶栏渲染：左槽抢占与 hideBackButton 的重载", () => {
 
     expect(screen.getByTestId("right-slot")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "设置" })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * 只在**挂载时**抓一次 setter，之后不再刷新 —— 它模拟的是「上一页卸载后仍在飞的
+ * 回调手里握着的那份 setter」。写成模块级对象而不是 prop：改 prop 的属性会被
+ * `react-hooks/immutability` 挡下（React Compiler 的规则）。
+ */
+const staleSetterSink: { setTitle: ((title: string) => void) | null } = { setTitle: null };
+
+function StaleWriteProbe() {
+  const { setTitle } = useAdminPageHeader();
+  useEffect(() => {
+    staleSetterSink.setTitle = setTitle;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
+
+// ==========================================
+// 顶栏状态的**生命周期**：换页即作废
+// ==========================================
+//
+// Provider 住在 `admin/layout.tsx` 里，而 layout **跨路由不重挂** ⇒ 谁最后
+// `setHeaderRight`，谁就替后面所有页面占着右槽。实测路径：先逛一次
+// `/admin/rehearsals`（右槽 =「发布新日程」），再进考勤 / 审批 / 请假 / 公告 / 反馈…
+// 右上角全都顶着「发布新日程」；只有谱务页看不出来（它自己设了右槽）。
+//
+// 判据取**路径**：路径没变就不清（页内切 tab、syncing 变化等 setState 照旧生效）。
+
+describe("换页后不残留上一页的顶栏槽位", () => {
+  // 本 describe 在 `describe("AdminLayout")` 之外，拿不到它里面的 beforeEach；
+  // 不清的话 mockPush / mockReplace 的调用记录会跨用例累积（下面那条断言
+  // 「返回走默认目标」正是靠计数成立的）。
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** 渲染「第一页」并返回 rerender —— 换页 = 改路径 + 再渲染一次 */
+  const renderFirstPage = (props: Parameters<typeof HeaderSetter>[0]) => {
+    setUser(adminUser);
+    pathState.current = "/admin/rehearsals";
+    return render(
+      <AdminLayout>
+        <HeaderSetter {...props} />
+      </AdminLayout>,
+    );
+  };
+
+  it("右槽：换到不设右槽的页面后，不再显示上一页的按钮", () => {
+    const { rerender } = renderFirstPage({ title: "排练管理", right: RIGHT_SLOT });
+    expect(screen.getByTestId("right-slot")).toBeInTheDocument();
+
+    pathState.current = "/admin/attendance";
+    rerender(
+      <AdminLayout>
+        <HeaderSetter title="考勤管理" />
+      </AdminLayout>,
+    );
+
+    expect(screen.getByText("考勤管理")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-slot")).not.toBeInTheDocument();
+  });
+
+  it("onBack：换页后「返回」走默认目标，而不是上一页的回调", () => {
+    const staleBack = vi.fn();
+    const { rerender } = renderFirstPage({ title: "排练详情", onBack: staleBack });
+
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    expect(staleBack).toHaveBeenCalledTimes(1);
+
+    pathState.current = "/admin/attendance";
+    rerender(
+      <AdminLayout>
+        <HeaderSetter title="考勤管理" />
+      </AdminLayout>,
+    );
+
+    mockPush.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    expect(staleBack).toHaveBeenCalledTimes(1); // 没有第二次
+    expect(mockPush).toHaveBeenCalledWith("/admin");
+  });
+
+  it("左槽：换页后不再显示上一页的 headerLeft", () => {
+    const { rerender } = renderFirstPage({ title: "谱务管理", left: LEFT_SLOT });
+    expect(screen.getByTestId("left-slot")).toBeInTheDocument();
+
+    pathState.current = "/admin/attendance";
+    rerender(
+      <AdminLayout>
+        <HeaderSetter title="考勤管理" />
+      </AdminLayout>,
+    );
+
+    expect(screen.queryByTestId("left-slot")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "返回" })).toBeInTheDocument();
+  });
+
+  it("在飞回调：换页后，上一页手里的 setter 写不回当前顶栏", () => {
+    // 只用清一次是不够的：上一页卸载后仍有在飞的写入（谱务详情页 fetch 回来才
+    // `setTitle(曲名)`、删完文件 refetch 后再写一次），它拿的是**旧路由下创建的
+    // setter**，会在清空之后把上一页的值写进新页面的顶栏。
+    staleSetterSink.setTitle = null;
+    setUser(adminUser);
+    pathState.current = "/admin/sheet-music/score-1";
+    const { rerender } = render(
+      <AdminLayout>
+        <StaleWriteProbe />
+      </AdminLayout>,
+    );
+    expect(staleSetterSink.setTitle).not.toBeNull();
+
+    pathState.current = "/admin/sheet-music";
+    rerender(
+      <AdminLayout>
+        <HeaderSetter title="谱务管理" />
+      </AdminLayout>,
+    );
+
+    act(() => staleSetterSink.setTitle?.("上一首曲子的曲名"));
+
+    expect(screen.getByText("谱务管理")).toBeInTheDocument();
+    expect(screen.queryByText("上一首曲子的曲名")).not.toBeInTheDocument();
+  });
+
+  it("路径没变时不清：同页内换槽位仍然生效", () => {
+    const { rerender } = renderFirstPage({ title: "排练管理", right: RIGHT_SLOT });
+    expect(screen.getByTestId("right-slot")).toBeInTheDocument();
+
+    rerender(
+      <AdminLayout>
+        <HeaderSetter title="排练管理" right={RIGHT_SLOT_2} />
+      </AdminLayout>,
+    );
+
+    expect(screen.queryByTestId("right-slot")).not.toBeInTheDocument();
+    expect(screen.getByTestId("right-slot-2")).toBeInTheDocument();
   });
 });

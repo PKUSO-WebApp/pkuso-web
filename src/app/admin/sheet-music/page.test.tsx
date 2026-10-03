@@ -156,7 +156,7 @@ function HeaderProbe() {
 
 const renderPage = () =>
   render(
-    <AdminPageHeaderProvider>
+    <AdminPageHeaderProvider routeKey="/admin/sheet-music">
       <SheetMusicPage />
       <HeaderProbe />
     </AdminPageHeaderProvider>,

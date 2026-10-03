@@ -9,6 +9,15 @@ import { AdminPageHeaderProvider } from "@/context/admin-page-header-context";
  *   import { renderWithProviders } from "@/__tests__/render-with-providers";
  *   renderWithProviders(<MyComponent />);
  */
-export function renderWithProviders(ui: React.ReactElement, options?: RenderOptions) {
-  return render(<AdminPageHeaderProvider>{ui}</AdminPageHeaderProvider>, options);
+export function renderWithProviders(
+  ui: React.ReactElement,
+  options?: RenderOptions,
+  // 默认常量够用：这些用例只渲染一个页面、不做换页；顶栏状态的换页作废由
+  // admin/layout.test.tsx 走真实 AdminLayout 覆盖。要模拟换页的用例再传新值。
+  routeKey = "/admin",
+) {
+  return render(
+    <AdminPageHeaderProvider routeKey={routeKey}>{ui}</AdminPageHeaderProvider>,
+    options,
+  );
 }

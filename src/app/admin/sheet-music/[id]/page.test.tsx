@@ -168,7 +168,7 @@ function HeaderProbe() {
 
 function renderPage() {
   return render(
-    <AdminPageHeaderProvider>
+    <AdminPageHeaderProvider routeKey="/admin/sheet-music/score-1">
       <ScoreDetailPage />
       <HeaderProbe />
     </AdminPageHeaderProvider>,

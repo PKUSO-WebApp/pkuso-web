@@ -86,7 +86,7 @@ describe("AdminRehearsalDetailPage（Issue #173：详情页路由）", () => {
   it("渲染排练明细：曲目、地点", () => {
     setData([makeRehearsal(1, "2026-08-16T20:00:00", "明天排练")]);
     render(
-      <AdminPageHeaderProvider>
+      <AdminPageHeaderProvider routeKey="/admin/rehearsals/1">
         <AdminRehearsalDetailPage />
       </AdminPageHeaderProvider>,
     );
@@ -98,7 +98,7 @@ describe("AdminRehearsalDetailPage（Issue #173：详情页路由）", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     setData([makeRehearsal(1, "2026-08-16T20:00:00", "明天排练")]);
     render(
-      <AdminPageHeaderProvider>
+      <AdminPageHeaderProvider routeKey="/admin/rehearsals/1">
         <AdminRehearsalDetailPage />
       </AdminPageHeaderProvider>,
     );
@@ -112,7 +112,7 @@ describe("AdminRehearsalDetailPage（Issue #173：详情页路由）", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     setData([makeRehearsal(1, "2026-08-16T20:00:00", "明天排练")]);
     render(
-      <AdminPageHeaderProvider>
+      <AdminPageHeaderProvider routeKey="/admin/rehearsals/1">
         <AdminRehearsalDetailPage />
       </AdminPageHeaderProvider>,
     );
@@ -130,7 +130,7 @@ describe("AdminRehearsalDetailPage（Issue #173：详情页路由）", () => {
 
     setData([makeRehearsal(1, "2026-08-16T20:00:00", "明天排练")]);
     render(
-      <AdminPageHeaderProvider>
+      <AdminPageHeaderProvider routeKey="/admin/rehearsals/1">
         <AdminRehearsalDetailPage />
       </AdminPageHeaderProvider>,
     );
@@ -149,7 +149,7 @@ describe("AdminRehearsalDetailPage（Issue #173：详情页路由）", () => {
 
     setData([makeRehearsal(1, "2026-08-16T20:00:00", "明天排练")]);
     render(
-      <AdminPageHeaderProvider>
+      <AdminPageHeaderProvider routeKey="/admin/rehearsals/1">
         <AdminRehearsalDetailPage />
       </AdminPageHeaderProvider>,
     );
@@ -161,7 +161,7 @@ describe("AdminRehearsalDetailPage（Issue #173：详情页路由）", () => {
   it("未找到该排练：空态文案", () => {
     setData([]);
     render(
-      <AdminPageHeaderProvider>
+      <AdminPageHeaderProvider routeKey="/admin/rehearsals/1">
         <AdminRehearsalDetailPage />
       </AdminPageHeaderProvider>,
     );

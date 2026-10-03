@@ -105,7 +105,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <AdminPageHeaderProvider>
+    <AdminPageHeaderProvider routeKey={pathname}>
       <div className="flex h-full flex-col">
         {/* 顶部栏 */}
         <AdminHeader />

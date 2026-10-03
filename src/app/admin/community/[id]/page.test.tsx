@@ -101,7 +101,7 @@ function renderDetail(
     uploadImage: vi.fn(),
   }));
   render(
-    <AdminPageHeaderProvider>
+    <AdminPageHeaderProvider routeKey="/admin/community/post-1">
       <AdminPostDetailPage />
     </AdminPageHeaderProvider>,
   );
@@ -313,7 +313,7 @@ describe("AdminPostDetailPage 公告详情（Issue #179：Modal→页面）", ()
       uploadImage: vi.fn(),
     }));
     render(
-      <AdminPageHeaderProvider>
+      <AdminPageHeaderProvider routeKey="/admin/community/post-1">
         <AdminPostDetailPage />
       </AdminPageHeaderProvider>,
     );

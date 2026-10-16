@@ -1,10 +1,6 @@
 import type { PDFPageProxy } from "pdfjs-dist";
-import {
-  decideTitleCrop,
-  findFirstStaffLine,
-  rowLongestRun,
-  type CropDecision,
-} from "./staff-line";
+import { decideTitleCrop, type CropDecision } from "./staff-line";
+import { findFirstStaffLineInImage } from "./staff-line-tilt";
 import { cropNoteOf } from "./row-text";
 import type { RenderedPage } from "./upload-modal.types";
 
@@ -165,11 +161,7 @@ export async function renderPageToJpeg(page: PDFPageProxy): Promise<{
     // 空白页会被顺延逻辑跳过，不必浪费一次行投影
     const staffY = blank
       ? null
-      : findFirstStaffLine(
-          rowLongestRun(imageData.data, canvas.width, canvas.height),
-          canvas.width,
-          canvas.height,
-        );
+      : findFirstStaffLineInImage(imageData.data, canvas.width, canvas.height);
     const crop = decideTitleCrop(staffY, canvas.height);
 
     // 裁到第一条谱线之上，把五线谱挡在送检图之外

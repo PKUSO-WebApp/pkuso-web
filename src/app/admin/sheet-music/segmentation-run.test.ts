@@ -157,34 +157,43 @@ describe("requestSegmentation —— rejected 的收口", () => {
     ]);
   });
 
-  it("字段缺失或形状不对时收口成空数组，不抛（老后端 / 老响应不会让调用方炸）", async () => {
-    // 完全没带这两个字段（= 未部署新后端）
+  it("**缺字段 ⇒ `rawCuts` 是 `undefined`**（不是 `[]`）：老后端 / 老响应不抛，也不冒充「后端回了」", async () => {
+    // 完全没带这两个字段（= 未部署新后端）。⚠️ 这一条**必须**用 `toBeUndefined` 钉住：
+    // 界面（`components/seg-evidence.tsx`）据此才敢说「后端没回这两个字段，分不开」——
+    // 这里一旦补 `?? []`，界面就会把「不知道」说成「后端回了、里面是空的」，那是一句**假话**，
+    // 而这条分界线恰恰是 pkuso-backend#96 §3.2 这两个字段存在的全部理由。
     h.results.push({ data: { success: true, cuts: [4] }, error: null });
-    expect(await requestSegmentation(4, pageTexts)).toStrictEqual({
-      cuts: [4],
-      evidence: undefined,
-      rawCuts: [],
-      rejected: [],
-    });
+    const missing = await requestSegmentation(4, pageTexts);
+    expect(missing.rawCuts).toBeUndefined();
+    expect(missing.evidence).toBeUndefined();
+    expect(missing.cuts).toEqual([4]);
+    // `rejected` 缺字段归一成 `[]` 无所谓（没有它时不显示任何「丢掉了几个」的结论）
+    expect(missing.rejected).toEqual([]);
 
-    // 带了但形状不对
+    // 回了这个字段、**里面是空的** ⇒ 空数组。这一条与上面那条必须不同形 —— 两者在
+    // 改动前长得一模一样（都只有空的 `cuts`），而那正是「分不开」的根源。
+    h.results.push({ data: { success: true, cuts: [], rawCuts: [], rejected: [] }, error: null });
+    const abstain = await requestSegmentation(4, pageTexts);
+    expect(abstain.rawCuts).toEqual([]);
+    expect(abstain.rawCuts).not.toBeUndefined();
+    expect(abstain.rawCuts).not.toEqual(missing.rawCuts);
+
+    // 带了但形状不对：一律当没带（`undefined`），而不是当空数组
     h.results.push({
       data: { success: true, cuts: [4], rawCuts: "4", rejected: "x" },
       error: null,
     });
-    expect(await requestSegmentation(4, pageTexts)).toMatchObject({
-      rawCuts: [],
-      rejected: [],
-    });
+    const wrongType = await requestSegmentation(4, pageTexts);
+    expect(wrongType.rawCuts).toBeUndefined();
+    expect(wrongType.rejected).toEqual([]);
 
     h.results.push({
       data: { success: true, cuts: [4], rawCuts: null, rejected: {} },
       error: null,
     });
-    expect(await requestSegmentation(4, pageTexts)).toMatchObject({
-      rawCuts: [],
-      rejected: [],
-    });
+    const wrongType2 = await requestSegmentation(4, pageTexts);
+    expect(wrongType2.rawCuts).toBeUndefined();
+    expect(wrongType2.rejected).toEqual([]);
   });
 });
 

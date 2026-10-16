@@ -45,6 +45,23 @@ export function loadPdfJs(): Promise<typeof import("pdfjs-dist")> {
   return pdfjsPromise;
 }
 
+/** 打开一份 PDF 的入口：**分析整页 / 分段窄带 / 核实面板缩略图**三条路共用它。
+ *  ⚠️ 资源目录（standard_fonts / wasm / iccs）在**这里与 `page-previews.ts` 各写了一份**
+ *  （后者收 `Blob`、自己 `getDocument`）—— 升级 pdfjs-dist 或加第 4 个目录时**两处都要改**，
+ *  漏一处 pdf.js 不报错、但整页什么都不画（来历见文件头）。
+ *  返回**加载任务**而不是 `pdf` —— 调用方要在 `try/finally` 里 `await task.promise` 与
+ *  `task.destroy()`（加载失败也要销毁 worker），所以 await 留在调用方。 */
+export async function openPdf(file: File) {
+  const pdfjs = await loadPdfJs();
+  const data = new Uint8Array(await file.arrayBuffer());
+  return pdfjs.getDocument({
+    data,
+    standardFontDataUrl: `${PDFJS_ASSET_BASE}standard_fonts/`,
+    wasmUrl: `${PDFJS_ASSET_BASE}wasm/`,
+    iccUrl: `${PDFJS_ASSET_BASE}iccs/`,
+  });
+}
+
 export function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -64,8 +81,8 @@ function hasVisibleContent(imageData: ImageData): boolean {
   return false;
 }
 
-/** 缩略图：仅用于界面回显「实际送去 OCR 的是哪张图」，体积约 10KB */
-function makePreview(canvas: HTMLCanvasElement, maxWidth = 260): string {
+/** 缩略图：界面回显「实际送去 OCR 的是哪张图」，也是 `band-render.ts` 出窄带图的路子，体积约 10KB */
+export function makePreview(canvas: HTMLCanvasElement, maxWidth = 260): string {
   const scale = Math.min(1, maxWidth / canvas.width);
   const c = document.createElement("canvas");
   c.width = Math.max(1, Math.round(canvas.width * scale));
@@ -259,22 +276,15 @@ export async function renderPagesForAnalysis(
   contentPage: RenderedPage | null;
   warning: string;
 }> {
-  const pdfjs = await loadPdfJs();
-  const data = new Uint8Array(await file.arrayBuffer());
-  const task = pdfjs.getDocument({
-    data,
-    standardFontDataUrl: `${PDFJS_ASSET_BASE}standard_fonts/`,
-    wasmUrl: `${PDFJS_ASSET_BASE}wasm/`,
-    iccUrl: `${PDFJS_ASSET_BASE}iccs/`,
-  });
+  const task = await openPdf(file);
 
   let pdf: Awaited<typeof task.promise>;
   try {
     // ⚠️ `await task.promise` 必须在 try **里面**（这里）：加载失败（坏 PDF / 加密 /
     // 资源缺失）时它会抛，抛在 try 外面就永远走不到 `destroy()` —— 真 worker 模式下
     // 每导入一个坏文件漏一个 worker 线程。实测：坏 PDF 时 `getDocument` 被调 1 次、
-    // `destroy` 被调 0 次。`renderNarrowBands` 里同一句早先也是这个形态，已经改过；
-    // 两处一致才不会漏。
+    // `destroy` 被调 0 次。`renderNarrowBands` / `renderBandThumbs` 两处同形，
+    // 三处一致才不会漏。
     pdf = await task.promise;
   } catch (err) {
     try {

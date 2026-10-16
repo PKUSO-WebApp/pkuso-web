@@ -142,6 +142,26 @@ export function startsFromResponse(cuts: unknown, pageCount: number): number[] {
 }
 
 /**
+ * `cuts` 与 `evidence` **逐位对应**（后端成对产出）→ 按**页号**索引的一张表。
+ *
+ * ⚠️ **不按「第几段」对齐**：界面上的段是 `startsFromResponse` 从 `cuts` 重算出来的
+ * （它过滤非法值、去重、排序 —— 它不信响应），把位置直接搬过来会错位。页号是响应里
+ * 本来就有、而两边都认的那个键。
+ *
+ * 引文不是非空字符串的条目**不入表**：界面据此把「模型为这一页给了引文」与「没给 / 给的是空白」
+ * 分开显示，而不是画一对空引号出来。
+ */
+export function evidenceByPage(cuts: unknown, evidence: unknown): Map<number, string> {
+  const out = new Map<number, string>();
+  if (!Array.isArray(cuts) || !Array.isArray(evidence)) return out;
+  cuts.forEach((c, k) => {
+    const e = evidence[k];
+    if (Number.isSafeInteger(c) && typeof e === "string" && e.trim()) out.set(c as number, e);
+  });
+  return out;
+}
+
+/**
  * 第 `i` 个边界的**可动区间**（闭区间）。
  *
  * 边界是「第 i 段的起点」，它左右都不能碰相邻的起点：往左最多到上一段起点 +1，
@@ -158,6 +178,28 @@ export function boundarySpan(
   const lo = starts[i - 1] + 1;
   const hi = (i + 1 < starts.length ? starts[i + 1] : pageCount + 1) - 1;
   return { lo, hi };
+}
+
+/**
+ * 第 i 条边界的**候选页**：把这条边界挪到这几页是合法的（落在 `boundarySpan` 内），
+ * 且离当前位置不超过 `radius` 页。升序，**含当前页**（界面用它标出「现在在这页」）。
+ *
+ * 只给**近邻**是刻意的：面板上每一页都要渲染一张窄带图，而整页渲染很贵；而边界切错
+ * 最常见的形态就是**差一页**。
+ */
+export function boundaryCandidates(
+  starts: number[],
+  i: number,
+  pageCount: number,
+  radius = 1,
+): number[] {
+  const span = boundarySpan(starts, i, pageCount);
+  if (!span) return [];
+  const here = starts[i];
+  const r = Number.isSafeInteger(radius) && radius >= 0 ? radius : 1;
+  const out: number[] = [];
+  for (let p = Math.max(span.lo, here - r); p <= Math.min(span.hi, here + r); p++) out.push(p);
+  return out;
 }
 
 /**

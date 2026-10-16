@@ -8,6 +8,7 @@
  * ⚠️ **注释跟着类型走**：下面这些说明（尤其 `LlmAnalysis` 的『「信号类」字段的消费者清单』
  * 与「为什么这些字段都写成可选」）是这个仓库反复栽过跟头换来的，别在搬家时顺手删。
  */
+import type { SegmentationResponse } from "./segmentation-run";
 
 export interface UploadFile {
   file: File;
@@ -132,6 +133,18 @@ export interface UploadFile {
    */
   segmentStartText?: string[];
   /**
+   * 这一次分段的**响应原件**（`segmentation-run.ts` 的 `SegmentationResponse`：`cuts` / `evidence` /
+   * `rawCuts` / `rejected`）—— 「为什么没切」与每条边界的引文都在里面
+   *（pkuso-backend#96 §3.2 的字段，§6 要求它有界面消费者）。
+   *
+   * ⚠️ 存**整个响应**、不在这里另拼一个形状：`evidence` 与 `cuts` 是**逐位对应**的，
+   * 拆成几个字段各存各的，对齐关系就得靠每个调用点记着（索引由 `segmentation.ts` 的
+   * `evidenceByPage` 负责）。`undefined` = 还没跑过分段（或这一次没留下响应）。
+   * ⚠️ 与 `subPartsRaw` / `extraSections` 同一类：**拆分出来的段行不继承它** ——
+   * 它陈述的是「这一次识别怎么回答的」，而段各自还会再识别一次。
+   */
+  segDiagnostics?: SegmentationResponse;
+  /**
    * 这一行是**合订谱切出来的一段**（#290 Step 2）。有它 = 上传时只取这几页。
    *
    * 同一份源文件切出来的若干行共享一个 `groupId`：界面上它们各占一行、各有各的
@@ -201,6 +214,8 @@ export interface PageText {
  * - `evidenceFromFileName` → `evidenceLine`（「来自文件名」那一态）
  * - `sectionRaw` → `sectionWarning`（两仓声部词表漂移的**唯一**可见信号）
  * - `abstainReason` → 展开面板的「上一次识别后端弃权」（排查用）
+ * - `segment-parts` 的 `evidence` / `rawCuts` / `rejected` → `UploadFile.segDiagnostics`
+ *   （分段面板：逐条引文，以及「没拿到切点」与「切点被丢掉」分开显示）
  * - `isFullScore` → `isFullScoreRow`（声部落总谱、不进分段）
  * - `extraSections` → `editsOf().extraSections`（一份谱落成几行）
  *

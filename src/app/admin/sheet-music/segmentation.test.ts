@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  boundaryCandidates,
   boundarySpan,
   cutsToSegments,
   estimateOcrCalls,
   estimateTotalOcrCalls,
+  evidenceByPage,
   mergeSegmentIntoPrev,
   moveSegmentStart,
   needsSegmentation,
@@ -382,5 +384,103 @@ describe("加/删边界（模型漏切时人工补，后端刻意宁可少切）
     // 下标本身非法也不动手
     expect(moveSegmentStart([1, 7], 0, 5, 19)).toEqual([1, 7]);
     expect(moveSegmentStart([1, 7], 9, 5, 19)).toEqual([1, 7]);
+  });
+});
+
+describe("引文按页索引（`evidence` 与 `cuts` 逐位对应，界面按**页号**取）", () => {
+  it("逐位配对成「页号 → 引文」", () => {
+    const m = evidenceByPage([7, 13], ["Corno II in F", "Oboe I in C"]);
+    expect(m.get(7)).toBe("Corno II in F");
+    expect(m.get(13)).toBe("Oboe I in C");
+    expect(m.size).toBe(2);
+  });
+
+  it("**按页号而不是按第几段**：非法的切点被丢掉后，配对仍然对得上", () => {
+    // 后端回的 cuts 里混了非法值（`4.5`）时，`startsFromResponse` 那一侧会把它过滤掉 ——
+    // 于是「段的下标」与「响应的下标」从此错位。按页号索引就不会被这件事牵连。
+    const m = evidenceByPage([7, 4.5, 13], ["甲", "乙", "丙"]);
+    expect(m.get(7)).toBe("甲");
+    expect(m.get(13)).toBe("丙");
+    expect(m.size).toBe(2);
+    expect([...m.keys()]).toEqual([7, 13]);
+  });
+
+  it("切点不是安全整数的条目一律不入表（引文宁可没有，也不能挂到别的页上）", () => {
+    const m = evidenceByPage([2.5, NaN, Infinity, "7", null], ["a", "b", "c", "d", "e"]);
+    expect(m.size).toBe(0);
+    // 合法的页号照常入表（拒绝不能变成「整张表都是空的」）
+    expect(evidenceByPage([1, 2.5, 3], ["a", "b", "c"]).get(3)).toBe("c");
+  });
+
+  it("引文不是**非空字符串**就不入表 —— 界面据此说「模型没有为这一页给出引文」", () => {
+    // 空白串同理：把它放进去，界面会画出一对空引号「」，看着像「模型说了什么」
+    const m = evidenceByPage([7, 8, 9, 10], ["   ", 42, null, undefined]);
+    expect(m.size).toBe(0);
+    expect(m.has(7)).toBe(false);
+  });
+
+  it("两栏长度不一致 / 形状不对时收口成空表，不抛", () => {
+    // 引文比切点短：短的那几页没有引文，不是把别的页的引文挪过来
+    const short = evidenceByPage([7, 13], ["只有一条"]);
+    expect(short.get(7)).toBe("只有一条");
+    expect(short.has(13)).toBe(false);
+    for (const bad of [
+      [null, ["a"]],
+      [undefined, ["a"]],
+      ["7", ["a"]],
+      [[7], "a"],
+      [[7], null],
+      [[7], { 0: "a" }],
+    ]) {
+      expect(evidenceByPage(bad[0], bad[1]).size, JSON.stringify(bad)).toBe(0);
+    }
+  });
+});
+
+describe("边界的候选页（界面上的窄带缩略图 = 这几页）", () => {
+  const START = [1, 7, 13, 17];
+  const N = 19;
+
+  it("中间那条边界：当前页 ±1", () => {
+    expect(boundaryCandidates(START, 1, N)).toEqual([6, 7, 8]);
+    expect(boundaryCandidates(START, 2, N)).toEqual([12, 13, 14]);
+  });
+
+  it("**候选页一律落在 `boundarySpan` 里**：碰到了相邻起点就是合并，得走显式操作", () => {
+    // 上界：最后一条边界后面没有别的边界了，上界是 pageCount
+    expect(boundaryCandidates([1, 7, 19], 2, 19)).toEqual([18, 19]);
+    // 下界：上一段从 2 起 ⇒ 往左最多到 2（第 1 页不是可动的边界）
+    expect(boundaryCandidates([1, 2, 13], 1, 19)).toEqual([2, 3]);
+    // 这一条与 `boundarySpan` 必须是同一份口径（两处各写一遍的话，界面上就会出现
+    // 一个「挪过去 = 静默合并两段」的按钮）
+    for (const starts of [START, [1, 2, 13], [1, 7, 19], [1, 2], [1, 10, 11, 12]]) {
+      for (let i = 1; i < starts.length; i++) {
+        const span = boundarySpan(starts, i, N)!;
+        for (const p of boundaryCandidates(starts, i, N)) {
+          expect(p >= span.lo && p <= span.hi, `${JSON.stringify(starts)} i=${i} p=${p}`).toBe(
+            true,
+          );
+          expect(Math.abs(p - starts[i])).toBeLessThanOrEqual(1);
+        }
+        // 当前页必须在里面（界面用它标出「现在在这页」）
+        expect(boundaryCandidates(starts, i, N), `${JSON.stringify(starts)} i=${i}`).toContain(
+          starts[i],
+        );
+      }
+    }
+  });
+
+  it("第 0 段不是边界 ⇒ 没有候选页（它的起点恒为第 1 页，不是可动的）", () => {
+    expect(boundaryCandidates(START, 0, N)).toEqual([]);
+    expect(boundaryCandidates(START, 9, N)).toEqual([]);
+    expect(boundaryCandidates(START, 1, 0)).toEqual([]);
+  });
+
+  it("半径可调：0 = 只有当前页（不渲染任何邻居的图）", () => {
+    expect(boundaryCandidates(START, 1, N, 0)).toEqual([7]);
+    expect(boundaryCandidates(START, 1, N, 2)).toEqual([5, 6, 7, 8, 9]);
+    // 非法半径退回 1（不是 0：静默把功能关掉比按默认来更糟）
+    expect(boundaryCandidates(START, 1, N, NaN)).toEqual([6, 7, 8]);
+    expect(boundaryCandidates(START, 1, N, -1)).toEqual([6, 7, 8]);
   });
 });

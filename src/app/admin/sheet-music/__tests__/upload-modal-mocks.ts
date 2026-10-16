@@ -197,7 +197,10 @@ vi.mock("@/lib/supabase", () => {
               if (h.segmentFail === "soft") {
                 return { data: { success: false, error: "no-cuts" }, error: null };
               }
-              return { data: { success: true, cuts: h.segmentCuts }, error: null };
+              return {
+                data: { success: true, cuts: h.segmentCuts, ...h.segmentExtra },
+                error: null,
+              };
             }
             return { data: null, error: { message: `未预期的调用 ${name}` } };
           },
@@ -296,6 +299,10 @@ beforeEach(() => {
   h.bandFailFor = [];
   h.bandCalls = 0;
   h.segmentCuts = [2];
+  // ⚠️ 必须清空（同下面 `llmReplies` 的理由）：它是个追加字段的口袋，
+  // 用例中途失败时里面会**留下上一条用例塞的东西** —— 而「响应里没有 rawCuts」
+  // 与「rawCuts 是空的」在界面上是两句不同的话（见 `segmentExtra` 的说明）。
+  h.segmentExtra = {};
   // ⚠️ 必须清空：mock 里是 `shift()` 按调用顺序取答案，用例中途失败时数组里会**剩下几条**
   // —— 不清的话后面所有用例的 LLM 回包都被顶掉，报错指向无辜的用例。
   h.llmReplies.length = 0;

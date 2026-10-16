@@ -181,6 +181,14 @@ const h = vi.hoisted(() => ({
   bandCalls: 0,
   /** `segment-parts` 回什么 cuts（3 页 → `[2]` 即两段） */
   segmentCuts: [2] as number[],
+  /**
+   * **追加**到 `segment-parts` 成功回包里的字段 —— 也就是 `evidence` / `rawCuts` / `rejected`
+   * 这三个「为什么没切」的字段（`SegmentationResponse`）。
+   *
+   * ⚠️ 默认**缺席**：prod 现在还在没有这三个字段的后端上，而「缺字段 ⇒ 界面不许说『模型弃权』」
+   * 恰恰是一条要测的判据（`seg-evidence.tsx`）。要测「后端回了、但是空的」就显式给 `rawCuts: []`。
+   */
+  segmentExtra: {} as Record<string, unknown>,
   /** `segment-parts` 最近一次的**请求体** —— 归页与页文本真正交给后端的那一份 */
   segmentBody: null as { pageCount?: number; pages?: unknown } | null,
   /**

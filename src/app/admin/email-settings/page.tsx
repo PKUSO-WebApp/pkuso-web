@@ -57,7 +57,12 @@ export default function EmailSettingsPage() {
       const fullBody = result.email_template_full_body ?? "";
       const sectionSubject = result.email_template_section_subject ?? "";
       const sectionBody = result.email_template_section_body ?? "";
-      const sig = result.email_signature ?? "";
+      // ⚠️ **签名这条键**的读与写只能有**一处**来源：与写方向（`saveSetting(EMAIL_SIGNATURE_KEY, …)`）
+      // 走同一个常量，别再抄一份字面量。两份拷贝当前同值 ⇒ 抄错了也不报错，只在键名一改时
+      // 才发作：这一页读到 `undefined ?? ""` ⇒ 显示空签名 ⇒ 用户以为没设置、点保存把已有值
+      // 写空。`?? ""` 那一支也不是摆设：键「从未设置过」时路由把它补成 null（`route.ts` 的
+      // `Object.fromEntries` 之前那段填充），读到 null 再交给 `.trim()` 就会当场抛。
+      const sig = result[EMAIL_SIGNATURE_KEY] ?? "";
 
       setTemplates({
         full: { subject: fullSubject, body: fullBody },

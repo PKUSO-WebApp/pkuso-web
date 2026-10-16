@@ -319,11 +319,68 @@ export async function ocrBandsForSegmentation(
   return { pageCount, pageTexts, failedPages };
 }
 
-/** 分段第二步：把页文本交给 `segment-parts`，拿回原始 `cuts`（校验交给 `segmentation.ts` 的 `startsFromResponse`） */
+/**
+ * 后端 `segment-parts` 丢掉的一个切点（#96 §3.2 的排查字段）：**模型弃权**与「模型给了切点但被 evidence 子串
+ * 校验丢掉」此前逐字相同（都只有空 `cuts`），而两者修法**相反**（改 prompt vs 改校验/抄写规则）—— 那几份
+ * 0/9 的合订谱就是这样卡住的：分不开是哪一种，就不知道该改 prompt 还是改校验。
+ */
+export interface SegmentationRejection {
+  /** 模型给的那个页号（`4.5` 也原样带上：它正是「为什么被丢」的一部分）；不是有限数字时是 `null` */
+  page: number | null;
+  /**
+   * 丢掉它的理由，取值由后端 `REJECTION_REASONS` 定义（**别把取值抄到这里**，抄一份烂一份）。
+   * 类型是 `string` 不是那串字面量的联合：后端只允许加值，联合类型会在它加值时安静地变成
+   * 一句假话。按理由分支时记得留兜底，别写成「穷尽 switch」。
+   */
+  reason: string;
+  /** 只在「引文没在那一页的原文里找到」时带上：模型抄的那段（缺了它就还是「不知道它说了什么」） */
+  evidence?: string;
+}
+
+/**
+ * 一次 `segment-parts` 的响应。⚠️ **不校验 `cuts`**：那是 `segmentation.ts` 的
+ * `startsFromResponse` 的职责，`cuts` 保持 `unknown` 原样传下去（在本模块再写一份判据 =
+ * 第三份实现）；`rawCuts` / `rejected` 本模块只负责带出来（展示与否是另一个决定），所以只做形状级收口。
+ */
+export interface SegmentationResponse {
+  /** 通过校验的切点（升序，1-based，恒不含第 1 页） */
+  cuts: unknown;
+  /** 与 `cuts` 一一对应的原文片段。后端从第一天就在回，前端此前一直丢掉 */
+  evidence: unknown;
+  /**
+   * 模型原样给的切点（**未校验**）。空数组 = 模型弃权 —— 也可能是**后端没回这个字段**（prod 还在旧后端
+   * 时就是这样，`rejected` 同理）；这一层分不出两者，要真分开得先确认后端已部署。
+   */
+  rawCuts: unknown[];
+  rejected: SegmentationRejection[];
+}
+
+/** 后端 `rejected` → 类型化的数组。非数组、非对象、缺 `reason` 的一律丢掉 */
+function normalizeRejections(raw: unknown): SegmentationRejection[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item): SegmentationRejection[] => {
+    if (!item || typeof item !== "object") return [];
+    const { page, reason, evidence } = item as Record<string, unknown>;
+    // 说不出理由的条目留着只会让界面显示一句空话 —— 理由正是这个字段存在的意义
+    if (typeof reason !== "string" || !reason) return [];
+    // 不是有限数字就是 `null`（`JSON.stringify(NaN)` 是 `"null"`，不显式挡会在本地与线上出现两种形状）
+    const pageNo = typeof page === "number" && Number.isFinite(page) ? page : null;
+    return [
+      typeof evidence === "string" ? { page: pageNo, reason, evidence } : { page: pageNo, reason },
+    ];
+  });
+}
+
+/**
+ * 分段第二步：把页文本交给 `segment-parts`，拿回切点**与「为什么没切」**。校验交给
+ * `segmentation.ts` 的 `startsFromResponse`（它只信 `cuts`）。
+ *
+ * ⚠️ **不发文件名**（合订谱的文件名里写着 `_1,2,3,4`，会把模型锚定在「应该有 4 段」上），所以入参只有页数与各页窄带文本。
+ */
 export async function requestSegmentation(
   pageCount: number,
   pageTexts: PageText[],
-): Promise<unknown> {
+): Promise<SegmentationResponse> {
   const { data, error } = await supabase.functions.invoke("segment-parts", {
     body: { pageCount, pages: pageTexts },
     timeout: LLM_TIMEOUT_MS,
@@ -332,5 +389,11 @@ export async function requestSegmentation(
   if (!data?.success) {
     throw new Error(`分段失败: ${data?.error || data?.message || "未知错误"}`);
   }
-  return data.cuts;
+  // `cuts` 缺字段就传 `undefined`（不补 `?? []`）：`startsFromResponse` 对「不是数组」同样处置成「不切」，补默认值却会抹平「后端没回字段」
+  return {
+    cuts: data.cuts,
+    evidence: data.evidence,
+    rawCuts: Array.isArray(data.rawCuts) ? data.rawCuts : [],
+    rejected: normalizeRejections(data.rejected),
+  };
 }

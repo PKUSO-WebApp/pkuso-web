@@ -698,7 +698,10 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           });
           // OCR 的产物**先落状态**：下一步（LLM）失败时它还在，重试只补缺的页
           updateFile(i, { pageTexts, segFailedPages: failedPages });
-          const cuts = await requestSegmentation(pageCount, pageTexts);
+          // 响应里还有「为什么没切」的字段（`rawCuts` / `rejected` / `evidence`，见 `SegmentationResponse`），
+          // `requestSegmentation` 已经把它们带回来了；这里**只消费 `cuts`** —— 要不要在界面上展示
+          // 是另一个决定（#96 §6 的界面证据那批）。
+          const { cuts } = await requestSegmentation(pageCount, pageTexts);
           // 起点的推导走 segmentation.ts 里那份（校验 cuts 是它存在的理由）。
           // 别在这里内联重写 —— 否则上线跑的是没被测试覆盖的第三份实现。
           const starts = startsFromResponse(cuts, pageCount);

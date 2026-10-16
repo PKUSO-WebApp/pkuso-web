@@ -134,17 +134,27 @@ describe("行级判据：谁会进目标集", () => {
     expect(targetsOf(plan).map((t) => t.i)).toEqual([1]);
   });
 
-  it("弃权行（instrument 为空）永不自动推进 —— 两个原因码都指向它", () => {
+  it("弃权行的原因码是「弃权」而不是兜底的「不合格」（排查时要能一眼看出一行是为什么没跑）", () => {
     const abstained = row({ instrumentGuess: "" });
-    // ① 行级：原因码是 `abstained` 而不是兜底的 `not-eligible`（排查时要能一眼看出是弃权）
-    // ★ 变异：删掉 `isUnidentified(f)` 那一行 → 原因码变成 `not-eligible` → 变红。
+    // ★ 变异：删掉本模块 `autoSegmentRowVerdict` 里 `isUnidentified(f)` 那一行 →
+    // 原因码退化成 `not-eligible` → 这一条变红。
     expect(autoSegmentRowVerdict(abstained)).toEqual({ segment: false, reason: "abstained" });
+  });
 
-    // ② 批次级（**行为层面的保证在这里**）：同一批里别的行合格、整批起跑，
-    // 弃权行也不得进目标集 —— 进不去就不会为它烧那 N 次 OCR。
-    // ★ 变异：把 `segEligible` 里的 `!isUnidentified(f) &&` 删掉（`row-text.ts`）→
-    // 弃权行进目标集 → 这一条变红。
+  it("弃权行进不了目标集 —— 同一批里别的行合格、整批起跑，也不为它烧那 N 次 OCR", () => {
+    const abstained = row({ instrumentGuess: "" });
     const plan = autoSegmentPlan(gate({ files: [abstained, row()] }));
+    /**
+     * ★ 变异：**两层一起删**才红 —— 本模块 `autoSegmentRowVerdict` 里 `isUnidentified(f)`
+     * 那一行 **加上** `row-text.ts` 的 `segEligible` 里的 `!isUnidentified(f) &&`（红成 `[0,1]`）。
+     *
+     * ⚠️ 这条得如实记着：**单独**删任一层，这一条仍然绿。两层读的是同一个
+     * `isUnidentified`，而本模块那一层在它前面 —— 所以「今天真正拦住弃权行的是本模块那一行，
+     * `segEligible` 那一层对**弃权行**不可达」。留着它的价值是**回归棘轮**：后来的人若把本模块
+     * 那一行挪走或删掉，弃权行也仍然进不去（那时这一条会在他手上变红）。
+     * `segEligible` 那一层**不是**冗余：单页 / 总谱 / 切出来的段那几类全靠它
+     *（见上面那条资格判据的用例与它的变异）。
+     */
     expect(targetsOf(plan).map((t) => t.i)).toEqual([1]);
   });
 

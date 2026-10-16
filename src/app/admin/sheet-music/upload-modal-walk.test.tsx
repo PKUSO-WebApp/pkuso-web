@@ -35,10 +35,28 @@ const FULL_TAG = `${W}x${H}`;
 
 const h = vi.hoisted(() => ({
   ocr: [] as string[],
+  /**
+   * **发出去了**几次 `ocr-analyze`（在 `ocrGate` **之前**记）。
+   *
+   * `h.ocr` 记的是「回包了」几次 —— 判「请求已经在飞」只能用这个：门挂着的时候
+   * `h.ocr` 一个都不涨，而那正是这一类用例要卡住的位置（同 `bandCalls` 与 `bandTexts` 的分别）。
+   */
+  ocrStarted: 0,
+  /**
+   * 每次 `functions.invoke` 的**字段名 + `timeout`**，按调用顺序。
+   *
+   * ⚠️ 这个桩此前**根本不记 `timeout`**，于是三处调用点（`ocr-client`、`analysis`、
+   * `segmentation-run`）声明的客户端上限在全仓测试里**零引用**：删掉 `timeout: …` 那一行、
+   * 或把常量改成 0，整套照绿 —— 而线上表现是「链路上任何一段挂住都让 `await` 永不 settle：
+   * UI 一直转圈且不报错」（那几处注释讲的正是这件事，却一直只有注释）。
+   */
+  invokeTimeouts: [] as { name: string; timeout?: number }[],
   llm: [] as string[],
   ocrFail: false,
   llmFail: false,
   loadFail: false,
+  /** `pdf.getPage(n)` 取过的页号，按顺序 —— 「这一段有没有真的走到下一页」的直接观察量 */
+  pagesFetched: [] as number[],
   renderFailPages: [] as number[],
   pages: 3,
   /**
@@ -47,11 +65,12 @@ const h = vi.hoisted(() => ({
    * 它决定 pdfjs 桩渲染出的页高（下面 `getPage` 的 `height`），也就决定窄带的像素高
    * （`round(canvas.height × BAND_PCT)`）—— OCR 桩靠「图很矮」认出窄带。买的是**渲染尺寸**。
    *
-   * ⚠️ **它买不到「确定地走逐页 OCR」**：`composeMosaic` 在 jsdom 里第一句就走不通
-   * （`createImageBitmap` 是 undefined）→ 抛在「本组必须等高」那条判据**之前**，被
-   * `ocrBandsForSegmentation` 的逐组 catch 吞掉、退回逐页（两者都在 `segmentation-run.ts`）。
-   * 所以**不等高的页高在这里换不到任何东西** —— 那条等高判据在测试环境里不可达。
-   * 怎么复现、以及要真正点亮拼图那条路得先给 jsdom 桩什么，见 pkuso-web#317。
+   * ⚠️ 默认环境下它买不到「不等高 ⇒ 不拼图」：jsdom 没有 `createImageBitmap`，
+   * `composeMosaic` 的第一句就抛，抛在「本组必须等高」那条判据**之前**，被
+   * `ocrBandsForSegmentation` 的逐组 catch 吞掉、退回逐页（两者都在 `segmentation-run.ts`）——
+   * 于是「不等高」与「等高」在这里没有区别。要走通那条判据（以及整条拼图成功路径），
+   * 必须先 `installMosaicStub()`（见那里）。这不等于「测试环境判不了」：
+   * 环境缺的东西是可以补的，补上之后两条路各自可辨。
    */
   pageHeights: [100, 100, 100] as number[],
   /**
@@ -60,6 +79,40 @@ const h = vi.hoisted(() => ({
    * ⚠️ 只在**逐页**那条路上增长；拼图那条路若真成功，这里会是空的（拼图是一张图一次调用）。
    */
   bandTexts: [] as string[],
+  /**
+   * 窄带那条路上**送给 OCR 的图的尺寸**（`宽x高`），按调用顺序。
+   *
+   * 它是「页序」在页高不等时**唯一**的可观察量：桩回的文本是按调用序编号的，
+   * 渲染循环倒着走也照样对得上（`bandTexts` 看不出来），而尺寸来自**那一条**窄带本身 ——
+   * 倒序 = 第 1 页拿到第 3 页的窄带，尺寸序列会反过来。
+   */
+  bandSizes: [] as string[],
+  /**
+   * 拼图那张长图的 OCR 调用次数。
+   *
+   * 判据是 `overlay: true` —— 全仓只有 `segmentation-run.ts` 的 `ocrMosaic` 传它，
+   * 所以这个计数就是「拼图那条路真的走通了」本身。逐页路线与它互斥（`bandCalls`）。
+   */
+  mosaicCalls: 0,
+  /** 拼图长图的尺寸（`宽x高`），按调用顺序 */
+  mosaicSizes: [] as string[],
+  /**
+   * 夹具声明「这一张拼图里有几页」。
+   *
+   * ⚠️ **不能从收到的那张图反推**（`高 / 每页高`）：那样正好把「画布少画了一条窄带」
+   * 这类缺陷抹平 —— 桩会跟着实现一起把行挤进更小的坐标里，归页看着还是对的。
+   * 桩的语义是「上游把 n 行按坐标报在**它收到的那张图**上」（真实语义如此：
+   * 坐标就是它所收图片的像素坐标），页数只能由夹具说。
+   */
+  mosaicBandCount: 3,
+  /**
+   * 拼图的坐标行全是空白（`top` 都合法、`data.text` 非空）——
+   * 造「坐标都在，但一行都没归到任何页」那个形态。
+   *
+   * 可达性：`data.text` 与 `pages[0].lines` 是**两个独立字段**（`ocr-client.ts:120-129`），
+   * 上游在块之间回空白行是常态，于是「有文字、但每一行都归不到页」真实存在。
+   */
+  mosaicBlankLines: false,
   /** 登录用户。`null` = 未登录（`confirmUpload` 会 alert 并返回） */
   user: null as { id: string } | null,
   /**
@@ -112,6 +165,8 @@ const h = vi.hoisted(() => ({
   bandCalls: 0,
   /** `segment-parts` 回什么 cuts（3 页 → `[2]` 即两段） */
   segmentCuts: [2] as number[],
+  /** `segment-parts` 最近一次的**请求体** —— 归页与页文本真正交给后端的那一份 */
+  segmentBody: null as { pageCount?: number; pages?: unknown } | null,
   /**
    * 按**调用顺序**逐个回不同的答案（用光之后回落到 `llmReply`）。
    *
@@ -204,68 +259,104 @@ vi.mock("@/lib/supabase", () => {
         })),
       },
       functions: {
-        invoke: vi.fn(async (name: string, opts: { body: Record<string, unknown> }) => {
-          if (name === "ocr-analyze") {
-            // 需要「分段还在飞」的窗口时挂在这里（`segState === "running"` 的文案要用它）
-            if (h.ocrGate) await h.ocrGate;
-            const size = Buffer.from(String(opts.body.file_base64 ?? ""), "base64").toString();
-            h.ocr.push(size);
-            // success:false 那条路**不重试**（见 invokeOcr：「重试无意义」）—— 用它模拟
-            // 「这张图读不出文字」，不会引入 OCR_RETRY_DELAYS 的 sleep
-            if (h.ocrFail) return { data: { success: false }, error: null };
-            // 窄带（页高 × BAND_PCT 那一小块）：给**逐页不同**的文本，编号按调用序。
-            // 判据是「图很矮」—— 夹在**标题条**（`W x 85`，见 TITLE_TAG 的来历）与
-            // **整页**（`W x 300` 上下）之间：默认页高下窄带是 36，两端的页高见 `h.pageHeights`。
-            // ⚠️ 这三个常量（`OCR_MAX_SCALE`=3、`BAND_PCT`=0.12、页高）任一变大到把窄带顶过 60，
-            // 这条分支就不再命中 —— 那时两条 prompt 会退化成同一个常量、断言**打红**（不是静默变绿），
-            // 但要照着这里才能看懂报错。
-            if (Number(size.split("x")[1]) < 60) {
-              // 窄带 OCR 只服务分段，所以调用序 = 页序
-              h.bandCalls += 1;
-              if (h.bandFailFor.includes(h.bandCalls)) {
-                return { data: { success: false }, error: null };
+        invoke: vi.fn(
+          async (name: string, opts: { body: Record<string, unknown>; timeout?: number }) => {
+            // 客户端上限（`functions.invoke` 的 `timeout`）逐次留档 —— 见 `h.invokeTimeouts`
+            h.invokeTimeouts.push({ name, timeout: opts.timeout });
+            if (name === "ocr-analyze") {
+              // 需要「分段还在飞」的窗口时挂在这里（`segState === "running"` 的文案要用它）
+              h.ocrStarted += 1;
+              if (h.ocrGate) await h.ocrGate;
+              const size = Buffer.from(String(opts.body.file_base64 ?? ""), "base64").toString();
+              h.ocr.push(size);
+              // success:false 那条路**不重试**（见 invokeOcr：「重试无意义」）—— 用它模拟
+              // 「这张图读不出文字」，不会引入 OCR_RETRY_DELAYS 的 sleep
+              if (h.ocrFail) return { data: { success: false }, error: null };
+              // **拼图长图**：`overlay: true` 全仓只有 `segmentation-run.ts` 的 `ocrMosaic` 传，
+              // 所以这条分支 = 「拼图那条路」。它必须回**坐标**（`pages[0].lines`），归页全靠它 ——
+              // 逐页路线那两条分支都不带 `pages`，所以此前没人走过带坐标的回包。
+              if (opts.body.overlay === true) {
+                h.mosaicCalls += 1;
+                h.mosaicSizes.push(size);
+                const picH = Number(size.split("x")[1]);
+                // n 行按坐标报在**收到的那张图**上（真实语义：坐标是这张图的像素坐标）。
+                // ⚠️ 每页的高按「整张图 / 夹具声明的页数」均分，而不是按实现回给归页的那个
+                // 除数 —— 两者不一致时（画布少画一条 / 除数写错）就会现形为**某些页一个字
+                // 都归不到**，而不是被桩顺手抹平。
+                const lines = Array.from({ length: h.mosaicBandCount }, (_, k) => ({
+                  top: (k + 0.5) * (picH / h.mosaicBandCount),
+                  text: h.mosaicBlankLines ? " " : `第${k + 1}页页眉`,
+                }));
+                return {
+                  data: {
+                    success: true,
+                    // `text` 与 `lines` 是两个独立字段（同 `ocr-client.ts:120-129`）——
+                    // `mosaicBlankLines` 造的正是「text 非空、行文本全空白」那个形态
+                    text: h.mosaicBlankLines
+                      ? "拼图整页文字（坐标行是空的）"
+                      : lines.map((l) => l.text).join("\n"),
+                    pages: [{ lines }],
+                  },
+                  error: null,
+                };
               }
-              const text = `第${h.bandTexts.length + 1}页页眉`;
-              h.bandTexts.push(text);
-              return { data: { success: true, text }, error: null };
+              // 窄带（页高 × BAND_PCT 那一小块）：给**逐页不同**的文本，编号按调用序。
+              // 判据是「图很矮」—— 夹在**标题条**（`W x 85`，见 TITLE_TAG 的来历）与
+              // **整页**（`W x 300` 上下）之间：默认页高下窄带是 36，两端的页高见 `h.pageHeights`。
+              // ⚠️ 这三个常量（`OCR_MAX_SCALE`=3、`BAND_PCT`=0.12、页高）任一变大到把窄带顶过 60，
+              // 这条分支就不再命中 —— 那时两条 prompt 会退化成同一个常量、断言**打红**（不是静默变绿），
+              // 但要照着这里才能看懂报错。
+              if (Number(size.split("x")[1]) < 60) {
+                // 窄带 OCR 只服务分段，所以调用序 = 页序
+                h.bandCalls += 1;
+                h.bandSizes.push(size);
+                if (h.bandFailFor.includes(h.bandCalls)) {
+                  return { data: { success: false }, error: null };
+                }
+                const text = `第${h.bandTexts.length + 1}页页眉`;
+                h.bandTexts.push(text);
+                return { data: { success: true, text }, error: null };
+              }
+              return { data: { success: true, text: "PMLASIA 出版社 编号" }, error: null };
             }
-            return { data: { success: true, text: "PMLASIA 出版社 编号" }, error: null };
-          }
-          if (name === "llm-analyze") {
-            const text = String(opts.body.ocr_text ?? "");
-            // ⚠️ 文件名是**另一个字段**（pkuso-web#300 之后）：以前它拼在 `ocr_text`
-            // 第一行里，所以「这次调用带没带文件名」可以直接看文本 —— 现在不行了。
-            // 桩必须把两个字段都记下来，否则 `llmFailFor` 匹配不上、也分不出段级调用。
-            const fileName = typeof opts.body.file_name === "string" ? opts.body.file_name : "";
-            h.llm.push(text);
-            h.llmFileNames.push(fileName);
-            // 需要「分析还在飞」的窗口时挂在这里（真实 LLM 要几秒到几十秒）
-            if (h.llmGate) await h.llmGate;
-            // LLM 失败走 `error` 那条路：`analysis.ts` 的 `runLlmAnalysis` 会抛，而**抛出来的异常该让整行
-            // 落 `status: "error"`**，不该被降级 catch 吞掉再补一次「只凭文件名」的调用
-            if (h.llmFail || h.llmFailFor.some((n) => text.includes(n) || fileName.includes(n))) {
-              return { data: null, error: { message: "boom" } };
+            if (name === "llm-analyze") {
+              const text = String(opts.body.ocr_text ?? "");
+              // ⚠️ 文件名是**另一个字段**（pkuso-web#300 之后）：以前它拼在 `ocr_text`
+              // 第一行里，所以「这次调用带没带文件名」可以直接看文本 —— 现在不行了。
+              // 桩必须把两个字段都记下来，否则 `llmFailFor` 匹配不上、也分不出段级调用。
+              const fileName = typeof opts.body.file_name === "string" ? opts.body.file_name : "";
+              h.llm.push(text);
+              h.llmFileNames.push(fileName);
+              // 需要「分析还在飞」的窗口时挂在这里（真实 LLM 要几秒到几十秒）
+              if (h.llmGate) await h.llmGate;
+              // LLM 失败走 `error` 那条路：`analysis.ts` 的 `runLlmAnalysis` 会抛，而**抛出来的异常该让整行
+              // 落 `status: "error"`**，不该被降级 catch 吞掉再补一次「只凭文件名」的调用
+              if (h.llmFail || h.llmFailFor.some((n) => text.includes(n) || fileName.includes(n))) {
+                return { data: null, error: { message: "boom" } };
+              }
+              // 按**文件名**给的答案最优先（`llmReplyFor`）—— 同一次分析里要让两份文件
+              // 状态不同时用它：`llmReplies` 那个队列按调用顺序取，而哪一份先跑完
+              // OCR 是不受控的，会变成偶发。
+              const byName = Object.entries(h.llmReplyFor).find(([n]) => fileName.includes(n))?.[1];
+              // 其次是按调用顺序取的答案（见 `llmReplies`）
+              const perCall = byName ?? h.llmReplies.shift();
+              return { data: perCall ?? h.llmReply, error: null };
             }
-            // 按**文件名**给的答案最优先（`llmReplyFor`）—— 同一次分析里要让两份文件
-            // 状态不同时用它：`llmReplies` 那个队列按调用顺序取，而哪一份先跑完
-            // OCR 是不受控的，会变成偶发。
-            const byName = Object.entries(h.llmReplyFor).find(([n]) => fileName.includes(n))?.[1];
-            // 其次是按调用顺序取的答案（见 `llmReplies`）
-            const perCall = byName ?? h.llmReplies.shift();
-            return { data: perCall ?? h.llmReply, error: null };
-          }
-          if (name === "segment-parts") {
-            // 两条抛错分支各要一条用例（#317：这个桩此前只会成功）
-            if (h.segmentFail === "error") {
-              return { data: null, error: { message: "boom-seg" } };
+            if (name === "segment-parts") {
+              // 请求体留档：归页的结果与页文本真正交给后端的就是它（两条抛错分支也经过这里）
+              h.segmentBody = opts.body as { pageCount?: number; pages?: unknown };
+              // 两条抛错分支各要一条用例（#317：这个桩此前只会成功）
+              if (h.segmentFail === "error") {
+                return { data: null, error: { message: "boom-seg" } };
+              }
+              if (h.segmentFail === "soft") {
+                return { data: { success: false, error: "no-cuts" }, error: null };
+              }
+              return { data: { success: true, cuts: h.segmentCuts }, error: null };
             }
-            if (h.segmentFail === "soft") {
-              return { data: { success: false, error: "no-cuts" }, error: null };
-            }
-            return { data: { success: true, cuts: h.segmentCuts }, error: null };
-          }
-          return { data: null, error: { message: `未预期的调用 ${name}` } };
-        }),
+            return { data: null, error: { message: `未预期的调用 ${name}` } };
+          },
+        ),
       },
     },
   };
@@ -279,19 +370,23 @@ vi.mock("pdfjs-dist", () => ({
     return {
       promise: Promise.resolve({
         numPages: h.pages,
-        getPage: async (n: number) => ({
-          getViewport: ({ scale }: { scale: number }) => ({
-            width: 100 * scale,
-            height: (h.pageHeights[n - 1] ?? 100) * scale,
-          }),
-          // 指定页渲染失败：那条「就地消化、不判死整份」的分支否则一条测试都跑不到
-          render: () =>
-            h.renderFailPages.includes(n)
-              ? { promise: Promise.reject(new Error("图像解码失败")) }
-              : { promise: Promise.resolve() },
-          cleanup: () => {},
-          getOperatorList: async () => ({ fnArray: [] }),
-        }),
+        getPage: async (n: number) => {
+          // 「哪几页真的被取过」—— 走没走到下一页的直接证据（`Math.min` 夹取、取消判据都用它）
+          h.pagesFetched.push(n);
+          return {
+            getViewport: ({ scale }: { scale: number }) => ({
+              width: 100 * scale,
+              height: (h.pageHeights[n - 1] ?? 100) * scale,
+            }),
+            // 指定页渲染失败：那条「就地消化、不判死整份」的分支否则一条测试都跑不到
+            render: () =>
+              h.renderFailPages.includes(n)
+                ? { promise: Promise.reject(new Error("图像解码失败")) }
+                : { promise: Promise.resolve() },
+            cleanup: () => {},
+            getOperatorList: async () => ({ fnArray: [] }),
+          };
+        },
       }),
       destroy: async () => {},
     };
@@ -318,13 +413,21 @@ function makePixels() {
 
 beforeEach(() => {
   h.ocr.length = 0;
+  h.ocrStarted = 0;
+  h.invokeTimeouts.length = 0;
   h.llm.length = 0;
   h.llmFileNames.length = 0;
   h.pageHeights = [100, 100, 100];
   h.bandTexts.length = 0;
+  h.bandSizes.length = 0;
+  h.mosaicCalls = 0;
+  h.mosaicSizes.length = 0;
+  h.mosaicBandCount = 3;
+  h.mosaicBlankLines = false;
   h.ocrFail = false;
   h.llmFail = false;
   h.loadFail = false;
+  h.pagesFetched = [];
   h.renderFailPages = [];
   h.pages = 3;
   h.user = null;
@@ -341,6 +444,7 @@ beforeEach(() => {
   h.uploadGate = null;
   h.ocrGate = null;
   h.segmentFail = null;
+  h.segmentBody = null;
   h.bandFailFor = [];
   h.bandCalls = 0;
   h.segmentCuts = [2];
@@ -367,7 +471,30 @@ beforeEach(() => {
   HTMLCanvasElement.prototype.toDataURL = () => "data:image/jpeg;base64,AAAA";
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // 拼图桩是**逐条用例**装的（装上它整条路就变了），不许漏在全局
+  delete (globalThis as { createImageBitmap?: unknown }).createImageBitmap;
+});
+
+/**
+ * 给 jsdom 装上 `createImageBitmap`，让 `composeMosaic` 那条**成功路径**可达。
+ *
+ * 为什么必须显式装（而不是「jsdom 里做不到」）：jsdom 没有它，`composeMosaic` 的**第一句**
+ * 就抛，抛在「本组必须等高」那条判据**之前**，被 `ocrBandsForSegmentation` 的逐组 catch
+ * 吞掉、退回逐页 —— 于是拼图的成功路径与「不等高」那条设计不变量**在整套测试里都不可达**，
+ * 而两者的正确后果都是「结果看起来一样对」。环境缺的东西可以补，补上之后才分得开。
+ *
+ * 解码取 Blob 的文本当元数据（`toBlob` 桩把画布尺寸写成了字节，见 `TITLE_TAG` 的来历），
+ * 所以这里拿到的宽高就是**实现真的画出来的**那张画的宽高 —— 拼不拼得成、长图多高，
+ * 全由实现决定，桩不许替它做主。
+ */
+function installMosaicStub() {
+  globalThis.createImageBitmap = (async (blob: Blob) => {
+    const [width, height] = (await blob.text()).split("x").map(Number);
+    return { width, height, close: () => {} };
+  }) as never;
+}
 
 async function runAnalysis({
   fullScore = false,
@@ -396,6 +523,34 @@ async function runAnalysis({
   // 「取消分析」，跑完才变「取消」。用按钮当信号的话，**任何让该按钮不渲染的 bug
   // 都会表现成 20 秒超时**，而不是一句能读的断言失败（这个文件要钉的恰好就是那类 bug）。
   await waitFor(() => expect(screen.queryByText(/取消分析/)).toBeNull(), { timeout: 10000 });
+}
+
+/**
+ * 一行进入「可以点『识别分段』」的状态（多页 + 非总谱 + 已识别）。
+ *
+ * 分段那条链路的入口只有它（`segEligible` 三个条件都要满足），所以凡是走分段的用例
+ * 都从这里起步 —— 提到模块作用域是因为两处 describe 都要用（同 `runAnalysis`）。
+ */
+async function readyToSegment() {
+  h.llmReply = {
+    success: true,
+    section: "圆号",
+    instrument: "F调圆号",
+    subParts: [1],
+    isFullScore: false,
+  };
+  await runAnalysis({ names: ["短笛长笛.pdf"] });
+  await waitFor(() => expect(screen.getByText(/^已识别 → 圆号/)).toBeTruthy(), {
+    timeout: 10000,
+  });
+}
+
+/** 点「识别分段」并等到自动拆出两段（切点默认 `[2]`） */
+async function startSegmentation() {
+  fireEvent.click(screen.getByText(/^识别分段（/));
+  await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+    timeout: 10000,
+  });
 }
 
 describe("升级链的集成：哪几张图真的被送出去了", () => {
@@ -2214,21 +2369,6 @@ describe("段卡片上的三个入口（合并 / 拆分 / 段起点框）", () =
 });
 
 describe("分段的三种状态与失败页（#317 里那批「桩只会成功、状态支没人渲染」的缺口）", () => {
-  /** 一行的「识别分段」按钮出现（多页 + 非总谱 + 已识别） */
-  async function readyToSegment() {
-    h.llmReply = {
-      success: true,
-      section: "圆号",
-      instrument: "F调圆号",
-      subParts: [1],
-      isFullScore: false,
-    };
-    await runAnalysis({ names: ["短笛长笛.pdf"] });
-    await waitFor(() => expect(screen.getByText(/^已识别 → 圆号/)).toBeTruthy(), {
-      timeout: 10000,
-    });
-  }
-
   it("分段飞行中：写「识别中…（约 N 次 OCR）」—— 用户要知道在烧钱、且知道烧多少", async () => {
     await readyToSegment();
     let release!: () => void;
@@ -2504,5 +2644,189 @@ describe("「没有号」判据收走拷贝之后的行为（#326 第 2 条：�
     // 两个数字都写死：只断言「有这句话」的话，把 33 写成别的数、或把上界抄错都抓不到
     expect(screen.getByText(/后端返回了 33 个分声部号/)).toBeTruthy();
     expect(screen.getByText(/超过前端上界 32/)).toBeTruthy();
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * #326 §5「桩的缺口」那一批：桩本身缺的东西补齐之后才可达的判据。
+ *
+ * 三条缺口都不是「用例写得不够多」，而是**桩让整条路不可达**：
+ * 1. 窄带拼图（`composeMosaic`）的成功路径：jsdom 没有 `createImageBitmap`，
+ *    第一句就抛 ⇒ 只有「退回逐页」被间接走过，成功路径与「本组必须等高」那条设计
+ *    不变量在整套测试里都不可达（两条的正确后果都是「结果看起来一样对」）；
+ * 2. `functions.invoke` 的 `timeout`：桩**根本没收这个字段** ⇒ 三处调用点声明的
+ *    客户端上限全仓零引用，删掉或改成 0 都不会红，而线上表现是「await 永不 settle」；
+ * 3. 优先②的夹具维度：`h.pages` 恒为 3（`Math.min(maxPages, numPages)` 的夹取永不生效）、
+ *    页高恒相等（页序不可观测）、`renderPagesForAnalysis` 的取消判据没有用例。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("#326 §5：桩的缺口补齐之后（拼图成功路径 / 客户端超时 / 三个夹具维度）", () => {
+  it("三处调用点都把客户端上限真的传出去了（OCR 20s、LLM 45s）—— 「await 永不 settle」只此一条机器判据", async () => {
+    await runAnalysis();
+    // 值是**有意钉死**的（同 `ocr-client.test.ts` 那条 `toBe(20000)`）：改上限是个决定，
+    // 就该连这条一起改；而「少写一行 `timeout:`」或「常量被改成 0」是**事故**，必须红。
+    // 顺序一并钉住：标题区与整页各一发 OCR，各自后面跟着自己的那一发 LLM。
+    expect(h.invokeTimeouts).toEqual([
+      { name: "ocr-analyze", timeout: 20000 },
+      { name: "llm-analyze", timeout: 45000 },
+      { name: "ocr-analyze", timeout: 20000 },
+      { name: "llm-analyze", timeout: 45000 },
+    ]);
+  });
+
+  it("分段那一发也带上限（`segment-parts` 45s）—— 它在桩里此前连字段都没被记过", async () => {
+    await readyToSegment();
+    await startSegmentation();
+
+    // ★ 变异：删掉 `segmentation-run.ts` 的 `timeout: LLM_TIMEOUT_MS,` ⇒ undefined ⇒ 红；
+    //   `analysis.ts` 的 `LLM_TIMEOUT_MS` 改成 0 ⇒ 红（`segmentation-run.ts` 复用它）。
+    expect(h.invokeTimeouts.filter((t) => t.name === "segment-parts")).toEqual([
+      { name: "segment-parts", timeout: 45000 },
+    ]);
+  });
+
+  it("等高窄带：拼图成功 ⇒ 这一相位只花 1 次 OCR，每页文本由坐标归回自己那一页", async () => {
+    installMosaicStub(); // ← 只有装了它，拼图那条路才可达（见它的注释）
+    await readyToSegment();
+    await startSegmentation();
+
+    // ① 拼图**真的走通了**：`overlay: true` 全仓只有 `ocrMosaic` 传，`bandCalls` 是逐页那条路的
+    //    计数 —— 3 页 1 张长图 = 1 次调用，逐页一次都没发生。
+    expect(h.mosaicCalls).toBe(1);
+    expect(h.bandCalls).toBe(0);
+    // ★ 变异：`canvas.height = bandHeight * bitmaps.length` → `* (n - 1)`（少画一条窄带）
+    //   ⇒ 长图变 300x72 ⇒ 红（在这一行，报错直接说出少画了多高）。
+    expect(h.mosaicSizes).toEqual([`${W}x108`]);
+
+    // ② 归页的结果，直接看**发给后端的那一份**（分段请求体）。它同时钉两件事：
+    //    - 每页拿到的是**自己那条窄带**的文本 —— 不是全归第 1 页、也不是全归最后一页
+    //    - 除数与长图高对得上（`canvas.height` 与 `composeMosaic` 回给归页的 `bandHeight`
+    //      一旦不一致，某些页会一个字都归不到）
+    // ★ 变异：`return { …, bandHeight }` → `bandHeight: 1` ⇒ 三行全部夹进最后一页 ⇒ 红。
+    // ★ 变异：`mapLinesToPages` 里的 `Math.floor(line.top / bandHeight)` 恒取 0 ⇒ 全归第 1 页 ⇒ 红。
+    expect(h.segmentBody).toEqual({
+      pageCount: 3,
+      pages: [
+        { page: 1, text: "第1页页眉" },
+        { page: 2, text: "第2页页眉" },
+        { page: 3, text: "第3页页眉" },
+      ],
+    });
+    // 段级识别也各拿各的那一页（归页的下游消费者 —— `segHeadText` 就是从这份 `pageTexts` 里挑的）
+    await waitFor(() => expect(h.llmFileNames.filter((n) => !n)).toHaveLength(2), {
+      timeout: 10000,
+    });
+    expect(h.llm.filter((_, i) => !h.llmFileNames[i])).toEqual(["第1页页眉", "第2页页眉"]);
+  });
+
+  it("本组必须等高：页高不等 ⇒ **不拼图**、退回逐页；页序由窄带尺寸序列露出", async () => {
+    // ⚠️ **装了桩仍然不拼图** —— 拦下它的是「本组必须等高」那条判据，不是 jsdom 缺函数。
+    // 这正是这一条存在的理由：此前两者在测试环境里长得一模一样。
+    installMosaicStub();
+    h.pageHeights = [100, 100, 120]; // 合订谱里混了横排插页 / 换过扫描仪的形态
+    await readyToSegment();
+    await startSegmentation();
+
+    // ★ 变异：`if (heights.size !== 1)` 后面加 `&& false` ⇒ mosaicCalls 变 1、bandCalls 变 0 ⇒ 红。
+    //   ⚠️ 「不拼图」的**正确后果是「结果一样对」**，所以不能只断言「有 2 段」——
+    //   那在两种实现下都为真（空转）。可辨的差别是**走了哪条路**。
+    expect(h.mosaicCalls).toBe(0);
+    expect(h.bandCalls).toBe(3);
+
+    // ★ 变异：窄带渲染循环倒着走（`for (pageNo = pdf.numPages; pageNo >= 1; pageNo--)`）
+    //   ⇒ 尺寸序列反过来 ⇒ 红。页序**只能靠尺寸**看：桩回的文本是按调用序编号的，
+    //   倒序之后照样一一对应（`bandTexts` 看不出来），而尺寸来自**那一条**窄带本身 ——
+    //   页高不等（36/36/43）才分得开，倒序 = 第 1 页拿到第 3 页的窄带。
+    expect(h.bandSizes).toEqual([`${W}x36`, `${W}x36`, `${W}x43`]);
+
+    // 正值对照：退回逐页之后**结果仍然对**（这才是那条判据的完整后果，
+    // 它保证「不拼图」不是把整批变成空文本）
+    expect(h.segmentBody).toEqual({
+      pageCount: 3,
+      pages: [
+        { page: 1, text: "第1页页眉" },
+        { page: 2, text: "第2页页眉" },
+        { page: 3, text: "第3页页眉" },
+      ],
+    });
+  });
+
+  it("坐标都在、但一行都没归到任何页 ⇒ 弃权退回逐页（不是把 N 个空串发下去）", async () => {
+    installMosaicStub();
+    // 上游真实可达的形态：`text` 非空、`lines` 的坐标都合法，但**每一行都是空白**
+    //（块与块之间的空行；`data.text` 与 `pages[0].lines` 是两个独立字段，见 `ocr-client.ts`）
+    h.mosaicBlankLines = true;
+    await readyToSegment();
+    // 这一段不用 `startSegmentation()`：它的收尾信号是「两段出现」，
+    // 变异世界里那永远等不到，于是红的样子会变成 10 秒后一句
+    // 「找不到『还原为一份』」—— 读的人看不出是哪一步断了。
+    // 下面按**中间过程**逐步等，每一步都有自己的话可说。
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    // 前提：拼图那一发确实打出去了（它在守卫之前，两种实现下都发生）
+    await waitFor(() => expect(h.mosaicCalls).toBe(1), { timeout: 10000 });
+    // ★ 变异：`if (mapped.every((t) => !t.trim()) && text.trim())` → `if (false)`
+    //   ⇒ 这一批变成 3 个空串 ⇒ `ocrBandsForSegmentation` 末尾那句「N 页的窄带都没读到文字」
+    //   抛出 ⇒ 整份**直接失败**（行上只有一句错误、没有段），而不是退回逐页拿到结果。
+    await waitFor(() => expect(h.bandCalls).toBe(3), { timeout: 10000 }); // 弃权之后退回逐页
+    // 负值对照：那句「都没读到文字」一个字都不许出现
+    expect(screen.queryByText(/都没读到文字/)).toBeNull();
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+    expect(h.segmentBody).toEqual({
+      pageCount: 3,
+      pages: [
+        { page: 1, text: "第1页页眉" },
+        { page: 2, text: "第2页页眉" },
+        { page: 3, text: "第3页页眉" },
+      ],
+    });
+  });
+
+  it("`Math.min(maxPages, numPages)` 的夹取：5 页的谱开着「分析总谱」也只送 3 页的图", async () => {
+    h.pages = 5;
+    await runAnalysis({ fullScore: true });
+
+    // 前提：页数真的是 5（否则这条什么都没证明）—— 界面上那句就是它
+    expect(screen.getByText(/未识别（5 页）/)).toBeTruthy();
+    // ★ 变异：`Math.min(opts.maxPages, pdf.numPages)` → `pdf.numPages` ⇒ 取到第 4、5 页、
+    //   图从 6 张变 10 张 ⇒ 红（配额是照烧的，这一条钉的就是那 4 张）。
+    expect(h.pagesFetched).toEqual([1, 2, 3]);
+    expect(h.ocr).toHaveLength(6); // 3 页 × 2 张（标题区 + 整页）
+  });
+
+  it("分析途中关掉弹窗 ⇒ **不再取下一页**（配额照烧，粒度是「页」不是「文件」）", async () => {
+    h.pages = 3;
+    let release!: () => void;
+    h.ocrGate = new Promise<void>((r) => {
+      release = r;
+    });
+    const { container, unmount } = render(
+      <UploadModal open onClose={h.onClose} scoreId="score-1" onUploaded={() => {}} />,
+    );
+    fireEvent.change(container.querySelector('input[type="file"]')!, {
+      target: {
+        files: [new File([new Uint8Array([1])], "圆号1,2.pdf", { type: "application/pdf" })],
+      },
+    });
+    await waitFor(() => expect(screen.getByText("圆号1,2.pdf")).toBeTruthy());
+    fireEvent.click(screen.getByLabelText("分析总谱"));
+    fireEvent.click(screen.getByText(/开始分析/));
+    // 等到第 1 张图**真的发出去了**（`ocrStarted` 在门**之前**记）—— 只有这一步能证明
+    // `tryPage` 已经在飞、取消点（渲染循环的下一次迭代）确实还没到
+    await waitFor(() => expect(h.ocrStarted).toBe(1));
+
+    unmount(); // ← 关弹窗：`upload-modal.tsx` 的 cleanup 把 `cancelledRef` 置真
+    release();
+
+    // 先等第 1 页自己走完（两发 LLM = 标题区与整页两张图都拿到了答案）
+    await waitFor(() => expect(h.llm.length).toBeGreaterThanOrEqual(2), { timeout: 10000 });
+    // ★ 变异：删掉 `pdf-render.ts` 的 `if (opts.isCancelled()) break;` ⇒ 第 2 页照取照烧 ⇒ 红。
+    //   ⚠️ 60ms 的静默检查不是在赌时序：从「LLM 回包」到「取下一页」这一段全是 promise，
+    //   一个宏任务都没夹（真实定时器只在 OCR 重试的退避里，而这条路没有重试），
+    //   所以任何一个宏任务边界之后看，结论都是确定的（同本文件「分段飞行中」那条的 60ms）。
+    await new Promise((r) => setTimeout(r, 60));
+    expect(h.ocrStarted).toBe(2); // 第 1 页的两张图，一张都不多
+    expect(h.pagesFetched).toEqual([1]); // 第 2 页连取都没取
   });
 });

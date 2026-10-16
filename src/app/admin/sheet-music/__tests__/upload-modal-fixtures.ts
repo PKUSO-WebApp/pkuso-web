@@ -75,6 +75,8 @@ const h = vi.hoisted(() => ({
    * OCR 桩为**窄带**（矮图）返回过的文本，按调用顺序 —— 也就是页序。
    *
    * ⚠️ 只在**逐页**那条路上增长；拼图那条路若真成功，这里会是空的（拼图是一张图一次调用）。
+   * ⚠️ **空串也进来**（`bandEmptyFor`）：那一页与「失败页」不同 —— 它在 `pageTexts` 里
+   * 只是文本为空，少推一个，后面所有页的「第 N 页页眉」就整体错位一页。
    */
   bandTexts: [] as string[],
   /**
@@ -177,6 +179,46 @@ const h = vi.hoisted(() => ({
   segmentFail: null as null | "error" | "soft",
   /** 让**第 N 页**的窄带 OCR 失败（页序 = 调用序，见 `bandCalls`）—— 造「有几页没读到」 */
   bandFailFor: [] as number[],
+  /**
+   * 让**第 N 页**的窄带 OCR **成功、但一个字都没有**（页序 = 调用序）——
+   * 与 `bandFailFor`（整条请求失败）是**两种不同的形态**，这一种才是居中排版的标题页
+   * 在真机上的样子：窄带取到了，可那张图上没有字（标题块整块落在 12% 之下）。
+   */
+  bandEmptyFor: [] as number[],
+  /**
+   * 补救那一发（`band-ocr.ts` 的 `retakeEmptyBands`）的形状：`"fail"` = 请求报错，
+   * `"empty"` = 成功但仍无文字。`null` = 正常回文字。契约第 4 条（补救失败 ⇒ 保持窄带
+   * 那条结果）只有靠它才可测 —— 两种形态都得能造出来。
+   *
+   * ⚠️ 桩**怎么认出那是补救**：靠调用时机（`bandCalls > 0` 之后来的高图）—— 补救送的那张图
+   * 与**分析路径**送的标题区逐字节相同（同一个 `renderPageToJpeg`），尺寸分辨不出来；
+   * 而分析路径的高图全部发生在窄带之前，拼图那发带 `overlay`（上面已拦掉）。
+   */
+  retakeStub: null as null | "fail" | "empty",
+  /**
+   * 让补救**自己那几步**（`loadPdfJs` / 重新 `file.arrayBuffer()` / `getDocument`）失败 ——
+   * 也就是「打开文档」在**补救那次**失败（判据见 mock：窄带那条路是先打开文档再发第一发
+   * OCR，所以「已经发过窄带 OCR 之后的下一次打开」只可能是补救自己重读文件那一次）。
+   *
+   * **为什么非有它不可**：`retakeStub` 造的是**每页那个 `try` 之内**的失败（OCR 报错），
+   * 而补救自己那几步在它**之外** —— 两条路径的失败后果完全不同（后者抛出去会把整行推成
+   * `error`，连窄带阶段已经烧掉的结果一起丢）。
+   */
+  documentFailForRetake: false,
+  /** PDF 文档打开计数（配合 `documentFailForRetake`：补救那次真的又开了一次） */
+  documentOpens: 0,
+  /**
+   * 补救那一发**重读文件**时打开文档的次数（判据：窄带已经开始发 OCR 请求之后）。
+   * 它是「补救真的跑了」的正值对照 —— 只有载荷断言的话，删掉补救也会绿。
+   */
+  retakeOpens: 0,
+  /**
+   * 补救那一发 OCR 的**门**（要「补救正在飞」的窗口时挂在这里，同 `ocrGate`）。
+   * 取消那条路径只有在**下一轮的检查点真的存在**时才差得出来 —— 见用例里的说明。
+   */
+  retakeGate: null as null | Promise<void>,
+  /** 补救那一发的 OCR **发出去了**几次（在 `retakeGate` **之前**记） */
+  retakeStarted: 0,
   /** 窄带 OCR 的调用计数。**不能拿 `bandTexts.length` 当页号**：失败的那页不入数组，会错位 */
   bandCalls: 0,
   /** `segment-parts` 回什么 cuts（3 页 → `[2]` 即两段） */

@@ -158,9 +158,25 @@ vi.mock("@/lib/supabase", () => {
                 if (h.bandFailFor.includes(h.bandCalls)) {
                   return { data: { success: false }, error: null };
                 }
-                const text = `第${h.bandTexts.length + 1}页页眉`;
+                if (h.bandEmptyFor.includes(h.bandCalls)) {
+                  // 成功但空串（图上没有字）。⚠️ 也占住 `bandTexts` 的位置（见那里的注释）
+                  h.bandTexts.push("");
+                  return { data: { success: true, text: "" }, error: null };
+                }
+                // 页号取**调用序**而不是 `bandTexts.length`：失败的那页不入数组，
+                // 用长度当页号会让后面每一页的文本都往前错一位（编造出一个假的页序）
+                const text = `第${h.bandCalls}页页眉`;
                 h.bandTexts.push(text);
                 return { data: { success: true, text }, error: null };
+              }
+              // 高图。`bandCalls > 0` 之后来的那一张只可能是**补救**（见 `retakeStub` 的说明）；
+              // 分析路径的高图都在窄带之前，不受这个开关影响
+              if (h.bandCalls > 0) {
+                h.retakeStarted += 1;
+                if (h.retakeGate) await h.retakeGate;
+                if (h.retakeStub === "fail") return { data: { success: false }, error: null };
+                if (h.retakeStub === "empty")
+                  return { data: { success: true, text: "" }, error: null };
               }
               return { data: { success: true, text: "PMLASIA 出版社 编号" }, error: null };
             }
@@ -212,7 +228,13 @@ vi.mock("@/lib/supabase", () => {
 
 vi.mock("pdfjs-dist", () => ({
   getDocument: () => {
-    if (h.loadFail) {
+    // 打开计数：补救会**再打开一次**（`documentFailForRetake` 靠它认那一次）
+    h.documentOpens += 1;
+    if (h.bandCalls > 0) h.retakeOpens += 1;
+    // ⚠️ 判据是「窄带**已经在发** OCR 请求了」：窄带那条路是先打开文档、再逐页渲染+送检，
+    // 所以「`bandCalls > 0` 之后的下一次打开」只可能是**补救自己重读文件**那一次。
+    // （用调用序号写死「第 2 次/第 3 次」会在管线里多出一次打开时静静指错地方。）
+    if (h.loadFail || (h.documentFailForRetake && h.bandCalls > 0)) {
       return { promise: Promise.reject(new Error("坏 PDF")), destroy: async () => {} };
     }
     return {
@@ -297,6 +319,13 @@ beforeEach(() => {
   h.segmentFail = null;
   h.segmentBody = null;
   h.bandFailFor = [];
+  h.bandEmptyFor = [];
+  h.retakeStub = null;
+  h.documentFailForRetake = false;
+  h.documentOpens = 0;
+  h.retakeOpens = 0;
+  h.retakeGate = null;
+  h.retakeStarted = 0;
   h.bandCalls = 0;
   h.segmentCuts = [2];
   // ⚠️ 必须清空（同下面 `llmReplies` 的理由）：它是个追加字段的口袋，

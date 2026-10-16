@@ -2314,6 +2314,189 @@ describe("#326 §5：桩的缺口补齐之后（拼图成功路径 / 客户端�
 });
 
 /**
+ * 窄带**取空**（成功、但一个字都没有）的那几页的补救（pkuso-backend#96 的输入侧）。
+ *
+ * 机制：窄带是**固定的几何裁切**（页高 12%），而居中排版的标题页整块落在 12% 之下 ——
+ * 渲染出来是一张白纸，OCR 成功但回空串。那个空串会被后端 `segment-parts` 渲染成
+ * 「第 N 页: （空白）」交给模型，于是模型**把「窄带没取到」读成「这一页没有文字」**：
+ * 「第 1 页空白 + 第 2 页一个完整标题块」直接导向「第 2 页是新的一份的开头」（多切）。
+ *
+ * 补救 = 那一页换「标题区」那一刀（第一条谱线之上）再取一次。四条用例分别钉：
+ * **第二发真的发了、送的确实是标题区那张图**、**空串真的被换掉了**、
+ * **「没读到」这种形态不许补**、**补救不到时不许把整份带坏**。
+ *
+ * ⚠️ 判据与页号无关（第 1 页只是「没有前文可参照」的那一页，中招是位置造成的）——
+ * 用例里只用页序表达「哪一页取空」，与实现一样没有 `page === 1` 这类特判。
+ */
+describe("窄带取空的补救（#96：空串被当成「这一页没文字」传给模型）", () => {
+  it("取空的那页换「标题区」再取一次：多发的那张图是标题区，且载荷里那页不再是空串", async () => {
+    h.bandEmptyFor = [1]; // 第 1 页「成功但空串」；第 2、3 页照常
+    await readyToSegment();
+    const ocrBefore = h.ocr.length; // 分析阶段的那几发（阶段边界，不算进下面这条）
+    await startSegmentation();
+
+    // ★ 变异：删掉 `ocrBandsForSegmentation` 里那次 `retakeEmptyBands` ⇒ 只剩三条窄带 ⇒ 红。
+    // ★ 变异：补救改回窄带那一刀（`bands[p-1]`）⇒ 第四发是 300x36 而不是标题区 ⇒ 红。
+    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x36`, `${W}x36`, `${W}x36`, TITLE_TAG]);
+    // ★ 变异：文本拿到了却不写回（丢掉 `retaken` 的返回值）⇒ 第 1 页仍是空串 ⇒ 红。
+    // ★ 变异：改成「每一页都补一发」⇒ 上面那条序列先红（多发三发）。
+    expect(h.segmentBody).toEqual({
+      pageCount: 3,
+      pages: [
+        { page: 1, text: "PMLASIA 出版社 编号" }, // ← 补救拿到的（桩对高图回的就是它）
+        { page: 2, text: "第2页页眉" },
+        { page: 3, text: "第3页页眉" },
+      ],
+    });
+  });
+
+  it("「没读到」的页（OCR 失败）**不**补救：那是传输/配额问题，换裁切不治", async () => {
+    h.bandFailFor = [1]; // 整条请求失败 —— 与「成功但空串」是两种形态
+    await readyToSegment();
+    const ocrBefore = h.ocr.length;
+    await startSegmentation();
+
+    // ★ 变异：触发判据从「文本是空串」改成「页不在 `pageTexts` 里」⇒ 第 1 页也补一发 ⇒ 红。
+    //   那一页本来就在 `failedPages` 里（后端对缺页已有「不要在那几页上给切点」的提示），
+    //   把两种形态混在一起 = 对传输失败白烧配额。
+    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x36`, `${W}x36`, `${W}x36`]);
+    // 缺页的语义一字不变：载荷里仍然没有它（既不补成空串、也不补成补救文本）
+    expect(h.segmentBody).toEqual({
+      pageCount: 3,
+      pages: [
+        { page: 2, text: "第2页页眉" },
+        { page: 3, text: "第3页页眉" },
+      ],
+    });
+  });
+
+  it("补救**报错**时保持窄带那条结果：整份照常拆，不新增失败态", async () => {
+    h.bandEmptyFor = [1];
+    h.retakeStub = "fail";
+    await readyToSegment();
+    const ocrBefore = h.ocr.length;
+    fireEvent.click(screen.getByText(/^识别分段（/));
+
+    // ★ 变异：把补救那一发的 `try/catch` 撤掉 ⇒ 异常穿出 `ocrBandsForSegmentation`
+    //   ⇒ 这一行落 `segState: "error"`、`segmentBody` 永远是 null ⇒ 下一步红。
+    // ⚠️ 用 `waitFor` 等**载荷**而不是「等两段出现」：错的时候这里是一句「没等到载荷」，
+    //   而等段出现要空耗 10 秒才说一句「找不到『还原为一份』」，看不出是哪一步断的。
+    await waitFor(
+      () =>
+        expect(h.segmentBody).toEqual({
+          pageCount: 3,
+          pages: [
+            { page: 1, text: "" }, // ← 补救没拿到东西：回到改动前的行为（窄带那条空串）
+            { page: 2, text: "第2页页眉" },
+            { page: 3, text: "第3页页眉" },
+          ],
+        }),
+      { timeout: 10000 },
+    );
+    // 正值对照：整份没有失败 —— 空串只影响「那页没文字」，不影响分段跑完
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+    // 那一发**真的发出去了**（否则这条在「根本没实现补救」的世界里也绿 —— 空转）：
+    // 上面那条期望（第 1 页保持空串）在「没实现补救」与「补救失败」两种世界下都为真，
+    // 只有这一条把两者分开。★ 变异：删掉补救 ⇒ 只剩三条窄带 ⇒ 红。
+    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x36`, `${W}x36`, `${W}x36`, TITLE_TAG]);
+  });
+
+  it("补救**仍然为空**时同样保持窄带那条结果（「成功」≠「拿到了文字」）", async () => {
+    h.bandEmptyFor = [1];
+    h.retakeStub = "empty";
+    await readyToSegment();
+    const ocrBefore = h.ocr.length;
+    fireEvent.click(screen.getByText(/^识别分段（/));
+
+    // ★ 变异：补救「成功但没文字」也当成了结果（往载荷里写个占位/标记文本，或把这一页
+    //   改判成失败页）⇒ 下面这条 `toEqual` 红。**保持空串**是刻意的：后端
+    //   `evidenceSupports` 是归一化子串校验，人写的标记会被模型当证据抄回来并通过校验
+    //   ⇒ 等于给「没有证据的切点」开门（那反而增加多切）。
+    await waitFor(
+      () =>
+        expect(h.segmentBody).toEqual({
+          pageCount: 3,
+          pages: [
+            { page: 1, text: "" },
+            { page: 2, text: "第2页页眉" },
+            { page: 3, text: "第3页页眉" },
+          ],
+        }),
+      { timeout: 10000 },
+    );
+    // 那一发**真的发出去了**（否则这条在「没实现补救」的世界里也绿 —— 空转）
+    // ★ 变异：删掉补救 ⇒ 只剩三条窄带 ⇒ 红
+    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x36`, `${W}x36`, `${W}x36`, TITLE_TAG]);
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+  });
+
+  it("补救**自己重读文件**失败（打开文档报错）时同样保持窄带那条结果：上一步的产物不连坐", async () => {
+    h.bandEmptyFor = [1];
+    h.documentFailForRetake = true; // 窄带阶段已经在发 OCR 了 ⇒ 之后的打开 = 补救那一次
+    await readyToSegment();
+    const ocrBefore = h.ocr.length;
+    fireEvent.click(screen.getByText(/^识别分段（/));
+
+    // ★ 变异：撤掉调用点上那层 `try/catch` ⇒ 异常穿出 ⇒ 这一行落 `segState: "error"`、
+    //   `segmentBody` 永远是 null ⇒ 红。
+    // ⚠️ 与上面那条「补救**报错**」**不是**同一件事：那条造的是每页那个 `try` **之内**的
+    //   OCR 失败，这条造的是它**之外**的自备动作（`loadPdfJs` / 重新 `file.arrayBuffer()` /
+    //   `getDocument`）失败 —— 后者抛出去连**窄带阶段已经烧掉的结果**一起丢，
+    //   而改动前同一状态是成功的。
+    await waitFor(
+      () =>
+        expect(h.segmentBody).toEqual({
+          pageCount: 3,
+          pages: [
+            { page: 1, text: "" }, // ← 补救没跑成：回到改动前的行为（窄带那条空串）
+            { page: 2, text: "第2页页眉" },
+            { page: 3, text: "第3页页眉" },
+          ],
+        }),
+      { timeout: 10000 },
+    );
+    // 正值对照：补救**真的去重读了一次文件**（只断载荷的话，删掉补救这条也绿）
+    // ★ 变异：删掉补救 ⇒ `retakeOpens` 恒为 0 ⇒ 红
+    expect(h.retakeOpens).toBe(1);
+    // 一个 *窄带* OCR 都没多发（补救在发请求之前就倒了）
+    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x36`, `${W}x36`, `${W}x36`]);
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+  });
+
+  it("补救飞行中关掉弹窗 ⇒ 取消照抛（把它当成「补救失败」吞掉会让这一行照常提交）", async () => {
+    h.pages = 3;
+    h.bandEmptyFor = [1, 2]; // ⚠️ 必须**两页**空 —— 理由见下面那条注释
+    let release!: () => void;
+    h.retakeGate = new Promise<void>((r) => {
+      release = r;
+    });
+    await readyToSegment();
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    // 等到补救那一发**真的在飞**（门在桩里、`retakeStarted` 在门**之前**记）
+    await waitFor(() => expect(h.retakeStarted).toBe(1), { timeout: 10000 });
+
+    cleanup(); // ← 关弹窗：cleanup 把 `cancelledRef` 置真（同「分析途中关掉弹窗」那条）
+    release();
+
+    // ★ 变异：删掉调用点 `catch` 里的 `if (err instanceof SegmentationCancelled) throw err;`
+    //   （取消被当成「补救失败」一起吞了）⇒ 第 1 页的补救文本写回载荷、照常发 `segment-parts`
+    //   ⇒ 下面这条红。取消是**调用方的语义**，不是补救的一种失败。
+    // ⚠️ **必须两页空**：检查点在**每页开头**，只有一页空时它落在那一发的 OCR **之前**、
+    //   后面再没有检查点 —— 那时吞不吞取消，这一行都会照常提交（用例会在两种实现下都绿）。
+    //   60ms 的静默检查不是在赌时序：从 `release()` 到「该不该发载荷」全是 promise，
+    //   中间一个宏任务都没夹（同本文件另两处 60ms 的理由）。
+    await new Promise((r) => setTimeout(r, 60));
+    expect(h.segmentBody).toBeNull();
+  });
+});
+
+/**
  * 被 `upsert` 替换掉的旧对象必须删掉（#387）。
  *
  * 机制：`upsert(rows, { onConflict: "part_id,file_name" })` 对**同一个声部下的同名文件**是

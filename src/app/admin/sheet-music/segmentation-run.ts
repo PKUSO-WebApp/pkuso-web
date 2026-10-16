@@ -1,8 +1,9 @@
 import { supabase } from "@/lib/supabase";
 import { LLM_TIMEOUT_MS } from "./analysis";
-import { mapLinesToPages, MOSAIC_HARD_LIMIT_BYTES, packBands } from "./mosaic";
-import { invokeErrorDetail, invokeOcr, runOcr } from "./ocr-client";
+import { composeMosaic, ocrMosaic, retakeEmptyBands } from "./band-ocr";
 import { bandPlan } from "./band-render";
+import { packBands } from "./mosaic";
+import { invokeErrorDetail, runOcr } from "./ocr-client";
 import { blobToBase64, OCR_JPEG_QUALITY, openPdf } from "./pdf-render";
 import type { PageText } from "./upload-modal.types";
 
@@ -15,89 +16,6 @@ export class SegmentationCancelled extends Error {
 }
 
 /**
- * 把若干条窄带**垂直叠成一张长图**。返回长图与它的高度（归页要用）。
- *
- * 拼图尺寸 ≈ 各窄带之和（实测 0.95~0.99），所以调用方能在合成前就分好组；
- * 这里再返回真实字节数，让调用方**提交前**能核一次（合成不花 OCR 配额）。
- */
-async function composeMosaic(
-  bands: Blob[],
-): Promise<{ blob: Blob; width: number; height: number; bandHeight: number }> {
-  const bitmaps: ImageBitmap[] = [];
-  try {
-    for (const b of bands) bitmaps.push(await createImageBitmap(b));
-    // ⚠️ **本组必须等高**。`bandH` 是**逐页**算的（`round(canvas.height * 0.12)`，而 canvas
-    // 高度取决于该页自己的尺寸与缩放）—— 同一份合订谱里混了横排插页 / 不同扫描仪的页时
-    // 就不等高。那时叠图步长（第一条的高）与归页除数（`renderNarrowBands` 返回的高）会对不上，
-    // 后果是**把两页的文字并进一页、另一页留空** —— 看起来完全合法的错答案。
-    // 判据落在这里：不等高时**唯一的正确做法是不拼图**（抛错 → 调用方退回逐页 OCR，结果一样对）。
-    // 宽不等没关系：叠图按 x=0 画，右边露白不影响识别，所以只判高。
-    const heights = new Set(bitmaps.map((b) => b.height));
-    if (heights.size !== 1) {
-      throw new Error(`窄带高度不一致（${[...heights].join("/")}）—— 不拼图，退回逐页`);
-    }
-  } catch (err) {
-    // 解码循环也在这个 try 里：第 k 条失败时前 k−1 个 ImageBitmap 必须 close
-    //（每个约 1788×285×4B ≈ 2MB 的解码后像素，一批最多几十 MB）
-    bitmaps.forEach((b) => b.close());
-    throw err;
-  }
-  const width = Math.max(...bitmaps.map((b) => b.width));
-  const bandHeight = bitmaps[0].height;
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = bandHeight * bitmaps.length;
-  try {
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("无法创建 canvas 上下文");
-    // 与单页窄带同一条理由：透明像素编码成 JPEG 会合成到黑底
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    bitmaps.forEach((bmp, i) => ctx.drawImage(bmp, 0, i * bandHeight));
-    const blob = await new Promise<Blob | null>((r) =>
-      canvas.toBlob(r, "image/jpeg", OCR_JPEG_QUALITY),
-    );
-    if (!blob) throw new Error("拼图编码失败");
-    // ⚠️ 把**本组自己的**窄带高一起返回：归页必须用它做除数，而不是用外面那个
-    // 文件级的 `bandHeight`（那是**最后渲染那一页**的高）。两者只在「整份文件等高」时相等，
-    // 而尺寸不同的页只要**落在组边界上**，组内断言就抓不到 —— 那时除数偏掉会把整组的文字
-    // 往后挤并夹进最后一页，而所有信号都是正常的（静默错答案）。
-    return { blob, width: canvas.width, height: canvas.height, bandHeight };
-  } finally {
-    bitmaps.forEach((b) => b.close());
-    canvas.width = 0;
-    canvas.height = 0;
-  }
-}
-
-/**
- * 一张拼图 → 各页文本。**坐标不可用时抛错**，让调用方退回逐页 OCR ——
- * 那比「把文字归到错页」或「全归第 1 页」好：后两者都是看起来完全正常的错答案。
- */
-async function ocrMosaic(
-  blob: Blob,
-  bandHeight: number,
-  pageCount: number,
-  mosaicHeight: number,
-): Promise<string[]> {
-  // 提交前核一次真实大小（不花配额）：超了当场抛，让调用方退回逐页 —— 发出去也是白费
-  if (blob.size > MOSAIC_HARD_LIMIT_BYTES) {
-    throw new Error(`拼图 ${Math.round(blob.size / 1024)}KB 超上限`);
-  }
-  const { lines, text } = await invokeOcr(await blobToBase64(blob), {
-    overlay: true,
-    what: `拼图 ${pageCount} 页`,
-  });
-  const mapped = mapLinesToPages(lines, bandHeight, pageCount, mosaicHeight);
-  if (!mapped) {
-    throw new Error(`拼图坐标不可用（${lines.length} 行）`);
-  }
-  // 坐标都在，但一行都没归到任何页 —— 也当失败（否则整批会变成 N 个空串）
-  if (mapped.every((t) => !t.trim()) && text.trim()) {
-    throw new Error("拼图坐标归页结果为空");
-  }
-  return mapped;
-}
 
 /**
  * 逐页渲染顶部等高窄带（#290 Step 1 的输入）。
@@ -285,6 +203,47 @@ export async function ocrBandsForSegmentation(
       `${pageCount} 页的窄带都没读到文字（OCR 配额/限流，或窄带不可识别）` +
         `—— 没有可判断的内容。可以直接上传（分段是可选的），或稍后重试`,
     );
+  }
+
+  /**
+   * 补救：哪几页的窄带**取到了、但一个字都没有**（`text` 是空串），换「标题区」那一刀
+   * 再取一次（见 `band-ocr.ts` 的 `retakeEmptyBands`）。空串会被后端渲染成「（空白）」
+   * 交给模型，而「窄带空」根本推不出「这一页没文字」—— 居中排版的标题页必然落在 12% 之下。
+   *
+   * ⚠️ 判据是**空串**，不是「没读到」（后者在 `failedPages` 里，页根本就不在 `pageTexts`
+   * 中）：那种是传输/配额问题，换裁切不治，且后端对缺页已有「不要在那几页上给切点」的提示。
+   * 两者混在一起会把「能补救」和「补救不了」的一起补一遍，白烧配额。
+   *
+   * ⚠️ 位置在**两条守卫之后**：补救是这个函数的**加法**，不能把「所有页都没读到」
+   * 那条守卫的语义（立刻报错、让用户稍后重试）变成「先烧 N 次补救再报错」。
+   */
+  const emptyPages = pageTexts.filter((p) => !p.text.trim()).map((p) => p.page);
+  if (emptyPages.length > 0) {
+    try {
+      const retaken = await retakeEmptyBands(file, emptyPages, {
+        // 取消在这里是一个异常（`SegmentationCancelled`），而那个类定义在本文件里 ——
+        // 抛的动作留在这一侧，`band-ocr.ts` 就不必反向 import 本文件（循环依赖）。
+        throwIfCancelled: () => {
+          if (opts.isCancelled()) throw new SegmentationCancelled();
+        },
+      });
+      for (const p of pageTexts) {
+        const better = retaken.get(p.page);
+        // ⚠️ 只改**本函数自己拼出来的**那一份（上面每个元素都是新对象）：调用方
+        // `opts.existing` 那份数组要一字不动 —— 它可能就是 React state 里的数组。
+        if (better !== undefined) p.text = better;
+      }
+    } catch (err) {
+      // 取消照抛（那是调用方的语义，不是补救失败）。
+      if (err instanceof SegmentationCancelled) throw err;
+      // ⚠️ **补救必须整体是可失败而不留痕的**：它自己那几步（`openPdf` —— 里面是
+      // `loadPdfJs` / 重新 `file.arrayBuffer()` / `getDocument` 三件事）在窄带阶段
+      // 跑完**之后**才发生，那一刻文件读不出来（被移走、网络盘掉线）或二次解析失败
+      // 都是可能的 —— 而它们抛出去会把这一行推成 `error`，**把窄带阶段已经烧掉的整批
+      // 结果一起丢掉**，而改动前同一状态是成功的。契约第 4 条要的是「拿不到就回到
+      // 今天的行为」，所以这里吞掉：`pageTexts` 保持窄带那条，`failedPages` 也不动。
+      void err;
+    }
   }
   return { pageCount, pageTexts, failedPages };
 }

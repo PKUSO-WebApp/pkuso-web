@@ -62,12 +62,16 @@ async function selectOne(name = "圆号1,2.pdf") {
  * 纯模块测试测不到「控件在不在页面上」，所以这条只能长在渲染测试里。
  */
 describe("select 阶段左下角的两个开关（#297）", () => {
-  it("两个开关都在，且默认是「总谱关、分段开」", async () => {
+  it("两个开关都在，且默认是「总谱关、分段关」", async () => {
     await selectOne();
     const fullScore = screen.getByLabelText("分析总谱") as HTMLInputElement;
     const segment = screen.getByLabelText("乐谱分段") as HTMLInputElement;
     expect(fullScore.checked, "「分析总谱」默认关 —— 开着是让所有导入替总谱付账").toBe(false);
-    expect(segment.checked, "「乐谱分段」默认开").toBe(true);
+    // ⚠️ #386 起这颗开关**默认关**：它的含义从「这一批允许分段」改成了「分析完自动跑分段」，
+    // 而自动点火会烧 N 次 OCR（N = 页数），必须由人显式勾。写死 `false` 而不是断言它等于
+    // `AUTO_SEGMENT_DEFAULT` —— 后者是恒真的同义反复，改默认值时不会变红。
+    // ★ 变异：`AUTO_SEGMENT_DEFAULT` 改回 `true` → 这一条变红。
+    expect(segment.checked, "「乐谱分段」默认关").toBe(false);
   });
 
   it("勾上「分析总谱」后成本数字跟着变（不跟着变，那个数就是假的）", async () => {

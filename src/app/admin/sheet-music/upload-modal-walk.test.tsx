@@ -464,12 +464,16 @@ beforeEach(() => {
   const pixels = makePixels();
   HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement) {
     // `this` 是目标画布 —— 尺寸在 `getContext` 之前就设好了（各调用点都这样），
-    // 所以箭头函数里读到的就是「这张画布多大」。第三个实参在四个调用点都表示**目标纵偏移**
-    //（三段式是 `dy`，九段式是 `dy` 之前还有 `dx`），别按实参个数认人。
+    // 所以箭头函数里读到的就是「这张画布多大」。
     return {
       fillStyle: "",
       fillRect: () => {},
-      drawImage: (_img: unknown, _dx: number, dy: number) => {
+      // 目标纵偏移在两种重载里位置不同：三段/五段式 `(图, dx, dy, …)` 是第 3 个实参，
+      // 九段式 `(图, sx, sy, sw, sh, dx, dy, …)` 是第 7 个（第 3 个那里是 **源** 纵偏移）。
+      // **必须按实参个数取** —— 否则把同一条调用改写成等价的九段式（`segmentation-run.ts`
+      // 下游就有一处这么写的）会记到 `sy`，让画对了的实现被判红。
+      drawImage: (...args: unknown[]) => {
+        const dy = Number(args.length >= 9 ? args[6] : args[2]);
         h.draws.push({ w: this.width, h: this.height, dy });
       },
       getImageData: (_x: number, _y: number, w: number, hh: number) => ({

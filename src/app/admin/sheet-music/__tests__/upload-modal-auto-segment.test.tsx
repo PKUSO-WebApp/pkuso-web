@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { h, okReply, UploadModal } from "./upload-modal-harness";
 
@@ -188,5 +188,46 @@ describe("自动分段接上了没有（#386）", () => {
 
     // ★ 变异：把分段那条 `ocrBandsForSegmentation` 的 `isCancelled: () => cancelledRef.current`
     //   换成 `() => false` → 关窗后照旧把 3 页跑完并调 `segment-parts` ⇒ 这一条变红。
+  });
+
+  it("上传尝试落回 confirm 的那一拍**不是触发点**（否则会在用户手改声部后凭空点火）", async () => {
+    // 对抗测试攻破的那条：`phase` 既当闸门又当触发点，而它有一条**反向**转场 ——
+    // 上传尝试收尾时 `confirmUpload` 的 finally 把 `uploading` 落回 `confirm`。
+    // 那一拍若评估，就会在「分析早就跑完、用户后来手改声部把某行改合格」的场景下凭空点火。
+    h.llmReply = okReply("总谱"); // 判成总谱 ⇒ 收尾那一拍**评估了但判它不合格**
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    await analyze({ autoSegment: "on" });
+
+    // 前提一：收尾那一拍真的评估过、且判它不合格（页脚没有分段入口 = 判据当场可读）。
+    // 没有这个前提，下面的负向断言会空转 —— 不合格的行本来就不会被跑。
+    expect(screen.queryByText(/^识别分段（/), "总谱行不该有分段入口").toBeNull();
+    expect(bandCalls(), "总谱行不该被自动跑").toBe(0);
+
+    // 用户手改声部 → 同一份分析结果下这一行**确实**变合格了
+    const sel = screen.getAllByRole("combobox")[0] as HTMLSelectElement;
+    fireEvent.change(sel, { target: { value: "圆号" } });
+    await waitFor(() => expect(screen.getByText(/^识别分段（/)).toBeTruthy());
+
+    // 点「确认上传」：未登录 ⇒ alert 后原样返回，finally 把 phase 落回 confirm。
+    // `alert` 被调用同时证明我们**真的**走过了 `setPhase("uploading")` 那一句
+    // （按钮没被禁用吞掉、handler 真的跑了）。
+    fireEvent.click(screen.getByText(/^确认上传/));
+    await waitFor(() => expect(alertSpy).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(bandCalls(), "点了一次没成功的上传，却把分段点着了").toBe(0);
+    expect(h.segmentBody, "点了一次没成功的上传，却发了 segment-parts").toBeNull();
+    expect(screen.queryByText("还原为一份"), "行被静默拆了").toBeNull();
+
+    // 手点这条路照旧在（抑制 ≠ 按钮没了）：点了照样跑
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+    alertSpy.mockRestore();
+
+    // ★ 变异（接线层）：删掉 `use-auto-segment.ts` 里那句
+    //   `if (prevPhase === "uploading" && phase === "confirm") return;`
+    //   → 点确认上传那一拍就点火（3 次窄带 + segment-parts + 拆成 2 段）⇒ 这一条变红。
   });
 });

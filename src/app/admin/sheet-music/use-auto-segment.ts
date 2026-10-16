@@ -46,7 +46,28 @@ export function useAutoSegment({
     runRef.current = run;
   });
 
+  /**
+   * 上一次评估时的 `phase`。
+   *
+   * ⚠️ `phase` 在这里**既当闸门又当触发点**，而它有一条**反向**转场：上传尝试收尾
+   * （传成功、传失败、或未登录被 `alert` 挡回）时，`confirmUpload` 的 `finally` 会把
+   * `uploading` 落回 `confirm`。那不是「分析收尾」—— 用户此刻在干的是上传。
+   *
+   * 不管它的后果是可复现的：分析收尾时不合格的行（模型判**总谱**，或弃权被用户填上声部之前），
+   * 用户后来**手改声部**把它改合格 —— 此后随便哪一次 `phase` 落回 `confirm` 都会点火：
+   * 在「分析早就跑完」很久之后凭空空烧 N×页窄带 OCR，还把那一行静默拆段。
+   * 所以这条转场只当闸门、不当触发点。
+   */
+  const prevPhaseRef = useRef(phase);
+
   useLayoutEffect(() => {
+    const prevPhase = prevPhaseRef.current;
+    prevPhaseRef.current = phase;
+    // ⚠️ 别把这里改成「只在 `analyzing → confirm` 时才评估」：**逐行重试**那条路根本不动
+    // `phase`（`retryRow` 只改行的状态，弹窗一直停在 confirm），它靠 `hasAnalyzingFiles`
+    // 落回假来触发 —— 那样写会把「重试完的那一行自动进分段」一起掐掉。
+    if (prevPhase === "uploading" && phase === "confirm") return;
+
     const plan = autoSegmentPlan({
       enabled,
       phase,

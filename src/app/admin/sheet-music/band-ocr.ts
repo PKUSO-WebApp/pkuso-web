@@ -1,12 +1,6 @@
 import { mapLinesToPages, MOSAIC_HARD_LIMIT_BYTES } from "./mosaic";
 import { invokeOcr, runOcr } from "./ocr-client";
-import {
-  blobToBase64,
-  loadPdfJs,
-  OCR_JPEG_QUALITY,
-  PDFJS_ASSET_BASE,
-  renderPageToJpeg,
-} from "./pdf-render";
+import { blobToBase64, OCR_JPEG_QUALITY, openPdf, renderPageToJpeg } from "./pdf-render";
 
 /**
  * 「窄带图 → 逐页文本」的取法。三种，都在这里：
@@ -151,14 +145,9 @@ export async function retakeEmptyBands(
 ): Promise<Map<number, string>> {
   const got = new Map<number, string>();
   if (pages.length === 0) return got;
-  const pdfjs = await loadPdfJs();
-  const data = new Uint8Array(await file.arrayBuffer());
-  const task = pdfjs.getDocument({
-    data,
-    standardFontDataUrl: `${PDFJS_ASSET_BASE}standard_fonts/`,
-    wasmUrl: `${PDFJS_ASSET_BASE}wasm/`,
-    iccUrl: `${PDFJS_ASSET_BASE}iccs/`,
-  });
+  // 走 `openPdf`（#398 起 pdf.js 的资源选项收口到那一处）：窄带、界面上那条窄带缩略图、
+  // 补救这三处的「打开文档」必须是同一份参数，各写一份迟早只改到一处。
+  const task = await openPdf(file);
   try {
     const pdf = await task.promise;
     for (const pageNo of pages) {

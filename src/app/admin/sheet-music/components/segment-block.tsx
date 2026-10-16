@@ -1,6 +1,7 @@
 "use client";
 
 import { boundarySpan, parseBoundaryText } from "../segmentation";
+import { SegEvidence } from "./seg-evidence";
 import type { UploadFile, UploadPhase } from "../upload-modal.types";
 
 /**
@@ -167,6 +168,21 @@ export function SegmentBlock({
             );
           })}
         </ul>
+      )}
+      {/* 核实面板（pkuso-backend#96 §6 的人工侧）：每条边界的引文、「为什么没切」、
+          以及边界那几页的窄带图与窄带文本。⚠️ **只在 `done` 时出现**：没有边界就没有「依据」
+          可言（页文本那一块也一并留在里面 —— 段还没跑出来时读它没有对象可核）。
+          ⚠️ 面板**默认关着**（`SegEvidence` 自己的 state）：它是排查用的，不是默认要读的东西。 */}
+      {f.segState === "done" && (
+        <SegEvidence
+          f={f}
+          i={i}
+          phase={phase}
+          segBusy={segBusy}
+          starts={startsOf(f)}
+          onSegmentStartRawChange={onSegmentStartRawChange}
+          onCommitSegmentStart={onCommitSegmentStart}
+        />
       )}
       {/* 边界确认完了就拆成多行（#290 Step 2）：拆完每段各占一行、
           各有各的乐器/号，上传时源文件只读一次、逐段切出来各传各的。

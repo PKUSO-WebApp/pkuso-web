@@ -1,16 +1,10 @@
 import { supabase } from "@/lib/supabase";
 import { LLM_TIMEOUT_MS } from "./analysis";
 import { composeMosaic, ocrMosaic, retakeEmptyBands } from "./band-ocr";
+import { bandPlan } from "./band-render";
 import { packBands } from "./mosaic";
 import { invokeErrorDetail, runOcr } from "./ocr-client";
-import {
-  blobToBase64,
-  loadPdfJs,
-  OCR_JPEG_QUALITY,
-  OCR_MAX_SCALE,
-  OCR_TARGET_LONGEST_SIDE,
-  PDFJS_ASSET_BASE,
-} from "./pdf-render";
+import { blobToBase64, OCR_JPEG_QUALITY, openPdf } from "./pdf-render";
 import type { PageText } from "./upload-modal.types";
 
 /** 用户关掉弹窗后中断 —— **不是失败**，不要落到 `segState: "error"` */
@@ -22,24 +16,13 @@ export class SegmentationCancelled extends Error {
 }
 
 /**
- * 顶部窄带的固定高度（页高比例）。
- *
- * ⚠️ **必须是固定值，不能用 `decideTitleCrop`**：续页在裁切逻辑下会因「顶部过薄」
- * 退化成整页，那就把「续页只有页眉」这个判据本身毁掉了（#290 正文里写明了这条）。
- *
- * 12% 的来历：issue 正文给的例子是 12%；另一处提到的 33% 是 `decideTitleCrop` 的
- * `MAX_CROP_PCT`（**裁切上限**，另一件事），不是窄带高度。12% 在真实语料上验过
- * （语料、轮次与结论见 #290 的评论）—— **别在这里写份数/页数**：那是会腐烂的计数，
- * 每加一份语料就错一次。
- */
-const BAND_PCT = 0.12;
 
 /**
  * 逐页渲染顶部等高窄带（#290 Step 1 的输入）。
  *
  * 与 `pdf-render.ts` 的 `renderPagesForAnalysis` **刻意分开**：那个的职责是「从第一张有内容的页起往后走、
  * 决定每页裁到哪」，这个的职责是「每一页都取一条等高的窄带」—— 两者的裁切逻辑必须不同
- * （见 BAND_PCT）。代价是分析阶段看过的页会被渲染第二次（与 N 次 OCR 相比可忽略），
+ * （见 `band-render.ts` 的 `BAND_PCT`）。代价是分析阶段看过的页会被渲染第二次（与 N 次 OCR 相比可忽略），
  * 换来的是两条路径互不牵制。
  *
  * ⚠️ 内存：每页渲染后会 `page.cleanup()`。渲染一整页的 canvas 峰值在本项目的语料上
@@ -50,14 +33,7 @@ async function renderNarrowBands(
   file: File,
   opts: { needed: (pageNo: number) => boolean; isCancelled: () => boolean },
 ): Promise<{ pageCount: number; bands: Blob[] }> {
-  const pdfjs = await loadPdfJs();
-  const data = new Uint8Array(await file.arrayBuffer());
-  const task = pdfjs.getDocument({
-    data,
-    standardFontDataUrl: `${PDFJS_ASSET_BASE}standard_fonts/`,
-    wasmUrl: `${PDFJS_ASSET_BASE}wasm/`,
-    iccUrl: `${PDFJS_ASSET_BASE}iccs/`,
-  });
+  const task = await openPdf(file);
   try {
     const pdf = await task.promise;
     const bands: Blob[] = [];
@@ -74,15 +50,11 @@ async function renderNarrowBands(
       }
       const page = await pdf.getPage(pageNo);
       try {
-        const unscaled = page.getViewport({ scale: 1 });
-        const longestSide = Math.max(unscaled.width, unscaled.height);
-        const fitScale = longestSide > 0 ? OCR_TARGET_LONGEST_SIDE / longestSide : OCR_MAX_SCALE;
-        const viewport = page.getViewport({ scale: Math.min(OCR_MAX_SCALE, fitScale) });
-
+        // 几何（缩放口径 + 窄带高）在 `band-render.ts`：界面上的缩略图与这里必须是同一条窄带
+        const { viewport, canvasWidth, canvasHeight, bandHeight: bandH } = bandPlan(page);
         const canvas = document.createElement("canvas");
-        canvas.width = Math.ceil(viewport.width);
-        canvas.height = Math.ceil(viewport.height);
-        const bandH = Math.max(1, Math.round(canvas.height * BAND_PCT));
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
         const band = document.createElement("canvas");
         band.width = canvas.width;
         band.height = bandH;
@@ -264,12 +236,12 @@ export async function ocrBandsForSegmentation(
     } catch (err) {
       // 取消照抛（那是调用方的语义，不是补救失败）。
       if (err instanceof SegmentationCancelled) throw err;
-      // ⚠️ **补救必须整体是可失败而不留痕的**：它自己那几步（`loadPdfJs` /
-      // 重新 `file.arrayBuffer()` / `getDocument`）在窄带阶段跑完**之后**才发生，
-      // 那一刻文件读不出来（被移走、网络盘掉线）或二次解析失败都是可能的 —— 而
-      // 它们抛出去会把这一行推成 `error`，**把窄带阶段已经烧掉的整批结果一起丢掉**，
-      // 而改动前同一状态是成功的。契约第 4 条要的是「拿不到就回到今天的行为」，
-      // 所以这里吞掉：`pageTexts` 保持窄带那条，`failedPages` 也不动。
+      // ⚠️ **补救必须整体是可失败而不留痕的**：它自己那几步（`openPdf` —— 里面是
+      // `loadPdfJs` / 重新 `file.arrayBuffer()` / `getDocument` 三件事）在窄带阶段
+      // 跑完**之后**才发生，那一刻文件读不出来（被移走、网络盘掉线）或二次解析失败
+      // 都是可能的 —— 而它们抛出去会把这一行推成 `error`，**把窄带阶段已经烧掉的整批
+      // 结果一起丢掉**，而改动前同一状态是成功的。契约第 4 条要的是「拿不到就回到
+      // 今天的行为」，所以这里吞掉：`pageTexts` 保持窄带那条，`failedPages` 也不动。
       void err;
     }
   }
@@ -305,10 +277,15 @@ export interface SegmentationResponse {
   /** 与 `cuts` 一一对应的原文片段。后端从第一天就在回，前端此前一直丢掉 */
   evidence: unknown;
   /**
-   * 模型原样给的切点（**未校验**）。空数组 = 模型弃权 —— 也可能是**后端没回这个字段**（prod 还在旧后端
-   * 时就是这样，`rejected` 同理）；这一层分不出两者，要真分开得先确认后端已部署。
+   * 模型原样给的切点（**未校验**）。`[]` = 后端**回了**这个字段、里面是空的；缺字段是 `undefined`
+   * （**不是 `[]`**）—— 这条分界线就是「后端没回这个字段」（prod 还在旧后端时就是这样）与
+   * 「回了、但是空的」之间的区别。
+   * ⚠️ `[]` **不等于「模型弃权」**：后端把「模型回了空 cuts」与「输出没解析成那个形状」
+   * （例如截断成非法 JSON）折叠成同一个空数组 —— 界面只能据此说「没拿到切点」，不许点名原因
+   * （点错了会把管理员推向「改 prompt」，而真相可能是这次输出被截断）。
+   * `rejected` 那边缺字段归一成 `[]` 无所谓：没有它时不显示任何「丢掉了几个」的结论。
    */
-  rawCuts: unknown[];
+  rawCuts?: unknown[];
   rejected: SegmentationRejection[];
 }
 
@@ -346,11 +323,11 @@ export async function requestSegmentation(
   if (!data?.success) {
     throw new Error(`分段失败: ${data?.error || data?.message || "未知错误"}`);
   }
-  // `cuts` 缺字段就传 `undefined`（不补 `?? []`）：`startsFromResponse` 对「不是数组」同样处置成「不切」，补默认值却会抹平「后端没回字段」
+  // `cuts` / `rawCuts` 缺字段就传 `undefined`（不补 `?? []`）：`startsFromResponse` 对「不是数组」同样处置成「不切」，补默认值却会抹平「后端没回字段」
   return {
     cuts: data.cuts,
     evidence: data.evidence,
-    rawCuts: Array.isArray(data.rawCuts) ? data.rawCuts : [],
+    rawCuts: Array.isArray(data.rawCuts) ? data.rawCuts : undefined,
     rejected: normalizeRejections(data.rejected),
   };
 }

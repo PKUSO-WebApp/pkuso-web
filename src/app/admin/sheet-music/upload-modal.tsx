@@ -699,13 +699,12 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           });
           // OCR 的产物**先落状态**：下一步（LLM）失败时它还在，重试只补缺的页
           updateFile(i, { pageTexts, segFailedPages: failedPages });
-          // 响应里还有「为什么没切」的字段（`rawCuts` / `rejected` / `evidence`，见 `SegmentationResponse`），
-          // `requestSegmentation` 已经把它们带回来了；这里**只消费 `cuts`** —— 要不要在界面上展示
-          // 是另一个决定（#96 §6 的界面证据那批）。
-          const { cuts } = await requestSegmentation(pageCount, pageTexts);
+          // 响应**整份留下**（`cuts` 之外还有「为什么没切」的三个字段，见 `SegmentationResponse`）——
+          // 分段面板要拿它核实（#96 §6 的人工侧）
+          const segRes = await requestSegmentation(pageCount, pageTexts);
           // 起点的推导走 segmentation.ts 里那份（校验 cuts 是它存在的理由）。
           // 别在这里内联重写 —— 否则上线跑的是没被测试覆盖的第三份实现。
-          const starts = startsFromResponse(cuts, pageCount);
+          const starts = startsFromResponse(segRes.cuts, pageCount);
           /**
            * 分段自己产出的那几个字段。
            *
@@ -723,6 +722,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             // 编辑时下标才不会错位（见 UploadFile.segmentStartText）
             segmentStarts: starts,
             segmentStartText: starts.map(String),
+            segDiagnostics: segRes,
           };
           updateFile(i, segPatch);
           // 只记下标与这几个字段，**不在这里拼整行**：整行要等池子跑完、

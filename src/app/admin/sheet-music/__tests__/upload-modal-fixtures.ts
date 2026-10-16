@@ -75,6 +75,8 @@ const h = vi.hoisted(() => ({
    * OCR 桩为**窄带**（矮图）返回过的文本，按调用顺序 —— 也就是页序。
    *
    * ⚠️ 只在**逐页**那条路上增长；拼图那条路若真成功，这里会是空的（拼图是一张图一次调用）。
+   * ⚠️ **空串也进来**（`bandEmptyFor`）：那一页与「失败页」不同 —— 它在 `pageTexts` 里
+   * 只是文本为空，少推一个，后面所有页的「第 N 页页眉」就整体错位一页。
    */
   bandTexts: [] as string[],
   /**
@@ -177,6 +179,22 @@ const h = vi.hoisted(() => ({
   segmentFail: null as null | "error" | "soft",
   /** 让**第 N 页**的窄带 OCR 失败（页序 = 调用序，见 `bandCalls`）—— 造「有几页没读到」 */
   bandFailFor: [] as number[],
+  /**
+   * 让**第 N 页**的窄带 OCR **成功、但一个字都没有**（页序 = 调用序）——
+   * 与 `bandFailFor`（整条请求失败）是**两种不同的形态**，这一种才是居中排版的标题页
+   * 在真机上的样子：窄带取到了，可那张图上没有字（标题块整块落在 12% 之下）。
+   */
+  bandEmptyFor: [] as number[],
+  /**
+   * 补救那一发（`band-ocr.ts` 的 `retakeEmptyBands`）的形状：`"fail"` = 请求报错，
+   * `"empty"` = 成功但仍无文字。`null` = 正常回文字。契约第 4 条（补救失败 ⇒ 保持窄带
+   * 那条结果）只有靠它才可测 —— 两种形态都得能造出来。
+   *
+   * ⚠️ 桩**怎么认出那是补救**：靠调用时机（`bandCalls > 0` 之后来的高图）—— 补救送的那张图
+   * 与**分析路径**送的标题区逐字节相同（同一个 `renderPageToJpeg`），尺寸分辨不出来；
+   * 而分析路径的高图全部发生在窄带之前，拼图那发带 `overlay`（上面已拦掉）。
+   */
+  retakeStub: null as null | "fail" | "empty",
   /** 窄带 OCR 的调用计数。**不能拿 `bandTexts.length` 当页号**：失败的那页不入数组，会错位 */
   bandCalls: 0,
   /** `segment-parts` 回什么 cuts（3 页 → `[2]` 即两段） */

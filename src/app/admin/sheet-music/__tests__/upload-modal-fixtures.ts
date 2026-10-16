@@ -195,6 +195,30 @@ const h = vi.hoisted(() => ({
    * 而分析路径的高图全部发生在窄带之前，拼图那发带 `overlay`（上面已拦掉）。
    */
   retakeStub: null as null | "fail" | "empty",
+  /**
+   * 让补救**自己那几步**（`loadPdfJs` / 重新 `file.arrayBuffer()` / `getDocument`）失败 ——
+   * 也就是「打开文档」在**补救那次**失败（判据见 mock：窄带那条路是先打开文档再发第一发
+   * OCR，所以「已经发过窄带 OCR 之后的下一次打开」只可能是补救自己重读文件那一次）。
+   *
+   * **为什么非有它不可**：`retakeStub` 造的是**每页那个 `try` 之内**的失败（OCR 报错），
+   * 而补救自己那几步在它**之外** —— 两条路径的失败后果完全不同（后者抛出去会把整行推成
+   * `error`，连窄带阶段已经烧掉的结果一起丢）。
+   */
+  documentFailForRetake: false,
+  /** PDF 文档打开计数（配合 `documentFailForRetake`：补救那次真的又开了一次） */
+  documentOpens: 0,
+  /**
+   * 补救那一发**重读文件**时打开文档的次数（判据：窄带已经开始发 OCR 请求之后）。
+   * 它是「补救真的跑了」的正值对照 —— 只有载荷断言的话，删掉补救也会绿。
+   */
+  retakeOpens: 0,
+  /**
+   * 补救那一发 OCR 的**门**（要「补救正在飞」的窗口时挂在这里，同 `ocrGate`）。
+   * 取消那条路径只有在**下一轮的检查点真的存在**时才差得出来 —— 见用例里的说明。
+   */
+  retakeGate: null as null | Promise<void>,
+  /** 补救那一发的 OCR **发出去了**几次（在 `retakeGate` **之前**记） */
+  retakeStarted: 0,
   /** 窄带 OCR 的调用计数。**不能拿 `bandTexts.length` 当页号**：失败的那页不入数组，会错位 */
   bandCalls: 0,
   /** `segment-parts` 回什么 cuts（3 页 → `[2]` 即两段） */

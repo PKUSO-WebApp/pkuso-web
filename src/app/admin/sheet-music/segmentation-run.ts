@@ -247,18 +247,30 @@ export async function ocrBandsForSegmentation(
    */
   const emptyPages = pageTexts.filter((p) => !p.text.trim()).map((p) => p.page);
   if (emptyPages.length > 0) {
-    const retaken = await retakeEmptyBands(file, emptyPages, {
-      // 取消在这里是一个异常（`SegmentationCancelled`），而那个类定义在本文件里 ——
-      // 抛的动作留在这一侧，`band-ocr.ts` 就不必反向 import 本文件（循环依赖）。
-      throwIfCancelled: () => {
-        if (opts.isCancelled()) throw new SegmentationCancelled();
-      },
-    });
-    for (const p of pageTexts) {
-      const better = retaken.get(p.page);
-      // ⚠️ 只改**本函数自己拼出来的**那一份（上面每个元素都是新对象）：调用方
-      // `opts.existing` 那份数组要一字不动 —— 它可能就是 React state 里的数组。
-      if (better !== undefined) p.text = better;
+    try {
+      const retaken = await retakeEmptyBands(file, emptyPages, {
+        // 取消在这里是一个异常（`SegmentationCancelled`），而那个类定义在本文件里 ——
+        // 抛的动作留在这一侧，`band-ocr.ts` 就不必反向 import 本文件（循环依赖）。
+        throwIfCancelled: () => {
+          if (opts.isCancelled()) throw new SegmentationCancelled();
+        },
+      });
+      for (const p of pageTexts) {
+        const better = retaken.get(p.page);
+        // ⚠️ 只改**本函数自己拼出来的**那一份（上面每个元素都是新对象）：调用方
+        // `opts.existing` 那份数组要一字不动 —— 它可能就是 React state 里的数组。
+        if (better !== undefined) p.text = better;
+      }
+    } catch (err) {
+      // 取消照抛（那是调用方的语义，不是补救失败）。
+      if (err instanceof SegmentationCancelled) throw err;
+      // ⚠️ **补救必须整体是可失败而不留痕的**：它自己那几步（`loadPdfJs` /
+      // 重新 `file.arrayBuffer()` / `getDocument`）在窄带阶段跑完**之后**才发生，
+      // 那一刻文件读不出来（被移走、网络盘掉线）或二次解析失败都是可能的 —— 而
+      // 它们抛出去会把这一行推成 `error`，**把窄带阶段已经烧掉的整批结果一起丢掉**，
+      // 而改动前同一状态是成功的。契约第 4 条要的是「拿不到就回到今天的行为」，
+      // 所以这里吞掉：`pageTexts` 保持窄带那条，`failedPages` 也不动。
+      void err;
     }
   }
   return { pageCount, pageTexts, failedPages };

@@ -2433,6 +2433,67 @@ describe("窄带取空的补救（#96：空串被当成「这一页没文字」�
       timeout: 10000,
     });
   });
+
+  it("补救**自己重读文件**失败（打开文档报错）时同样保持窄带那条结果：上一步的产物不连坐", async () => {
+    h.bandEmptyFor = [1];
+    h.documentFailForRetake = true; // 窄带阶段已经在发 OCR 了 ⇒ 之后的打开 = 补救那一次
+    await readyToSegment();
+    const ocrBefore = h.ocr.length;
+    fireEvent.click(screen.getByText(/^识别分段（/));
+
+    // ★ 变异：撤掉调用点上那层 `try/catch` ⇒ 异常穿出 ⇒ 这一行落 `segState: "error"`、
+    //   `segmentBody` 永远是 null ⇒ 红。
+    // ⚠️ 与上面那条「补救**报错**」**不是**同一件事：那条造的是每页那个 `try` **之内**的
+    //   OCR 失败，这条造的是它**之外**的自备动作（`loadPdfJs` / 重新 `file.arrayBuffer()` /
+    //   `getDocument`）失败 —— 后者抛出去连**窄带阶段已经烧掉的结果**一起丢，
+    //   而改动前同一状态是成功的。
+    await waitFor(
+      () =>
+        expect(h.segmentBody).toEqual({
+          pageCount: 3,
+          pages: [
+            { page: 1, text: "" }, // ← 补救没跑成：回到改动前的行为（窄带那条空串）
+            { page: 2, text: "第2页页眉" },
+            { page: 3, text: "第3页页眉" },
+          ],
+        }),
+      { timeout: 10000 },
+    );
+    // 正值对照：补救**真的去重读了一次文件**（只断载荷的话，删掉补救这条也绿）
+    // ★ 变异：删掉补救 ⇒ `retakeOpens` 恒为 0 ⇒ 红
+    expect(h.retakeOpens).toBe(1);
+    // 一个 *窄带* OCR 都没多发（补救在发请求之前就倒了）
+    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x36`, `${W}x36`, `${W}x36`]);
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+  });
+
+  it("补救飞行中关掉弹窗 ⇒ 取消照抛（把它当成「补救失败」吞掉会让这一行照常提交）", async () => {
+    h.pages = 3;
+    h.bandEmptyFor = [1, 2]; // ⚠️ 必须**两页**空 —— 理由见下面那条注释
+    let release!: () => void;
+    h.retakeGate = new Promise<void>((r) => {
+      release = r;
+    });
+    await readyToSegment();
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    // 等到补救那一发**真的在飞**（门在桩里、`retakeStarted` 在门**之前**记）
+    await waitFor(() => expect(h.retakeStarted).toBe(1), { timeout: 10000 });
+
+    cleanup(); // ← 关弹窗：cleanup 把 `cancelledRef` 置真（同「分析途中关掉弹窗」那条）
+    release();
+
+    // ★ 变异：删掉调用点 `catch` 里的 `if (err instanceof SegmentationCancelled) throw err;`
+    //   （取消被当成「补救失败」一起吞了）⇒ 第 1 页的补救文本写回载荷、照常发 `segment-parts`
+    //   ⇒ 下面这条红。取消是**调用方的语义**，不是补救的一种失败。
+    // ⚠️ **必须两页空**：检查点在**每页开头**，只有一页空时它落在那一发的 OCR **之前**、
+    //   后面再没有检查点 —— 那时吞不吞取消，这一行都会照常提交（用例会在两种实现下都绿）。
+    //   60ms 的静默检查不是在赌时序：从 `release()` 到「该不该发载荷」全是 promise，
+    //   中间一个宏任务都没夹（同本文件另两处 60ms 的理由）。
+    await new Promise((r) => setTimeout(r, 60));
+    expect(h.segmentBody).toBeNull();
+  });
 });
 
 /**

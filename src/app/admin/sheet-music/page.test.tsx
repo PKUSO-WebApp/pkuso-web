@@ -30,6 +30,11 @@ const h = vi.hoisted(() => ({
   files: [] as { storage_path: string }[],
   /** `.single()` / `.maybeSingle()` 的返回（本页不用，留着避免桩被别的调用打穿） */
   singleRow: { data: null, error: null } as { data: unknown; error: unknown },
+  /**
+   * 哪几张表的预读要注入失败 —— 按表注入：#387 的两条预读各有一条用例。
+   * 读失败时若照旧删行，整首曲子的对象会全成孤儿 —— 所以那条路径必须中止删除。
+   */
+  deletePreReadErrorTables: [] as string[],
   /** `sheet_music.delete()` 的返回（用例内改）：默认命中 1 行；`[]` = 0 行 */
   deleteResult: { data: [{ id: "s1" }], error: null } as { data: unknown; error: unknown },
   deletes: [] as { table: string; cols: string; selected: boolean }[],
@@ -108,8 +113,15 @@ vi.mock("@/lib/supabase", () => {
           return resolve(selected ? h.deleteResult : { data: null, error: null });
         }
         if (op !== "select") return resolve({ data: null, error: null });
-        if (table === "sheet_music_parts") return resolve({ data: h.parts, error: null });
-        if (table === "sheet_music_files") return resolve({ data: h.files, error: null });
+        // 删曲目的两条预读可以**按表**单独注入失败（列表那条读不注入：它失败会连页面都渲染不出来）
+        if (table === "sheet_music_parts" || table === "sheet_music_files") {
+          const fails = h.deletePreReadErrorTables.includes(table);
+          const rows = table === "sheet_music_parts" ? h.parts : h.files;
+          return resolve({
+            data: fails ? null : rows,
+            error: fails ? { message: "read boom" } : null,
+          });
+        }
         return resolve({ data: h.scores, error: null });
       },
     });
@@ -171,6 +183,7 @@ afterEach(() => {
   h.scores = [];
   h.parts = [];
   h.files = [];
+  h.deletePreReadErrorTables = [];
   h.deleteResult = { data: [{ id: "s1" }], error: null };
   h.deletes = [];
   h.storageRemoves = [];
@@ -281,5 +294,36 @@ describe("谱务列表页删曲目（0 行检测）", () => {
     await waitFor(() => expect(h.storageRemoves).toEqual([["s1/p1.pdf"]]));
     await waitFor(() => expect(screen.queryByText("第五交响曲")).not.toBeInTheDocument());
     expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it("预读声部失败 → **不删曲目**、不动附件，报「删除失败」（#387）", async () => {
+    // 读失败时 `storagePaths` 会是空的，而删除照样执行 ⇒ 整首曲子的对象全成孤儿，
+    // 界面上一切正常（同一处「静默失败」的另一副面孔）。所以这条必须中止删除。
+    h.deletePreReadErrorTables = ["sheet_music_parts"];
+    renderPage();
+    await waitFor(() => expect(screen.getByText("第五交响曲")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByLabelText("删除 第五交响曲"));
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith("删除失败"));
+    // 删除链一次都没发（行留着，用户重试即可）；对象当然也不动
+    expect(h.deletes).toEqual([]);
+    expect(h.storageRemoves).toEqual([]);
+    expect(screen.getByText("第五交响曲")).toBeInTheDocument();
+  });
+
+  it("预读文件失败（声部读到了）→ 同样中止删除（#387）", async () => {
+    // 与上一条是两个分支：这条是「声部读到了、文件没读到」—— 少了这道判断，
+    // `storagePaths` 为空而删除照跑，整首曲子的对象全成孤儿。
+    h.deletePreReadErrorTables = ["sheet_music_files"];
+    renderPage();
+    await waitFor(() => expect(screen.getByText("第五交响曲")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByLabelText("删除 第五交响曲"));
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith("删除失败"));
+    expect(h.deletes).toEqual([]);
+    expect(h.storageRemoves).toEqual([]);
+    expect(screen.getByText("第五交响曲")).toBeInTheDocument();
   });
 });

@@ -147,6 +147,16 @@ const h = vi.hoisted(() => ({
   uploaded: [] as string[],
   /** 页图对象的上传路径（contentType image/jpeg，见 page-previews.ts），与 PDF 分开记 */
   uploadedPages: [] as string[],
+  /**
+   * `sheet_music_files` 里**已存在的行**（`part_id` + `file_name` + `storage_path`）。
+   *
+   * ⚠️ 这个桩是**有状态**的：`upsert` 成功之后它就是那批新行（真库也是这样）。于是
+   * 「先读旧行、再 upsert、最后删旧对象」这条顺序**可被检测** —— 读被挪到 upsert 之后，
+   * 读回来的是新路径，就没有对象可删了（#387 的回归就是这条顺序）。
+   */
+  existingFileRows: [] as { part_id: string; file_name: string; storage_path: string }[],
+  /** `storage.remove` 每次收到的路径 —— 「被替换掉的旧对象真的被删了」看它 */
+  storageRemoves: [] as string[][],
   /** 置 true 时页图上传返回 error（造「页图失败」路径，#378） */
   failPageUpload: false,
   /** 只想让**某几个文件**的 LLM 失败时用（OCR 文本里含这些名字就失败） */
@@ -239,12 +249,24 @@ vi.mock("@/lib/supabase", () => {
             upsert: async (rows: unknown, opts?: { onConflict?: string }) => {
               h.fileInserts.push(rows);
               h.upsertOnConflict = opts?.onConflict ?? null;
+              // 落库成功就**提交**：后读到的就是新行（`existingFileRows` 的说明）
+              if (!h.upsertError) {
+                h.existingFileRows = (rows as typeof h.existingFileRows).map((r) => ({
+                  part_id: r.part_id,
+                  file_name: r.file_name,
+                  storage_path: r.storage_path,
+                }));
+              }
               return { error: h.upsertError };
             },
             insert: async (rows: unknown) => {
               h.fileInserts.push(rows);
               return { error: null };
             },
+            // 上传路径上的读只有一处：`replacedStoragePaths`（upsert 之前查同名旧行）
+            select: () => ({
+              in: async () => ({ data: h.existingFileRows, error: null }),
+            }),
           };
         }
         return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) };
@@ -262,6 +284,13 @@ vi.mock("@/lib/supabase", () => {
               if (h.failPageUpload) return { error: { message: "页图上传失败（测试）" } };
               h.uploadedPages.push(path);
             }
+            return { error: null };
+          },
+          // `removeSheetMusicObjects` 先 list 页图前缀、再合批 remove。这里的对象一律视为
+          // 「没有页图」（页图那条路在 `storage-cleanup.test.ts` 里单测），只记 remove 的入参。
+          list: async () => ({ data: [], error: null }),
+          remove: async (paths: string[]) => {
+            h.storageRemoves.push(paths);
             return { error: null };
           },
         })),
@@ -447,6 +476,8 @@ beforeEach(() => {
   h.upsertError = null;
   h.uploaded.length = 0;
   h.uploadedPages.length = 0;
+  h.existingFileRows = [];
+  h.storageRemoves.length = 0;
   h.failPageUpload = false;
   h.llmFailFor = [];
   h.llmGate = null;
@@ -2867,5 +2898,69 @@ describe("#326 §5：桩的缺口补齐之后（拼图成功路径 / 客户端�
     await new Promise((r) => setTimeout(r, 60));
     expect(h.ocrStarted).toBe(2); // 第 1 页的两张图，一张都不多
     expect(h.pagesFetched).toEqual([1]); // 第 2 页连取都没取
+  });
+});
+
+/**
+ * 被 `upsert` 替换掉的旧对象必须删掉（#387）。
+ *
+ * 机制：`upsert(rows, { onConflict: "part_id,file_name" })` 对**同一个声部下的同名文件**是
+ * **更新**，那行的 `storage_path` 被改成这次的新对象，而旧对象（PDF + 它的页图）再没有任何
+ * 行引用 —— 详情页的删除路径按行枚举对象，所以它永远删不掉、界面上也没有入口。
+ * dev 桶里实测到的那个孤儿（1 PDF + 10 张页图）就是这么来的。
+ *
+ * ⚠️ 这三条断言合起来钉的是**顺序**：读旧行（upsert 之前）→ upsert → 删旧对象。
+ * 读被挪到 upsert 之后时，读回来的是新路径 ⇒ 没有对象可删 ⇒ 第 1 条红。
+ * 失败路径上删对象时，第 2 条红（那时旧行还可能指着它）。
+ */
+describe("同名文件的旧对象（#387）", () => {
+  it("重传同名文件 → 旧对象在落库成功之后被删", async () => {
+    h.user = { id: "u1" };
+    h.llmReply = {
+      success: true,
+      section: "大提琴",
+      instrument: "大提琴",
+      subParts: [],
+      isFullScore: false,
+    };
+    h.existingFileRows = [
+      { part_id: "part-大提琴", file_name: "大提琴.pdf", storage_path: "score-1/OLD.pdf" },
+    ];
+    await runAnalysis({ names: ["大提琴.pdf"] });
+
+    fireEvent.click(screen.getByText(/确认上传/));
+    await waitFor(() => expect(h.fileInserts.length).toBeGreaterThan(0), { timeout: 10000 });
+
+    // 这次落库指向的是**新**对象（每个落点各自一个，见上面那组用例）
+    const rows = h.fileInserts[0] as Array<Record<string, unknown>>;
+    expect(rows[0]!.storage_path).not.toBe("score-1/OLD.pdf");
+    // 旧对象被删；新对象一个都不许删（upsert 之后它已被新行引用）
+    expect(h.storageRemoves.flat()).toEqual(["score-1/OLD.pdf"]);
+  });
+
+  it("落库失败 → **一个对象都不删**（旧行可能还指着它）", async () => {
+    h.user = { id: "u1" };
+    h.llmReply = {
+      success: true,
+      section: "大提琴",
+      instrument: "大提琴",
+      subParts: [],
+      isFullScore: false,
+    };
+    h.upsertError = { code: "23505", message: "duplicate key" };
+    h.existingFileRows = [
+      { part_id: "part-大提琴", file_name: "大提琴.pdf", storage_path: "score-1/OLD.pdf" },
+    ];
+    await runAnalysis({ names: ["大提琴.pdf"] });
+
+    fireEvent.click(screen.getByText(/确认上传/));
+    // 收尾信号：这一行报错了（落库失败会落在行上），而删除动作是异步跟在后面的 ——
+    // 所以断言前再等一拍，否则「还没删」会被当成「没有删」而**假绿**。
+    // 同一句会渲染两处（折叠行上那句「失败: …」与展开面板里那句）⇒ 用 `getAllByText`
+    await waitFor(() => expect(screen.getAllByText(/已经有同名文件/).length).toBeGreaterThan(0), {
+      timeout: 10000,
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(h.storageRemoves).toEqual([]);
   });
 });

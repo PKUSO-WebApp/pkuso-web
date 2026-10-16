@@ -218,20 +218,26 @@ export default function SheetMusicPage() {
     setDeletingId(score.id);
     try {
       // 先**只查**（不改状态、不删附件）所有声部的 storage 路径：删行之后就查不到了
+      //
+      // ⚠️ 两条预读的 `error` **必须判**：读失败时 `storagePaths` 会是空的，而后面那次删除
+      // 照样执行 —— 整首曲子的对象（连页图）就此全成孤儿，界面上一切正常。宁可报「删除失败」
+      // 让用户重试，也不要在「读不到附件清单」的情况下删行。
       const storagePaths: string[] = [];
-      const { data: parts } = await supabase
+      const { data: parts, error: partsError } = await supabase
         .from("sheet_music_parts")
         .select("id")
         .eq("sheet_music_id", score.id);
+      if (partsError) throw partsError;
 
       if (parts && parts.length > 0) {
-        const { data: files } = await supabase
+        const { data: files, error: filesError } = await supabase
           .from("sheet_music_files")
           .select("storage_path")
           .in(
             "part_id",
             parts.map((p) => p.id),
           );
+        if (filesError) throw filesError;
 
         if (files && files.length > 0) {
           storagePaths.push(...files.map((f) => f.storage_path));

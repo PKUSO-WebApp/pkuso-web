@@ -97,6 +97,14 @@ const h = vi.hoisted(() => ({
   /** 拼图长图的尺寸（`宽x高`），按调用顺序 */
   mosaicSizes: [] as string[],
   /**
+   * 每一次 `ctx.drawImage` 的落点：目标画布尺寸 + 纵偏移。
+   *
+   * 记它是因为**画到哪**和**画布多大**是两回事（jsdom 里 `drawImage` 本身不画像素）：
+   * 画布高度对了、可三条窄带全叠在 `y=0`，长图上就只剩最后一条 —— 而 OCR 桩按收到的
+   * 图高现算坐标，这条用例看起来仍然全绿。只比尺寸会漏掉这一维。
+   */
+  draws: [] as { w: number; h: number; dy: number }[],
+  /**
    * 夹具声明「这一张拼图里有几页」。
    *
    * ⚠️ **不能从收到的那张图反推**（`高 / 每页高`）：那样正好把「画布少画了一条窄带」
@@ -422,6 +430,7 @@ beforeEach(() => {
   h.bandSizes.length = 0;
   h.mosaicCalls = 0;
   h.mosaicSizes.length = 0;
+  h.draws.length = 0;
   h.mosaicBandCount = 3;
   h.mosaicBlankLines = false;
   h.ocrFail = false;
@@ -453,11 +462,16 @@ beforeEach(() => {
   h.llmReplies.length = 0;
   h.llmReplyFor = {};
   const pixels = makePixels();
-  HTMLCanvasElement.prototype.getContext = function () {
+  HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement) {
+    // `this` 是目标画布 —— 尺寸在 `getContext` 之前就设好了（各调用点都这样），
+    // 所以箭头函数里读到的就是「这张画布多大」。第三个实参在四个调用点都表示**目标纵偏移**
+    //（三段式是 `dy`，九段式是 `dy` 之前还有 `dx`），别按实参个数认人。
     return {
       fillStyle: "",
       fillRect: () => {},
-      drawImage: () => {},
+      drawImage: (_img: unknown, _dx: number, dy: number) => {
+        h.draws.push({ w: this.width, h: this.height, dy });
+      },
       getImageData: (_x: number, _y: number, w: number, hh: number) => ({
         data: pixels,
         width: w,
@@ -2697,6 +2711,11 @@ describe("#326 §5：桩的缺口补齐之后（拼图成功路径 / 客户端�
     // ★ 变异：`canvas.height = bandHeight * bitmaps.length` → `* (n - 1)`（少画一条窄带）
     //   ⇒ 长图变 300x72 ⇒ 红（在这一行，报错直接说出少画了多高）。
     expect(h.mosaicSizes).toEqual([`${W}x108`]);
+    // ★ 变异：`ctx.drawImage(bmp, 0, i * bandHeight)` → `ctx.drawImage(bmp, 0, 0)`
+    //   （三条窄带全叠在顶上）⇒ 红在这一行。
+    //   只钉 `canvas.height` 是不够的：画布够高、可画在同一处，长图上照样只剩一条，
+    //   而本用例的其它断言全都看不出来（OCR 桩按收到的图高算坐标，与画了什么无关）。
+    expect(h.draws.filter((d) => d.w === W && d.h === 108).map((d) => d.dy)).toEqual([0, 36, 72]);
 
     // ② 归页的结果，直接看**发给后端的那一份**（分段请求体）。它同时钉两件事：
     //    - 每页拿到的是**自己那条窄带**的文本 —— 不是全归第 1 页、也不是全归最后一页
@@ -2793,6 +2812,22 @@ describe("#326 §5：桩的缺口补齐之后（拼图成功路径 / 客户端�
     //   图从 6 张变 10 张 ⇒ 红（配额是照烧的，这一条钉的就是那 4 张）。
     expect(h.pagesFetched).toEqual([1, 2, 3]);
     expect(h.ocr).toHaveLength(6); // 3 页 × 2 张（标题区 + 整页）
+  });
+
+  it("`Math.min` 的**另一侧**：2 页的谱开着「分析总谱」也只要 2 页，不许去取第 3 页", async () => {
+    h.pages = 2;
+    await runAnalysis({ fullScore: true });
+
+    // 前提：页数是 2（夹具声明的那个数真的通到了界面）
+    expect(screen.getByText(/未识别（2 页）/)).toBeTruthy();
+    // ★ 变异：`Math.min(opts.maxPages, pdf.numPages)` → `opts.maxPages`（丢掉 `numPages` 那一侧）
+    //   ⇒ 取到第 3 页 ⇒ 红。这一侧此前**没有任何用例**：已有的那条是 5 页（`numPages` 更大），
+    //   `Math.min` 被写成 `opts.maxPages` 时它照样绿。
+    //   线上后果不是「多花配额」这么轻：真 pdf.js 的 `getPage(3)` 在 2 页文档上**直接 reject**，
+    //   被渲染循环就地咽成「第 3 页渲染失败」挂在这一行上 —— 一份 2 页的分谱凭空报渲染失败。
+    //   （桩里 `getPage` 对越界页号照样 resolve，所以判据取的是**调用留档**，不是错误文案。）
+    expect(h.pagesFetched).toEqual([1, 2]);
+    expect(h.ocr).toHaveLength(4); // 2 页 × 2 张
   });
 
   it("分析途中关掉弹窗 ⇒ **不再取下一页**（配额照烧，粒度是「页」不是「文件」）", async () => {

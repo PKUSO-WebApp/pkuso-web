@@ -73,7 +73,7 @@ Web 端最重的子系统：上传总谱 PDF → 自动切成各声部分谱。�
 **链路**：PDF → `pdf-render.ts` 渲染页面 → `staff-line.ts` 定位第一条谱线 → `segmentation.ts` 按谱线分段 → `mosaic.ts` 拼图 → `ocr-client.ts` 调后端 `ocr-analyze`（转发 OCR.space）→ `analysis.ts` 调后端 `llm-analyze` 识别声部与乐器 → `sub-parts.ts` / `sort-parts.ts` 整理 → `split-pdf.ts` 切分导出。
 
 - **后端依赖**：`ocr-analyze` 与 `llm-analyze` 两个 Edge Function 都在 `pkuso-backend`，本仓库只调不改
-- **数据表**：`sheet_music` / `sheet_music_files` / `sheet_music_parts` / `sheet_music_distributions` / `sheet_music_analysis_logs`
+- **数据表**：`sheet_music` / `sheet_music_files` / `sheet_music_parts` / `sheet_music_distributions`
 - **已知设计陷阱**（改之前先读）：降级逻辑会掩盖失败、`functions.invoke` 吞错、pdf.js 静默不画、OCR 链路无超时
 - **别用固定阈值**判分谱页边界——换出版社后会大面积判错，判据必须与 OCR+LLM 耦合
 - **渲染对照台**在仓库外的 `.render-harness/`（真实浏览器跑串行 vs 并发）。注意**并发不会让纯 CPU 渲染变快**

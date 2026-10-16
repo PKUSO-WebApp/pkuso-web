@@ -127,8 +127,10 @@ describe("compareFiles", () => {
     //
     // 语义上为什么该同档：`0` 不是合法的分声部号（合法号恒 ≥ 1），所以一行的号是
     // `[0]` 时它和「没有号」一样不可信 —— 应当由**基准序**决定位置，而不是让那个
-    // 垃圾值参与比较。合法号恒 ≥ 1 这个前提只由两个仓库的**应用层**代码保证，
-    // DB 层没有约束（`sub_parts` 是裸 `INTEGER[]`；加 CHECK 的事记在 pkuso-backend 待办）。
+    // 垃圾值参与比较。合法号恒 ≥ 1 这条形态的**库侧**定义在 pkuso-backend 的迁移
+    // `20261017120100_sheet_music_sub_parts_valid_check.sql`（约束
+    // `sheet_music_files_sub_parts_check`，谓词 `public.is_valid_sub_parts`）；
+    // 但本函数吃的是传入的数组而不是库，所以这一档仍要在读取侧钉住。
     expect(
       [...[file("木琴", [0]), file("木琴", [])].sort(compareFiles)].map((f) => f.sub_parts),
     ).toEqual([[0], []]);

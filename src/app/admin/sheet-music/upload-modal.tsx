@@ -22,6 +22,7 @@ import {
 import { fillMissingSubParts, generateFileName } from "./sub-parts";
 import { fileTargetsOf, normalizeExtraSections } from "./sections";
 import { getOrCreatePart } from "./parts-store";
+import { storeSheetMusicFiles } from "./storage-cleanup";
 import { duplicateNames, openForSplit, splitRefusal } from "./split-pdf";
 import type { LlmAnalysis, UploadFile, UploadModalProps, UploadPhase } from "./upload-modal.types";
 import {
@@ -1504,9 +1505,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
           // ⚠️ 顺带一条**行为变更**：约束同时禁止「同一个声部下两份同名的谱」——
           // 这以前是能传上去的（详情页出现两行分不清的同名文件）。撞上时 `insert` 会整批失败，
           // 所以下面把唯一冲突翻译成用户看得懂的话（见 `describeInsertError`）。
-          const { error: dbError } = await supabase
-            .from("sheet_music_files")
-            .upsert(rows, { onConflict: "part_id,file_name" });
+          // ⚠️ upsert 会替换掉同名行的旧对象（#387）：读旧路径 → 落库 → 删旧对象的顺序由它内部保证，别拆开调
+          const { error: dbError } = await storeSheetMusicFiles(rows, paths);
 
           if (dbError) {
             updateFile(i, { status: "error", error: describeInsertError(dbError, targets) });

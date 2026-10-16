@@ -60,6 +60,15 @@ export default function EmailSignaturePage() {
     if (sigSubmittingRef.current || sigSubmitting) return false;
     sigSubmittingRef.current = true;
     setSigSubmitting(true);
+    // ⚠️ textarea 的归属只能有一个裁决者：**写一旦起手，在飞的读整体作废**（序号 +1）。
+    // 读在每个写状态的分支前都比对序号，所以它之后再落地也改不动 sigValue / sigError。
+    // 少了这一行，「先点「重置」再点「保存」」时后到的读会盖掉刚保存的值、或擦掉保存
+    // 失败的文案 —— 页面显示服务端旧值却挂着「签名已保存」，比没有提示更误导。
+    // 必须在本函数**第一个 await 之前**：无 token 那条路径直接 return，放到取 token
+    // 之后它就来不及作废（用例「保存因无 token 被拒」钉的正是这个位置）。
+    // 只需单向（写压读）：读只在用户显式动作下起手，而保存期间这些入口都不可用；
+    // 将来若给读加一条保存期间可用的入口，这里就要补对称的作废。
+    sigFetchSeqRef.current++;
     setSigError(null);
     setSigSuccess(false);
     try {

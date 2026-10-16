@@ -40,21 +40,18 @@ import {
 } from "./row-text";
 import { renderPagesForAnalysis } from "./pdf-render";
 import { uploadPagePreviews } from "./page-previews";
-import {
-  analysisSettled,
-  estimateAnalysisOcrCalls,
-  MAX_PAGES_EXAMINED,
-  pageAttempts,
-  runLlmAnalysis,
-} from "./analysis";
+import { analysisSettled, MAX_PAGES_EXAMINED, pageAttempts, runLlmAnalysis } from "./analysis";
 import {
   ocrBandsForSegmentation,
   requestSegmentation,
   SegmentationCancelled,
 } from "./segmentation-run";
 import { runOcr } from "./ocr-client";
+import { AUTO_SEGMENT_DEFAULT, type SegAutoTarget } from "./auto-segment";
+import { useAutoSegment } from "./use-auto-segment";
 import { FooterBar } from "./components/footer-bar";
 import { FileRow } from "./components/file-row";
+import { PipelineOptions } from "./components/pipeline-options";
 
 /**
  * 乐器名现在是**开放集**：后端 llm-analyze 直接返回中文（`木琴` / `英国管` /
@@ -125,13 +122,15 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    */
   const [analyzeFullScore, setAnalyzeFullScore] = useState(false);
   /**
-   * 「乐谱分段」（#297）：**默认开**。
+   * 「乐谱分段」（#297 / #386）：**默认关**。
    *
-   * 关掉 = 这一批整个跳过分段（一份 116 页的合订谱要烧十几次 OCR）。它是一道**总开关**，
-   * 与 `segEligible` 是「与」的关系而不是替代 —— `segPending` 是按钮文案与执行共用的
-   * 那一个判据，只在 `segEligible` 里加条件会让两者分叉。
+   * 勾上 = 这一批分析完**自动**跑分段（走的就是手点「识别分段」那条路，见 `useAutoSegment`）。
+   *
+   * ⚠️ 加自动之前它是一道**总开关**（不勾 = 连页脚那个按钮都不出现）。现在它只管「自动不自动」，
+   * 按钮的取数面与它**解耦**了 —— 理由见 `AUTO_SEGMENT_DEFAULT` 的 docblock：不分段本来
+   * 就由「不点那个按钮」表达，而把按钮藏起来会让「先分析、看着结果再决定」那条路先被掐掉。
    */
-  const [autoSegment, setAutoSegment] = useState(true);
+  const [autoSegment, setAutoSegment] = useState(AUTO_SEGMENT_DEFAULT);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 关闭弹窗会把本组件卸载（page.tsx 把 selectedScoreId 置 null），但 startAnalysis 的
@@ -641,16 +640,20 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   };
 
   /**
-   * 真正会跑的判据：**总开关开着**、合格、**且还没跑过**。
+   * **手点**「识别分段」会跑的那批行：合格、且还没跑过。
    *
    * 按钮文案与执行**必须共用这一个** —— 分开写的话，已跑完的份数会被重复计入文案，
    * 而再点一次其实一个调用都不发（用户看到的数与真实会烧的数不是同一个判据）。
    *
-   * 「乐谱分段」这道总开关放在**这里**而不是 `segEligible` 里：`segPending` 是按钮文案、
-   * 按钮显隐、`runSegmentation` 的取数三处共用的那一个，加在它就是三处一起生效；加在
-   * `segEligible` 里则会与 `unsplitSegments`（上传守卫，与 `segEligible` 同源）分叉。
+   * ⚠️ **自动路径（#386）不吃这一份**：`segState === "error"` 的行在这里是候选（手点 = 重试），
+   * 而自动路径只挑**从没跑过**的行 —— 否则「失败 → 收尾 → 再失败」是无界循环。
+   * 两条路共用的是**同一个 `startSegmentation`**，差别只在目标集：手点用这里算的，
+   * 自动路径把自己那份传进去（见 `auto-segment.ts`）。
+   *
+   * ⚠️ 判据与 `unsplitSegments`（上传守卫）同源在 `segEligible`：别在这里加行级条件（只影响分段），
+   * 也别在 `segEligible` 里加分段专属的条件（会影响上传守卫）——「三处各抄一份推导式」的跟头栽过。
    */
-  const segPending = (f: UploadFile) => autoSegment && segEligible(f) && f.segState !== "done";
+  const segPending = (f: UploadFile) => segEligible(f) && f.segState !== "done";
   const segTargets = files.map((f, i) => ({ f, i })).filter(({ f }) => segPending(f));
 
   const segCost = estimateTotalOcrCalls(
@@ -662,8 +665,15 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   );
 
   /**
-   * 跑分段（#290 Step 1）。**不自动跑** —— 一份 N 页的合订谱要烧 N 次 OCR，
-   * 用户必须在点火前知道这个数（见 segCost 与界面上的按钮文案）。
+   * 跑分段（#290 Step 1）。**手点与自动（#386）共用这一个入口**：同一份并发池、同一份切点
+   * 推导、同一处拆行、同一处取消与失败落款。差别只在目标集 —— 手点按 `segPending` 现算
+   * （含 `error` 行的重试），自动只挑**从没跑过**的行（理由见 `auto-segment.ts` 文件头）。
+   *
+   * ⚠️ `only` 留着「不传」这一档，所以调用处**别把函数引用直接交给 `onClick`**：那样
+   * MouseEvent 会被当成第一个实参。页脚传的是 `() => startSegmentation()`。
+   *
+   * 点火前让人看见代价这件事没丢：手点是按钮脸上那个「约 M 次 OCR」，自动路径是
+   * **选文件阶段那颗开关**（勾 = 同意为这一批按页数付账，见 `AUTO_SEGMENT_DEFAULT`）。
    *
    * 切点判出来之后**直接拆成 N 行**（用户 2026-09-25 定）：导入者本来就不想读，
    * 所以主路径上不再需要点「确认这 N 段」。
@@ -674,7 +684,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    * 拆分放在**这个函数里**而不是渲染期效果 —— 后者会在用户点「还原为一份」之后
    * 立刻再拆一次（死循环）。
    */
-  const startSegmentation = async () => {
+  const startSegmentation = async (only?: readonly SegAutoTarget[]) => {
     if (segRunningRef.current) return;
     segRunningRef.current = true;
     // state 半（与 ref 同步置位）：ref 挡重复点击，state 让**别的按钮**知道分段在跑 ——
@@ -688,7 +698,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
      */
     const toSplit: { i: number; patch: Partial<UploadFile> }[] = [];
     try {
-      const targets = files.map((f, i) => ({ f, i })).filter(({ f }) => segPending(f));
+      // 手点：按 `segPending` 现算。自动：用它自己那份（只含从没跑过的行）。
+      const targets = only ?? files.map((f, i) => ({ f, i })).filter(({ f }) => segPending(f));
       await runWithConcurrency(targets, PIPELINE_CONCURRENCY, async ({ f, i }) => {
         if (cancelledRef.current) return;
         updateFile(i, { segState: "running", segError: undefined });
@@ -1625,6 +1636,21 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    */
   const allDone = uploadableCount === 0 && doneCount > 0 && !hasAnalyzingFiles;
 
+  /**
+   * 勾了「乐谱分段」时，分析收尾后自动点火（#386）。点火动作就是上面那个 `startSegmentation` ——
+   * 自动路径**不是**第二条路：在飞期间由 `segBusy` 挡住下一拍，关窗后由卸载 + 既有
+   * `cancelledRef` 收手（与手点同源）。判据全在 `auto-segment.ts`，这里只是接线。
+   */
+  useAutoSegment({
+    enabled: autoSegment,
+    phase,
+    filesRef,
+    hasAnalyzingFiles,
+    segBusy,
+    refiningCount,
+    run: startSegmentation,
+  });
+
   return (
     // 用全屏层而不是默认的底部弹窗：20 个文件的结果 + 每行的三个输入框，
     // 底部弹窗装不下（原先列表只有 max-h-80，剩下的全靠页面自己滚）。
@@ -1681,47 +1707,14 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                     </div>
                   ))}
                 </div>
-                {/*
-                 * 左下角两个开关（#297），**必须在点火前可勾** —— 它们改的是这一批会烧掉
-                 * 多少 OCR：「分析总谱」把单份的最坏成本从 1 次抬到 6 次，「乐谱分段」
-                 * 把整批的成本从「份数」抬到「页数」量级。摆在这里而不是设置页，是因为
-                 * 这两个数在导入前才算得出来（要等文件名/页数都定了）。
-                 */}
-                <div className="flex flex-col gap-1.5">
-                  <label className="flex items-center gap-2 text-xs text-text-muted cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={analyzeFullScore}
-                      onChange={(e) => setAnalyzeFullScore(e.target.checked)}
-                      className="accent-primary"
-                    />
-                    <span title="首页读不出乐器时继续往后看几页，用来认出扉页起排的总谱。单份的 OCR 成本随之上升，见下方数字。">
-                      分析总谱
-                    </span>
-                  </label>
-                  <label className="flex items-center gap-2 text-xs text-text-muted cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={autoSegment}
-                      onChange={(e) => setAutoSegment(e.target.checked)}
-                      className="accent-primary"
-                    />
-                    <span title="分析完对多页的合订谱跑窄带 OCR，把各声部的位置找出来。整批的成本按页数算。">
-                      乐谱分段
-                    </span>
-                  </label>
-                  {/*
-                   * 点火前的代价（#290 的验收标准之一：调用次数在导入前可见）。
-                   *
-                   * **报上界而不是「约」** —— 这个数由 `analysis.ts` 的 `estimateAnalysisOcrCalls` 按常量算出、
-                   * 不依赖语料，写成确定的数才是真的；分段那边报「约」是因为每页窄带多大
-                   * 要渲染完才知道（见 `segmentation.ts` 的 `estimateOcrCalls`，那是另一件事）。
-                   */}
-                  <p className="text-label text-text-muted" data-testid="analysis-ocr-cost">
-                    分析最多 {estimateAnalysisOcrCalls(files.length, analyzeFullScore)} 次 OCR
-                    {analyzeFullScore ? "（多数文件 1 次）" : ""}
-                  </p>
-                </div>
+                {/* 开关块抽在 `components/pipeline-options.tsx`：它不进操作行（#182 靠右下角） */}
+                <PipelineOptions
+                  fileCount={files.length}
+                  analyzeFullScore={analyzeFullScore}
+                  onAnalyzeFullScoreChange={setAnalyzeFullScore}
+                  autoSegment={autoSegment}
+                  onAutoSegmentChange={setAutoSegment}
+                />
                 {/*
                  * ⚠️ 开关块**必须在操作行之外**（上面那一行），不能塞进来做左右两端分布：
                  * CLAUDE.md #182 定的是操作行一律 `justify-end` 靠右下角、禁止左右两端分布，
@@ -1796,7 +1789,9 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
               segTargets={segTargets}
               segCost={segCost}
               onClose={onClose}
-              onStartSegmentation={startSegmentation}
+              // ⚠️ 这层包装不是多余的：`startSegmentation` 现在收一个可选的目标集参数，
+              // 直接传函数引用的话 onClick 会把 MouseEvent 当目标集塞进去。
+              onStartSegmentation={() => startSegmentation()}
               onConfirmUpload={confirmUpload}
             />
           </>

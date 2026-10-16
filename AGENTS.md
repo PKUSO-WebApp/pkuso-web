@@ -70,7 +70,7 @@ git config core.hooksPath .githooks     # 每个克隆一次，没法提交
 
 Web 端最重的子系统：上传总谱 PDF → 自动切成各声部分谱。代码全在 `src/app/admin/sheet-music/`。
 
-**链路**：PDF → `pdf-render.ts` 渲染页面 → `staff-line.ts` 定位第一条谱线 → `segmentation.ts` 按谱线分段 → `mosaic.ts` 拼图 → `ocr-client.ts` 调后端 `ocr-analyze`（转发 OCR.space）→ `analysis.ts` 调后端 `llm-analyze` 识别声部与乐器 → `sub-parts.ts` / `sort-parts.ts` 整理 → `split-pdf.ts` 切分导出。
+**链路**：PDF → `pdf-render.ts` 渲染页面 → `staff-line.ts` 定位第一条谱线（倾斜页交给 `staff-line-tilt.ts` 的斜率跟随） → `segmentation.ts` 按谱线分段 → `mosaic.ts` 拼图 → `ocr-client.ts` 调后端 `ocr-analyze`（转发 OCR.space）→ `analysis.ts` 调后端 `llm-analyze` 识别声部与乐器 → `sub-parts.ts` / `sort-parts.ts` 整理 → `split-pdf.ts` 切分导出。
 
 - **后端依赖**：`ocr-analyze` 与 `llm-analyze` 两个 Edge Function 都在 `pkuso-backend`，本仓库只调不改
 - **数据表**：`sheet_music` / `sheet_music_files` / `sheet_music_parts` / `sheet_music_distributions`

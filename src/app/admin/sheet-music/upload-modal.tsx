@@ -39,13 +39,7 @@ import {
 } from "./row-text";
 import { renderPagesForAnalysis } from "./pdf-render";
 import { uploadPagePreviews } from "./page-previews";
-import {
-  analysisSettled,
-  estimateAnalysisOcrCalls,
-  MAX_PAGES_EXAMINED,
-  pageAttempts,
-  runLlmAnalysis,
-} from "./analysis";
+import { analysisSettled, MAX_PAGES_EXAMINED, pageAttempts, runLlmAnalysis } from "./analysis";
 import {
   ocrBandsForSegmentation,
   requestSegmentation,
@@ -54,6 +48,9 @@ import {
 import { runOcr } from "./ocr-client";
 import { FooterBar } from "./components/footer-bar";
 import { FileRow } from "./components/file-row";
+import { PipelineOptions } from "./components/pipeline-options";
+import { segAwaiting } from "./auto-upload";
+import { useAutoUploadPref, useAutoUploadTrigger } from "./use-auto-upload";
 
 /**
  * 乐器名现在是**开放集**：后端 llm-analyze 直接返回中文（`木琴` / `英国管` /
@@ -131,6 +128,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    * 那一个判据，只在 `segEligible` 里加条件会让两者分叉。
    */
   const [autoSegment, setAutoSegment] = useState(true);
+  /** 「分析完直接上传」（#386）：**默认关**，偏好与点火都在 `./use-auto-upload.ts` */
+  const [autoUpload, changeAutoUpload] = useAutoUploadPref();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 关闭弹窗会把本组件卸载（page.tsx 把 selectedScoreId 置 null），但 startAnalysis 的
@@ -648,8 +647,11 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    * 「乐谱分段」这道总开关放在**这里**而不是 `segEligible` 里：`segPending` 是按钮文案、
    * 按钮显隐、`runSegmentation` 的取数三处共用的那一个，加在它就是三处一起生效；加在
    * `segEligible` 里则会与 `unsplitSegments`（上传守卫，与 `segEligible` 同源）分叉。
+   *
+   * 「够格、且还没跑」那半（不用开关）走 `auto-upload.ts` 的 `segAwaiting` —— #386 的
+   * 点火闸门要用的正是同一件事（分段开着而某几份没跑时不自动传），判据只留一份。
    */
-  const segPending = (f: UploadFile) => autoSegment && segEligible(f) && f.segState !== "done";
+  const segPending = (f: UploadFile) => autoSegment && segAwaiting(f);
   const segTargets = files.map((f, i) => ({ f, i })).filter(({ f }) => segPending(f));
 
   const segCost = estimateTotalOcrCalls(
@@ -1622,6 +1624,26 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    */
   const allDone = uploadableCount === 0 && doneCount > 0 && !hasAnalyzingFiles;
 
+  /**
+   * 「分析完直接上传」（#386）的点火点 —— **只有这一处**。
+   *
+   * ⚠️ 它**必须**排在上面那几个 `const`（`hasAnalyzingFiles` / `segBusy` /
+   * `refiningCount`）**之后**：这几个值在**渲染期**就被取走了，写在声明之前会撞上 TDZ
+   *（`Cannot access 'x' before initialization`，整页崩），而 `tsc` 报不出这种错
+   *（同 `row-text.ts` 里 `isFullScoreRow` 那段记着的事故）。
+   * 评估时机、依赖里为什么没有 `files`、为什么不会传两次 —— 都在 `use-auto-upload.ts`。
+   */
+  useAutoUploadTrigger({
+    enabled: autoUpload,
+    segmentEnabled: autoSegment,
+    confirmUpload,
+    filesRef,
+    phase,
+    hasAnalyzingFiles,
+    segBusy,
+    refiningCount,
+  });
+
   return (
     // 用全屏层而不是默认的底部弹窗：20 个文件的结果 + 每行的三个输入框，
     // 底部弹窗装不下（原先列表只有 max-h-80，剩下的全靠页面自己滚）。
@@ -1679,51 +1701,19 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                   ))}
                 </div>
                 {/*
-                 * 左下角两个开关（#297），**必须在点火前可勾** —— 它们改的是这一批会烧掉
-                 * 多少 OCR：「分析总谱」把单份的最坏成本从 1 次抬到 6 次，「乐谱分段」
-                 * 把整批的成本从「份数」抬到「页数」量级。摆在这里而不是设置页，是因为
-                 * 这两个数在导入前才算得出来（要等文件名/页数都定了）。
+                 * 点火前要勾的三个开关（#297 的两个 + #386 的「分析完直接上传」）。
+                 * ⚠️ 它必须留在**操作行之外**（本块在下一行之外），不能塞进操作行做左右
+                 * 两端分布 —— 理由见 `PipelineOptions` 的 docblock。
                  */}
-                <div className="flex flex-col gap-1.5">
-                  <label className="flex items-center gap-2 text-xs text-text-muted cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={analyzeFullScore}
-                      onChange={(e) => setAnalyzeFullScore(e.target.checked)}
-                      className="accent-primary"
-                    />
-                    <span title="首页读不出乐器时继续往后看几页，用来认出扉页起排的总谱。单份的 OCR 成本随之上升，见下方数字。">
-                      分析总谱
-                    </span>
-                  </label>
-                  <label className="flex items-center gap-2 text-xs text-text-muted cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={autoSegment}
-                      onChange={(e) => setAutoSegment(e.target.checked)}
-                      className="accent-primary"
-                    />
-                    <span title="分析完对多页的合订谱跑窄带 OCR，把各声部的位置找出来。整批的成本按页数算。">
-                      乐谱分段
-                    </span>
-                  </label>
-                  {/*
-                   * 点火前的代价（#290 的验收标准之一：调用次数在导入前可见）。
-                   *
-                   * **报上界而不是「约」** —— 这个数由 `analysis.ts` 的 `estimateAnalysisOcrCalls` 按常量算出、
-                   * 不依赖语料，写成确定的数才是真的；分段那边报「约」是因为每页窄带多大
-                   * 要渲染完才知道（见 `segmentation.ts` 的 `estimateOcrCalls`，那是另一件事）。
-                   */}
-                  <p className="text-label text-text-muted" data-testid="analysis-ocr-cost">
-                    分析最多 {estimateAnalysisOcrCalls(files.length, analyzeFullScore)} 次 OCR
-                    {analyzeFullScore ? "（多数文件 1 次）" : ""}
-                  </p>
-                </div>
-                {/*
-                 * ⚠️ 开关块**必须在操作行之外**（上面那一行），不能塞进来做左右两端分布：
-                 * CLAUDE.md #182 定的是操作行一律 `justify-end` 靠右下角、禁止左右两端分布，
-                 * 而窄屏上那么放还会让按钮组吃掉小半行，把左边的成本行挤成好几行。
-                 */}
+                <PipelineOptions
+                  fileCount={files.length}
+                  analyzeFullScore={analyzeFullScore}
+                  onAnalyzeFullScoreChange={setAnalyzeFullScore}
+                  autoSegment={autoSegment}
+                  onAutoSegmentChange={setAutoSegment}
+                  autoUpload={autoUpload}
+                  onAutoUploadChange={changeAutoUpload}
+                />
                 <div className="flex justify-end gap-3">
                   <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">
                     取消

@@ -54,6 +54,10 @@ export function FooterBar({
       {/* 分段**不自动跑**：一份 N 页的合订谱要烧 N 次 OCR，而免费档是 500 次/天/IP。
           所以这个按钮把代价写在脸上（#290 验收标准：调用次数在导入前可见）。
           ⚠️ 不打 `mr-auto`：操作行按 #182 一律靠右下角，不许左右两端分布。 */}
+      {/* `!allDone` 只在一个**瞬态窗口**里为假：部分行已 `done`、另一行还在上传队列里
+          （那时 `phase === "uploading"`，下面 disabled 已经挡住按钮）。保留它是因为
+          「传完之后还显示分段按钮」是一个不合理状态 —— 分段必须发生在上传之前，
+          否则那些行一旦 `done` 就再也不能切了。别因为「测试构造不出它」把它当死代码删掉。 */}
       {segTargets.length > 0 && !allDone && (
         <button
           onClick={onStartSegmentation}

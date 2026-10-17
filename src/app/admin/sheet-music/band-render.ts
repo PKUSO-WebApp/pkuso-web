@@ -75,7 +75,7 @@ export async function renderBandThumbs(
     .sort((a, b) => a - b);
   if (want.length === 0) return out;
 
-  // 取消就一页都不开（分辨率阶段也一样）；null 只在取消时出现
+  // 取消就一页都不开（测量阶段也一样）；null 只在取消时出现
   const bandPct = await resolveBandPct(file, opts);
   if (bandPct === null) return out;
 

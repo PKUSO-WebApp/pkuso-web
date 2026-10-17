@@ -166,11 +166,9 @@ describe("renderBandThumbs", () => {
   it("页号越界 / 非法 ⇒ 静默跳过，出图阶段不取它们", async () => {
     // 0（不可能有）、4（超过 3 页）、1.5（不是整数）都该在 `want` 里被挡掉
     const out = await renderBandThumbs(aFile(), [0, 4, 1.5, 3], { isCancelled: () => false });
-    expect(h.getPageCalls).not.toContain(0);
-    expect(h.getPageCalls).not.toContain(4);
-    expect(h.getPageCalls).not.toContain(1.5);
-    // 采样阶段会取 1/2/3；之后只应再取一次 3
-    expect(h.getPageCalls.slice(-1)).toEqual([3]);
+    // 采样阶段取 1/2/3，出图阶段只取 3；0 / 4 / 1.5 从头到尾都没被取过。
+    // 钉全序列而不是逐个 not.toContain：后者漏掉「顺序或重复次数变了」也能绿。
+    expect(h.getPageCalls).toEqual([1, 2, 3, 3]);
     expect([...out.keys()]).toEqual([3]);
   });
 

@@ -34,6 +34,7 @@ import { findFirstStaffLineInImage } from "./staff-line-tilt";
  * 两处对「第一条谱线在哪」不会各说各话。
  */
 async function firstStaffRatio(page: PDFPageProxy) {
+  // 这里只用几何（viewport / 画布尺寸），bandHeight 不参与测量 ⇒ bandPct 传 0。
   const { viewport, canvasWidth, canvasHeight } = bandPlan(page, 0);
   const canvas = document.createElement("canvas");
   canvas.width = canvasWidth;

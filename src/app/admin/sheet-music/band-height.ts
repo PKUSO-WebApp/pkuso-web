@@ -121,12 +121,12 @@ export interface BandPctResult {
  * 收成**一份文档唯一**的窄带高度。
  *
  * 决策顺序（每一步都有测试钉住）：
- * 1. 有效读数（有限、非负）少于 `BAND_MIN_DETECTED` → 25%；
+ * 1. 有效读数（有限、>0 且 ≤1）少于 `BAND_MIN_DETECTED` → 25%；
  * 2. 取 max；
  * 3. max 在 `[BAND_PCT_MIN, BAND_PCT_MAX]` 之外 → 25%；
  * 4. 否则用 max。
  *
- * 无效输入（NaN / Infinity / 负数 / >1）按「这一页没测到」处理，不是
+ * 无效输入（NaN / Infinity / 负数 / 0 / >1）按「这一页没测到」处理，不是
  * 让整份文档失败 —— 单页异常不该把一份好文档推去兜底以外的状态。
  */
 export function decideBandPct(staffPcts: ReadonlyArray<number | null | undefined>): BandPctResult {

@@ -90,6 +90,21 @@ export function duplicateNames(names: string[]): number[] {
   return dup;
 }
 
+/**
+ * 同一组里**所有**与别人重名的下标（含第一次出现的那个）。
+ *
+ * 与 `duplicateNames` 的差别只在界面：拦上传只需要知道「有没有重名」，而提示要对称 ——
+ * 只标后出现的那几份，用户会以为第一份没问题，改了被标的也未必解得开。
+ */
+export function allDuplicateNames(names: string[]): number[] {
+  const counts = new Map<string, number>();
+  for (const n of names) {
+    const key = n.trim();
+    if (key !== "") counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return names.flatMap((n, i) => ((counts.get(n.trim()) ?? 0) > 1 ? [i] : []));
+}
+
 /** 一份可以切分的源文件。**同一份只开一次**，切完丢掉引用即释放 */
 export interface SplitSource {
   pageCount: number;

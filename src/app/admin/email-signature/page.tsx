@@ -132,7 +132,7 @@ export default function EmailSignaturePage() {
                 rows={9}
                 maxLength={EMAIL_SIGNATURE_MAX_LENGTH}
                 disabled={sigSubmitting}
-                className="w-full resize-none rounded-xl border border-border bg-muted px-3 py-3 text-xs leading-[1.6] text-text outline-none focus:border-text-muted"
+                className="w-full rounded-xl border border-border bg-muted px-3 py-3 text-xs leading-[1.6] text-text outline-none focus:border-text-muted"
                 placeholder="如：北京大学交响乐团管理团队"
               />
               <div className="flex items-center justify-between">

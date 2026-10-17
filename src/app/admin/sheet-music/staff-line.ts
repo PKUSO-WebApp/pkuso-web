@@ -72,8 +72,13 @@ export const GAP_MAX_PCT = 0.015;
 /** 组内间距的 max/min 容差（扫描畸变下放宽） */
 const GAP_TOLERANCE = 1.6;
 
-/** 裁切上限：第一条谱线超过此页高比例就不裁（标题区已接近半页，裁切失去意义） */
-const MAX_CROP_PCT = 0.33;
+/**
+ * 裁切上限：第一条谱线超过此页高比例就不裁（标题区已接近半页，裁切失去意义）。
+ *
+ * 导出是给界面文案用的（`row-text.ts` 的 `cropNoteOf`）：那句「超过 N% 上限」必须
+ * 由这个常量算出来，不能再抄一份字面量 —— 两份拷贝不会一起改。
+ */
+export const MAX_CROP_PCT = 0.33;
 
 /** 裁切条最小高度：低于此值说明首页直接进音乐，前面没有标题区 */
 const MIN_STRIP_HEIGHT = 80;

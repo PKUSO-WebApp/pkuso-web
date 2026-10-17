@@ -23,7 +23,7 @@ import { fillMissingSubParts, generateFileName } from "./sub-parts";
 import { fileTargetsOf, normalizeExtraSections } from "./sections";
 import { getOrCreatePart } from "./parts-store";
 import { storeSheetMusicFiles } from "./storage-cleanup";
-import { duplicateNames, openForSplit, splitRefusal } from "./split-pdf";
+import { allDuplicateNames, openForSplit, splitRefusal } from "./split-pdf";
 import type { LlmAnalysis, UploadFile, UploadModalProps, UploadPhase } from "./upload-modal.types";
 import {
   analysisSummary,
@@ -33,8 +33,6 @@ import {
   segmentsOf,
   startTextOf,
   startsOf,
-  statusColor,
-  statusText,
   unsplitSegments,
   uploadBlocker,
 } from "./row-text";
@@ -51,6 +49,7 @@ import { AUTO_SEGMENT_DEFAULT, type SegAutoTarget } from "./auto-segment";
 import { useAutoSegment } from "./use-auto-segment";
 import { FooterBar } from "./components/footer-bar";
 import { FileRow } from "./components/file-row";
+import { FileTitle } from "./components/file-name-link";
 import { PipelineOptions } from "./components/pipeline-options";
 
 /**
@@ -561,6 +560,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             ...(got.subParts.length > 0
               ? {
                   subPartsGuess: got.subParts,
+                  subPartsAutoFilled: false,
                   subPartsRaw: got.subPartsRaw,
                   subPartsOverCap: got.subPartsOverCap,
                 }
@@ -891,6 +891,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    */
   const splitIntoSegments = (index: number, freshRow?: UploadFile) => {
     const f = freshRow ?? files[index];
+    // 第 1 段继承的排查字段：送检图来自源文件的 `sourcePage`，页号必须跟着一起继承
+    const { ocrText, preview, sourcePage, cropNote, warning } = f;
     const segments = segmentsOf(f);
     if (segments.length < 2) return;
     const refusal = splitRefusal({
@@ -955,9 +957,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         segTotal: segments.length,
       },
       // 分析阶段的调试信息只挂在第 1 段上：4 份重复的 OCR 文本/预览图没有意义
-      ...(k === 0
-        ? { ocrText: f.ocrText, preview: f.preview, cropNote: f.cropNote, warning: f.warning }
-        : {}),
+      ...(k === 0 ? { ocrText, preview, sourcePage, cropNote, warning } : {}),
     }));
 
     // 快照留给「还原为一份」：拆错了要能退回来，否则用户只能关掉弹窗重来
@@ -1074,6 +1074,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
             abstainReason: got.abstainReason,
             // 空数组也照写 —— 「这一段没有号」是完整答案（见 docblock）
             subPartsGuess: got.subParts,
+            // 这一段自己的识别结果（哪怕是空数组）覆盖了之前的推算，标记随之清掉
+            subPartsAutoFilled: false,
             subPartsRaw: got.subPartsRaw,
             subPartsOverCap: got.subPartsOverCap,
             // 这一段自己识别成功了 → 清掉上一次的失败提示（可能来自更早的一次切分）
@@ -1158,7 +1160,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
         // `file_name` / `sub_parts` 落一个用户从没确认过的号，界面上还看不出是猜的。
         cur.sectionEdit === cur.sectionGuess &&
         cur.instrumentEdit === cur.instrumentGuess
-          ? { subPartsGuess: parts }
+          ? { subPartsGuess: parts, subPartsAutoFilled: true }
           : {},
       );
     });
@@ -1201,7 +1203,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
       const e = editsOf(f);
       return generateFileName(e.instrument, e.subParts);
     });
-    return new Set(duplicateNames(names).map((k) => idx[k].i));
+    return new Set(allDuplicateNames(names).map((k) => idx[k].i));
   };
 
   // 三个输入 handler 都顺手清 `error`：那是**上一次**拦截留下的红字，而它只在
@@ -1693,8 +1695,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                     >
                       <div className="flex items-center gap-2 flex-1 min-w-0">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm text-text truncate">{f.originalName}</p>
-                          <p className={`text-xs ${statusColor(f)}`}>{statusText(f)}</p>
+                          <FileTitle f={f} />
                         </div>
                       </div>
                       <button

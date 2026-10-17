@@ -16,8 +16,8 @@ import {
   OTHER_INSTRUMENT_GROUP,
 } from "@/constants/instruments";
 import { type FileTarget, fileTargetsOf, normalizeExtraSections } from "./sections";
-import { formatSubParts, MAX_SUB_PARTS, parseSubPartsInput } from "./sub-parts";
-import type { CropDecision } from "./staff-line";
+import { autoFilledNotice, formatSubParts, MAX_SUB_PARTS, parseSubPartsInput } from "./sub-parts";
+import { MAX_CROP_PCT, type CropDecision } from "./staff-line";
 import type { UploadFile } from "./upload-modal.types";
 import { findUnsafeInName, unsafeNameMessage } from "./unsafe-name";
 
@@ -269,7 +269,7 @@ export function cropNoteOf(crop: CropDecision, cropped: boolean): string {
     case "no-staff":
       return "未裁切（未检测到谱线）";
     case "too-tall":
-      return `未裁切（标题区达页高 ${(crop.staffPct * 100).toFixed(1)}%，超过 33% 上限）`;
+      return `未裁切（标题区达页高 ${(crop.staffPct * 100).toFixed(1)}%，超过 ${MAX_CROP_PCT * 100}% 上限）`;
     case "too-thin":
       return `未裁切（标题区仅 ${crop.height}px，首页直接进音乐）`;
   }
@@ -440,7 +440,7 @@ export const subPartsNotice = (f: UploadFile) => {
   //（`editsOf` 在那里把 invalid / overCap 都当空），而分声部框此时被**强制显示成「总谱」并禁用**
   //（见 `file-row`）—— 读原始字段会让行上挂着一句指着**用户看不见也改不了**的值的提示。
   // 可达路径与 `needsNoSubPartsButton` 的 docblock 那条同源：段行「重试」回总谱。
-  const { subPartsInvalid, subPartsOverCap } = editsOf(f);
+  const { subParts, subPartsInvalid, subPartsOverCap } = editsOf(f);
   if (f.subPartsEditText !== undefined) {
     // ⚠️ 与 uploadBlocker 返回的是同一句话时**让位** —— 否则点一次「确认上传」
     // 会在行里出现两行一模一样的提示（一行黄、一行红），看着像两个不同的问题。
@@ -468,7 +468,7 @@ export const subPartsNotice = (f: UploadFile) => {
     const msg = unreadMessage(unread);
     return f.error === msg ? "" : msg;
   }
-  return "";
+  return autoFilledNotice(f.subPartsAutoFilled, subParts);
 };
 
 /**

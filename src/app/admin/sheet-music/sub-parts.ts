@@ -166,6 +166,18 @@ export function overSubPartsCap(v: unknown): number | null {
 }
 
 /**
+ * 「这几个号是补出来的」那句可见标记（空串 = 不显示）。
+ *
+ * 补号的条件很保守（见 `fillMissingSubParts`），但它仍然是一次**推算**：界面上若不标出来，
+ * 那一格与「这一段自己的页眉读出的号」长得一模一样，用户会把它当成识别结果。
+ * 库与后端契约都没有变 —— `UploadFile.subPartsAutoFilled` 只是行状态的呈现标记。
+ */
+export function autoFilledNotice(autoFilled: boolean | undefined, subParts: number[]): string {
+  if (!autoFilled || subParts.length === 0) return "";
+  return "分声部号是按其它段推算补上的（这一段没读出号）—— 请核对";
+}
+
+/**
  * 段级补号：某一段自己的文本里**没读出号**时，用**其它段**做减法补出来。
  *
  * 例：整份读出的号是 `[1,2]`，第 1 段的页眉读出 `[1]`、第 2 段的页眉上没印号

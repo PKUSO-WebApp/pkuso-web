@@ -151,7 +151,10 @@ export default function EmailSettingsPage() {
     setSaving(true);
     setError(null);
     setSuccess(false);
-
+    // ⚠️ 写一旦起手，在飞的读整体作废（与 `/admin/email-signature` 同形）。
+    // 读在每个落地分支前都比对序号，所以它之后再回来也改不动 templates / signature / error。
+    // 必须在本函数**第一个 await 之前**：无 token 那条路径直接分叉，挪到取 token 之后就来不及。
+    fetchSeqRef.current++;
     try {
       if (activeTab === "signature") {
         await saveSetting(EMAIL_SIGNATURE_KEY, signature);

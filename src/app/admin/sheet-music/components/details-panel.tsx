@@ -1,6 +1,7 @@
 "use client";
 
 import type { UploadFile } from "../upload-modal.types";
+import { MAX_PAGES_EXAMINED } from "../analysis";
 
 /**
  * 行卡片展开后的**排查面板**：送检图像、裁切说明、弃权原因、warning、OCR 文本、LLM 结果。
@@ -51,6 +52,13 @@ export function DetailsPanel({ f }: DetailsPanelProps) {
         <div>
           <span className="font-medium text-text-muted">LLM 结果：</span>
           <p className="mt-1 text-text">{f.llmResult}</p>
+          {/* 分析页游走上界（不含分段行：段级识别只读本段首页，不按页游走）。
+              N 取自常量，别再抄一份字面量。 */}
+          {!f.splitOf && f.pageCount && f.pageCount > MAX_PAGES_EXAMINED && (
+            <p className="mt-1 text-text-muted">
+              分析最多只看前 {MAX_PAGES_EXAMINED} 页（共 {f.pageCount} 页）
+            </p>
+          )}
         </div>
       )}
     </div>

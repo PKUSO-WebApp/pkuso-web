@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  allDuplicateNames,
   duplicateNames,
   openForSplit,
   pageIndices,
@@ -108,6 +109,13 @@ describe("同组重名（切出来的每一份必须靠文件名能区分）", (
 
   it("去掉首尾空白后比较（用户多敲一个空格不该算成两个名字）", () => {
     expect(duplicateNames(["圆号1.pdf", " 圆号1.pdf "])).toEqual([1]);
+    // 界面用的对称版本：**所有**重名成员（含第一次出现的那个）都要被标出来，
+    // 否则用户改了后出现的那份，第一份仍可能撞名、且界面上看不出问题。
+    expect(allDuplicateNames(["圆号.pdf", "圆号.pdf", "圆号.pdf"])).toEqual([0, 1, 2]);
+    expect(allDuplicateNames(["圆号1.pdf", "圆号2.pdf", "圆号1.pdf"])).toEqual([0, 2]);
+    expect(allDuplicateNames(["圆号1.pdf", "圆号2.pdf"])).toEqual([]);
+    // 空名字不参与（与 duplicateNames 同一条：空名由 uploadBlocker 另外拦）
+    expect(allDuplicateNames(["", "", "圆号1.pdf"])).toEqual([]);
   });
 });
 

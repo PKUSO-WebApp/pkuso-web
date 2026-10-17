@@ -17,6 +17,7 @@ import {
   OTHER_INSTRUMENT_GROUP,
 } from "@/constants/instruments";
 import type { UploadFile, UploadPhase } from "../upload-modal.types";
+import { FileTitle } from "./file-name-link";
 import {
   canHaveExtraSections,
   costOf,
@@ -34,8 +35,6 @@ import {
   segmentsOf,
   startTextOf,
   startsOf,
-  statusColor,
-  statusText,
   subPartsNotice,
   unsplitSegments,
 } from "../row-text";
@@ -123,8 +122,7 @@ export function FileRow({
             <span className="w-4 shrink-0" />
           )}
           <div className="flex-1 min-w-0">
-            <p className="text-sm text-text truncate">{f.originalName}</p>
-            <p className={`text-xs ${statusColor(f)}`}>{statusText(f)}</p>
+            <FileTitle f={f} />
           </div>
           {f.status === "analyzing" && (
             <span className="shrink-0 animate-spin text-primary">⏳</span>

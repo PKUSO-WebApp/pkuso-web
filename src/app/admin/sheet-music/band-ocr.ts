@@ -27,7 +27,7 @@ export async function composeMosaic(
   const bitmaps: ImageBitmap[] = [];
   try {
     for (const b of bands) bitmaps.push(await createImageBitmap(b));
-    // ⚠️ **本组必须等高**。`bandH` 是**逐页**算的（`round(canvas.height * 0.12)`，而 canvas
+    // ⚠️ **本组必须等高**。`bandH` 是**逐页**算的（`round(canvas.height * 0.15)`，而 canvas
     // 高度取决于该页自己的尺寸与缩放）—— 同一份合订谱里混了横排插页 / 不同扫描仪的页时
     // 就不等高。那时叠图步长（第一条的高）与归页除数（`renderNarrowBands` 返回的高）会对不上，
     // 后果是**把两页的文字并进一页、另一页留空** —— 看起来完全合法的错答案。
@@ -105,9 +105,9 @@ export async function ocrMosaic(
  *
  * ## 为什么需要它
  *
- * 窄带是**固定的几何裁切**（页高 12%，见 `segmentation-run.ts` 的 `BAND_PCT`），而页眉/标题块
+ * 窄带是**固定的几何裁切**（页高 15%，见 `band-render.ts` 的 `BAND_PCT`），而页眉/标题块
  * 在页面上的纵向位置由排版决定。**居中排版的标题页**（整页只在页面中部印一行大字）就是那种
- * 必然整块落在 12% 之下的页 —— 窄带渲染出来是一张白纸，OCR 返回空串。
+ * 必然整块落在 15% 之下的页 —— 窄带渲染出来是一张白纸，OCR 返回空串。
  *
  * 那条空串会一路传到模型那里：后端 `segment-parts` 把它渲染成「第 N 页: （空白）」，
  * 于是模型**把「窄带没取到」读成「这一页没有文字」**。第 1 页上这一读错的代价最大 ——

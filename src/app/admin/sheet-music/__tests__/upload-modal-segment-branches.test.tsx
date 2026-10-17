@@ -375,11 +375,11 @@ describe("段卡片剩下的那几支（pkuso-web#317 §24.2 沙箱场景里本�
   });
 });
 
-// ⚠️ 这一段钉的是 `DetailsPanel` 里那条三元的**「无值」半边**（`送检图像（第 N 页）：` 的省略形式）。
-// 它在普通行上**造不出来**（那一行的 `sourcePage` 恒有值），只有拆段后的第 1 段能造出来 ——
-// 所以它落在本文件（拆段机制在这边）而不是 `upload-modal-details-footer.test.tsx`。
-describe("拆段后的第 1 段：继承 `preview`，但**不**继承 `sourcePage`", () => {
-  it("第 1 段的面板上「送检图像」后面**没有**页号（同一场景里源行是带的）", async () => {
+// ⚠️ 这一段钉的是 `splitIntoSegments` 的 k === 0 继承清单：第 1 段继承源行的
+// `preview`，而送检图就是源文件的那一页 —— **`sourcePage` 必须一起继承**，否则面板
+// 会指着同一张图却不说是第几页（用户没法把图和谱子对上）。
+describe("拆段后的第 1 段：继承 `preview` 与 `sourcePage`", () => {
+  it("第 1 段的面板上「送检图像」仍带源图的页号（与源行一致）", async () => {
     h.segmentCuts = [2];
     h.llmReplies = [
       {
@@ -408,13 +408,49 @@ describe("拆段后的第 1 段：继承 `preview`，但**不**继承 `sourcePag
     // 同步点：两段各自的识别落地（`expandedIdx` 留在第 0 位上，面板跟着落到新的第 1 段）
     await waitFor(() => expect(screen.getAllByText(/已识别/)).toHaveLength(2), { timeout: 10000 });
 
-    // 第 1 段继承了 `preview`/`ocrText`/`cropNote`（`splitIntoSegments` 的 k === 0 那一份），
-    // 但**没有** `sourcePage` ⇒ 标签退化成不带页号的那一支。
-    // ★ 变异：把三元换成恒真（`送检图像（第 {f.sourcePage} 页）：`）⇒ 这里渲染出的是
-    //   「送检图像（第 页）：」（JSX 里 `{undefined}` 渲染为空，不印 "undefined"）⇒ 变红。
-    //   ⚠️ 这是全仓唯一走到「有 `preview`、无 `sourcePage`」的路径：普通行上两者同时写入，
-    //   造不出这一格 —— 所以这条用例是那半边唯一的守卫，别把它当成重复覆盖删掉。
+    // 第 1 段继承了 `preview`/`sourcePage`/`ocrText`/`cropNote`（k === 0 那一份）。
+    // ★ 变异：从继承对象里删掉 `sourcePage` ⇒ 标签退化成「送检图像：」⇒ 变红。
     // ★ 变异：`{f.preview && (…)}` 整块删掉 ⇒ 这句跟着没 ⇒ 变红（与源行那条同一个探针）。
-    expect(screen.getByText("送检图像：")).toBeTruthy();
+    expect(screen.getByText("送检图像（第 1 页）：")).toBeTruthy();
+  });
+});
+
+describe("组级推算补出来的号：行上必须标出是推算的", () => {
+  it("补出来的那一段出现标记，自己读出号的那一段没有", async () => {
+    h.segmentCuts = [2];
+    h.llmReplies = [
+      {
+        success: true,
+        section: "圆号",
+        instrument: "F调圆号",
+        subParts: [1, 2],
+        isFullScore: false,
+      },
+      { success: true, section: "圆号", instrument: "F调圆号", subParts: [1], isFullScore: false },
+      { success: true, section: "圆号", instrument: "F调圆号", subParts: [], isFullScore: false },
+    ];
+    await runAnalysis({ names: ["短笛长笛.pdf"] });
+    await waitFor(() => expect(screen.getByText(/^已识别 → 圆号/)).toBeTruthy(), {
+      timeout: 10000,
+    });
+
+    fireEvent.click(screen.getByText(/^识别分段（/));
+    await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
+      timeout: 10000,
+    });
+    // 同步点：两段各自的识别都已落地；补号发生在那之后
+    await waitFor(() => expect(screen.getAllByText(/已识别/)).toHaveLength(2), { timeout: 10000 });
+
+    // ★ 变异：补号时不写 `subPartsAutoFilled: true` ⇒ 这句永不出现 ⇒ 变红。
+    // 标出来的只有被补的那一段：另一段自己读出了 [1]，不该跟着挂「请核对」。
+    await waitFor(
+      () =>
+        expect(
+          screen.getAllByText("分声部号是按其它段推算补上的（这一段没读出号）—— 请核对"),
+        ).toHaveLength(1),
+      { timeout: 10000 },
+    );
+    // 正向同伴：两段仍都在屏幕上（那句不是「整组都挂」）
+    expect(screen.getAllByText("还原为一份")).toHaveLength(2);
   });
 });

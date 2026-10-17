@@ -262,7 +262,7 @@ describe("接线点：段行上的两个函数 prop（#326 §5）", () => {
     expect(btn.title).toBe("这一组已有段上传成功，无法还原（已传的文件不会跟着撤销）");
   });
 
-  it("同组两段重名时，**被标出来的那一段**出提示（上传会被整组拦下，得让用户先看见为什么）", async () => {
+  it("同组两段重名时，**两段都**出提示（上传会被整组拦下，得让用户先看见为什么）", async () => {
     h.llmReplies = [
       { ...okReply("圆号", "F调圆号"), subParts: [1, 2] },
       // 两段都认不出乐器 ⇒ 两段主名都退化成同一个，`duplicatedInGroup` 判重名
@@ -278,11 +278,11 @@ describe("接线点：段行上的两个函数 prop（#326 §5）", () => {
       timeout: 10000,
     });
     // ★ 变异：`duplicatedInGroup={duplicatedInGroup}` → `{() => new Set()}` ⇒ 那句永不出现 ⇒ 变红。
-    // ⚠️ 是 **1** 行不是 2 行：`duplicateNames` 的契约是「谁与前面的人重名就标谁」——
-    //   第一份总是放行，用户只需要改被标出来的那几份（`split-pdf.ts` 的 docblock）。
+    // ⚠️ 是 **2** 行：界面提示要**对称** —— 只标后出现的那一份，用户会以为第一份没问题
+    //   （`allDuplicateNames` 与 `duplicateNames` 的区别就在这儿）。
     await waitFor(
       () =>
-        expect(screen.getAllByText("与同组的其他段重名 —— 请改乐器名或分声部号")).toHaveLength(1),
+        expect(screen.getAllByText("与同组的其他段重名 —— 请改乐器名或分声部号")).toHaveLength(2),
       { timeout: 10000 },
     );
   });

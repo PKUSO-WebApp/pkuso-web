@@ -44,6 +44,8 @@ describe("上传弹窗的渲染冒烟", () => {
     fireEvent.change(input!, { target: { files: [pdf("圆号1,2.pdf")] } });
 
     await waitFor(() => expect(screen.getByText("圆号1,2.pdf")).toBeTruthy());
+    // C9：文件名本身是「打开 PDF」的入口（不是整行）—— 按钮的无障碍名就是文件名
+    expect(screen.getByRole("button", { name: "圆号1,2.pdf" })).toBeTruthy();
   });
 });
 
@@ -72,6 +74,10 @@ describe("select 阶段左下角的两个开关（#297）", () => {
     // `AUTO_SEGMENT_DEFAULT` —— 后者是恒真的同义反复，改默认值时不会变红。
     // ★ 变异：`AUTO_SEGMENT_DEFAULT` 改回 `true` → 这一条变红。
     expect(segment.checked, "「乐谱分段」默认关").toBe(false);
+    // 这两颗开关的字号翻倍（需求：原来的字太小）；只动这两颗 label，成本行不受影响。
+    // ★ 变异：LABEL_CLASS 里的 `text-2xl` 改回 `text-xs` ⇒ 两句一起红。
+    expect(fullScore.closest("label")?.className).toContain("text-2xl");
+    expect(segment.closest("label")?.className).toContain("text-2xl");
   });
 
   it("勾上「分析总谱」后成本数字跟着变（不跟着变，那个数就是假的）", async () => {

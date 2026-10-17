@@ -1,7 +1,12 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+// ⚠️ harness 必须**先于** details-panel 求值：harness 体内先注册 `vi.mock("@/lib/supabase")`，
+// 而 details-panel → analysis.ts 会先摸到真的 supabase 模块（缺 env 时当场抛）。
+// 这个顺序是 harness 头注释里那条纪律，别按「就近/字母」重排。
 import { UploadModal, h, okReply, runAnalysis } from "./upload-modal-harness";
+import { DetailsPanel } from "../components/details-panel";
+import type { UploadFile } from "../upload-modal.types";
 
 /**
  * **展开面板（`details-panel.tsx`）里的 `f.xxx &&` 分支**、**页脚操作行**，
@@ -27,6 +32,43 @@ import { UploadModal, h, okReply, runAnalysis } from "./upload-modal-harness";
  */
 
 const pdf = (name: string) => new File([new Uint8Array([1])], name, { type: "application/pdf" });
+
+describe("分析页数上界（MAX_PAGES_EXAMINED）：超过才说明「只看了前几页」", () => {
+  const row = (over: Partial<UploadFile> = {}): UploadFile => ({
+    file: pdf("x.pdf"),
+    originalName: "x.pdf",
+    status: "analyzed",
+    llmResult: "识别结果: 圆号 / F调圆号",
+    ...over,
+  });
+
+  it("5 页的文件：LLM 结果下面说明只看了前 3 页", () => {
+    render(<DetailsPanel f={row({ pageCount: 5 })} />);
+    // 正向同伴：结果块确实渲染了，下面那句才不是「面板没开」的假阴性
+    expect(screen.getByText("识别结果: 圆号 / F调圆号")).toBeTruthy();
+    // 3 取自常量；改大/改小都会让这句对不上
+    expect(screen.getByText("分析最多只看前 3 页（共 5 页）")).toBeTruthy();
+  });
+
+  it("页数没有超过上界：不出现那句", () => {
+    render(<DetailsPanel f={row({ pageCount: 3 })} />);
+    expect(screen.getByText("识别结果: 圆号 / F调圆号")).toBeTruthy();
+    expect(screen.queryByText(/分析最多只看前/)).toBeNull();
+  });
+
+  it("分段行不出现：段级识别只读本段首页，不按页游走", () => {
+    render(
+      <DetailsPanel
+        f={row({
+          pageCount: 5,
+          splitOf: { groupId: "g", from: 1, to: 5, segIndex: 0, segTotal: 1 },
+        })}
+      />,
+    );
+    expect(screen.getByText("识别结果: 圆号 / F调圆号")).toBeTruthy();
+    expect(screen.queryByText(/分析最多只看前/)).toBeNull();
+  });
+});
 
 /** 打开弹窗、选好文件，但**不点**「开始分析」（停在 `phase: "select"`，行状态是 `pending`） */
 function selectFiles(names: string[]) {
@@ -63,10 +105,10 @@ describe("展开面板（DetailsPanel）的 f.xxx 分支", () => {
     // 它排掉的是「排查时看不出到底送了哪张图」——而送错图正是「OCR 读不出」的主症状。
     // ★ 变异：三元 `f.sourcePage ? `（第 ${f.sourcePage} 页）` : ""` 的**「有值」那半边**由这句钉
     //   （把插值换成别的字段、或去掉「第…页」这层 ⇒ 变红）。
-    // ⚠️ **「无值时不带」那半边这条路径造不出来**（这一行 `sourcePage` 恒有值），
-    //   它只出现在**段行**上：`splitIntoSegments` 只把 `preview`/`cropNote`/`ocrText`/`warning`
-    //   继承给第 1 段，**不继承 `sourcePage`**。那条覆盖在
-    //   `upload-modal-segment-branches.test.tsx` 的「拆段后的第 1 段」那条里。
+    // ⚠️ **「无值时不带」那半边现在没有可达路径**：普通行上 `preview` 与 `sourcePage`
+    //   同时写入，而 `splitIntoSegments` 把两者一起继承给第 1 段（见
+    //   `upload-modal-segment-branches.test.tsx` 的「拆段后的第 1 段」）。三元留着是防御，
+    //   不是还没覆盖的分支。
     expect(screen.getByText("送检图像（第 1 页）：")).toBeTruthy();
     // ★ 变异：`src={f.preview}` → `src={f.llmResult}`（或干脆删掉 `src`）⇒ 变红。
     // 这里同时钉住「写进 preview 的就是即将送出去的那张图」这条不变量 —— 值来自

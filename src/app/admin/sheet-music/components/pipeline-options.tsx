@@ -31,7 +31,7 @@ type PipelineOptionsProps = {
  * 它的长度门槛。写成 `className={LABEL_CLASS}` 而不是两处字面量之后，
  * 「再加一颗开关」不会把那个数顶上去。
  */
-const LABEL_CLASS = "flex items-center gap-2 text-xs text-text-muted cursor-pointer";
+const LABEL_CLASS = "flex items-center gap-2 text-2xl text-text-muted cursor-pointer";
 
 export function PipelineOptions({
   fileCount,

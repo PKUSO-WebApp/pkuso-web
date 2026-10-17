@@ -172,6 +172,9 @@ describe("/admin/email-signature：读（GET 返回的是键值映射）", () =>
     // 读的端点也要钉住：只验「值对不对」的话，换成一个形状不同的端点、
     // mock 照旧回这份响应，用例照样绿。
     expect(getRequests()[0]?.url).toBe("/api/admin/settings");
+    // 多行文本框必须保持默认可拉长（AGENTS.md「多行文本框可拉长」）。
+    // ★ 变异：className 里加回 `resize-none` ⇒ 这一条红。
+    expect(textarea().className).not.toContain("resize-none");
   });
 
   it("该键为 null（从未设置过）时显示空串，不是 `undefined` 之类的字面量", async () => {

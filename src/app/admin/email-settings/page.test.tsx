@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import EmailSettingsPage from "./page";
 import { renderWithProviders } from "@/__tests__/render-with-providers";
 import {
@@ -164,5 +164,74 @@ describe("/admin/email-settings：读写的键名都取自共用常量", () => {
     expect(putRequests()[0].url).toBe("/api/admin/settings");
     expect(putRequests()[0].body).toEqual({ key: mocks.RENAMED_KEY, value: "" });
     await waitFor(() => expect(screen.getByText("已保存")).toBeTruthy());
+  });
+});
+
+describe("/admin/email-settings：写起手作废在飞的读", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.token = "test-token";
+    mocks.getOk = true;
+    mocks.putOk = true;
+    mocks.settings = settingsPayload(mocks.signature);
+    installFetch();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("保存起手后晚到的读不得把刚保存的签名改回旧值", async () => {
+    // 首屏读失败 → 用「重试」造出**第二次**在飞读
+    mocks.getOk = false;
+    await renderLoaded();
+    mocks.requests.length = 0;
+
+    let releaseRead!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    let readLanded = false;
+    global.fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      mocks.requests.push({
+        url: String(url),
+        method,
+        body: init?.body ? JSON.parse(String(init.body)) : {},
+      });
+      if (method === "GET") {
+        await gate;
+        return {
+          ok: true,
+          json: async () => {
+            readLanded = true;
+            return settingsPayload("服务端旧签名");
+          },
+        };
+      }
+      return { ok: true, json: async () => ({ success: true }) };
+    }) as unknown as typeof fetch;
+
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await waitFor(() => expect(getRequests()).toHaveLength(1)); // 读已经上路
+
+    // 读还在飞的时候切到签名分栏、编辑并保存
+    fireEvent.click(signatureTab());
+    fireEvent.change(signatureBox(), { target: { value: "新签名" } });
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(screen.getByText("已保存")).toBeTruthy());
+    expect(putRequests()[0].body).toEqual({ key: mocks.RENAMED_KEY, value: "新签名" });
+
+    // 服务端现在才把**读起手时**的旧值送回来
+    releaseRead();
+    await waitFor(() => expect(readLanded).toBe(true));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // ← 修前这里被改成「服务端旧签名」，而「已保存」还挂着
+    expect(signatureBox().value).toBe("新签名");
+    expect(screen.getByText("已保存")).toBeTruthy();
   });
 });

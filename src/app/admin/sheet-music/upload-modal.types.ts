@@ -59,6 +59,14 @@ export interface UploadFile {
    */
   subPartsOverCap?: number;
   /**
+   * 这一行的分声部号是不是**推算补上的**（`fillMissingSubParts` 的产物）。
+   *
+   * 纯客户端呈现标记（库与后端契约都不变）：补号发生在段级识别之后，界面上若不标出来，
+   * 那一格与「这一段自己的页眉读出的号」长得一模一样 —— 用户会当成识别结果。
+   * 用户手填过号之后 `subPartsNotice` 会让位；段级重试读到非空号时清掉此标记。
+   */
+  subPartsAutoFilled?: boolean;
+  /**
    * 模型给的声部**原值**（`Analysis.sectionRaw`），落在闭集外时才有 —— 见 `LlmAnalysis`。
    *
    * ⚠️ 它**不是用户可编辑字段**（没有 Edit/Guess 两态，所以 `editsOf` 里没有它）：

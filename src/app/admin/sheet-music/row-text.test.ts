@@ -17,6 +17,7 @@ import {
   isBlankName,
   isFullScoreRow,
   isKnownSection,
+  subPartsNotice,
   unreadMessage,
   uploadBlocker,
 } from "./row-text";
@@ -271,12 +272,27 @@ describe("文案", () => {
       "未裁切（裁切画布创建失败，已改用整页）",
     );
     expect(cropNoteOf({ crop: false, reason: "no-staff" }, false)).toBe("未裁切（未检测到谱线）");
+    // 上限 33% 是**字面量**断言：文案由 `MAX_CROP_PCT` 算出（不再抄一份字面量），
+    // 把常量改成别的值，这一句就红。
     expect(cropNoteOf({ crop: false, reason: "too-tall", staffPct: 0.5 }, false)).toBe(
       "未裁切（标题区达页高 50.0%，超过 33% 上限）",
     );
     expect(cropNoteOf({ crop: false, reason: "too-thin", height: 40 }, false)).toBe(
       "未裁切（标题区仅 40px，首页直接进音乐）",
     );
+  });
+
+  it("推算补上的号有可见标记；自己读出的号与用户填过的号都不标", () => {
+    // 补号与识别结果在界面上长得一样 —— 不标出来用户会当成识别结果。
+    expect(subPartsNotice(row({ subPartsGuess: [2], subPartsAutoFilled: true }))).toBe(
+      "分声部号是按其它段推算补上的（这一段没读出号）—— 请核对",
+    );
+    // 正向同伴：同一字段为 false 时不出现，证明那句是标记驱动的、不是恒显。
+    expect(subPartsNotice(row({ subPartsGuess: [2], subPartsAutoFilled: false }))).toBe("");
+    // 用户已经填过号：让位（否则用户改完还挂着「请核对」）。
+    expect(
+      subPartsNotice(row({ subPartsGuess: [2], subPartsAutoFilled: true, subPartsEditText: "2" })),
+    ).toBe("");
   });
 
   it("describeInsertError：唯一冲突给能照着做的话（名字去重），其余原样透出", () => {

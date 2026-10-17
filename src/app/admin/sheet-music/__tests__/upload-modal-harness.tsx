@@ -99,7 +99,7 @@ async function startSegmentation() {
   });
 }
 
-/** 「识别分段（N 份，约 M 次 OCR）」里的 N */
+/** 「识别分段（N 份）」里的 N */
 function segButtonCount(): number {
   const btn = screen.getByText(/^识别分段（/).textContent ?? "";
   const m = /（(\d+) 份/.exec(btn);

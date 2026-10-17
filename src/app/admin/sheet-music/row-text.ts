@@ -9,7 +9,7 @@
  * 哪处曾经各抄一份推导式），别在下次搬家时顺手删。
  */
 
-import { estimateOcrCalls, needsSegmentation, normalizeSegments } from "./segmentation";
+import { needsSegmentation, normalizeSegments } from "./segmentation";
 import {
   FULL_SCORE_SECTION,
   INSTRUMENT_ORDER,
@@ -321,16 +321,6 @@ export const segEligible = (f: UploadFile) =>
   // 「是不是总谱」只认一个判据（`isFullScoreRow` 走 editsOf）—— 同文件里已经栽过
   // 一次「三处各抄一份推导式」的跟头，不再抄第二份
   needsSegmentation(f.pageCount ?? null, isFullScoreRow(f));
-
-/**
- * 这一份文件还要烧几次 OCR（下界，见 `estimateOcrCalls` 的说明）。
- *
- * 按**缺的页**算：已经在手里的页不重烧（`pageTexts` 只装成功的页，所以失败重试时
- * 这个数正好等于要补的页数）。**按钮文案与「识别中…」那行共用这一个函数** ——
- * 各算一次的话，两个数会在同屏里互相矛盾（一个按整份页数、一个按缺的页数）。
- */
-export const costOf = (f: UploadFile) =>
-  estimateOcrCalls(f.pageCount ?? 0, f.pageTexts?.length ?? 0);
 
 /** 界面上显示的段（由起点页推出闭区间）。用户改过起点就按改过的算 */
 export const segmentsOf = (f: UploadFile) =>

@@ -20,7 +20,6 @@ import type { UploadFile, UploadPhase } from "../upload-modal.types";
 import { FileTitle } from "./file-name-link";
 import {
   canHaveExtraSections,
-  costOf,
   editsOf,
   evidenceLine,
   evidenceWarn,
@@ -391,7 +390,6 @@ export function FileRow({
                 phase={phase}
                 segBusy={segBusy}
                 hasAnalyzingFiles={hasAnalyzingFiles}
-                costOf={costOf}
                 segmentsOf={segmentsOf}
                 startsOf={startsOf}
                 startTextOf={startTextOf}

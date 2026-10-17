@@ -15,7 +15,7 @@ import { h, readyToSegment, runAnalysis } from "./upload-modal-harness";
  * | 场景 | 本次补的支 |
  * |---|---|
  * | ① 未识别 | 段卡片**自己**那句（带「点右下角」后缀）——此前只有一个 `/未识别（\d+ 页）/` 命中**父组件**的同名文案 |
- * | ② 识别中 | `costOf` 那个**数字**（此前只断言了「识别中…（约」） |
+ * | ② 识别中 | 状态行「识别中…」与按钮上的份数（界面不再显示 OCR 次数） |
  * | ⑥ 非法原文 | 那格输入框的**红边框**（此前只覆盖了文案） |
  * | ⑨ 失败页 | `slice(0, 10)` 与「超过 10 页给省略号」那条阈值 |
  * | — | 第 1 段为什么没有输入框（`si === 0`） |
@@ -197,13 +197,12 @@ describe("段卡片剩下的那几支（pkuso-web#317 §24.2 沙箱场景里本�
     ).toBeTruthy();
   });
 
-  it("场景②识别中：那个数字是**算出来的**（12 页 ⇒ 约 2 次；按钮上写的是同一个判据）", async () => {
-    // 12 页：`estimateOcrCalls` 按「一张拼图装 10 页」估 ⇒ ceil(12/10) = 2（3 页时是 1，分辨不出来）
+  it("场景②识别中：状态行写「识别中…」，按钮写份数", async () => {
+    // 12 页只是为了让这一行有可分段的内容；本用例只钉状态行与按钮份数（界面不显示 OCR 次数）
     h.pages = 12;
     await readyToSegment();
 
-    // 前提：导入前那个数先对（`segCost` 与 `costOf` 是同一个 `estimateOcrCalls`）
-    expect(screen.getByText("识别分段（1 份，约 2 次 OCR）")).toBeTruthy();
+    expect(screen.getByText("识别分段（1 份）")).toBeTruthy();
 
     let release!: () => void;
     h.ocrGate = new Promise<void>((r) => {
@@ -211,10 +210,8 @@ describe("段卡片剩下的那几支（pkuso-web#317 §24.2 沙箱场景里本�
     });
     fireEvent.click(screen.getByText(/^识别分段（/));
 
-    // ★ 变异：`costOf(f)` → 常量 1（或 `estimateOcrCalls` 的 `Math.ceil` → `Math.floor`）⇒ 变红。
-    // 既有那条只断言了「识别中…（约」——**数字是几都绿**，而这句话的全部意义就是那个数字
-    //（#290 的验收标准：调用次数在导入前可见，而配额是 500 次/天）。
-    await waitFor(() => expect(screen.getByText("识别中…（约 2 次 OCR）")).toBeTruthy(), {
+    // ★ 变异：把「识别中…」改回不复存在的「识别中…（约 N 次 OCR）」文案 ⇒ 变红（管理员不该看到次数）。
+    await waitFor(() => expect(screen.getByText("识别中…")).toBeTruthy(), {
       timeout: 10000,
     });
 

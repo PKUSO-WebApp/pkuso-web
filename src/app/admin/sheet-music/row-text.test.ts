@@ -10,7 +10,6 @@ import type { UploadFile } from "./upload-modal.types";
 import {
   analysisSummary,
   canHaveExtraSections,
-  costOf,
   cropNoteOf,
   describeInsertError,
   editsOf,
@@ -528,53 +527,6 @@ describe("segEligible：这份文件要不要跑分段（多页、非总谱）",
   ];
   for (const c of cases) {
     it(c.name, () => expect(segEligible(row(c.over))).toBe(c.expected));
-  }
-});
-
-describe("costOf：这一份还要烧几次 OCR（按缺的页算）", () => {
-  const pages = (n: number) => Array.from({ length: n }, (_, i) => ({ page: i + 1, text: "x" }));
-  const cases: Array<{ name: string; over: Partial<UploadFile>; expected: number }> = [
-    {
-      // 拼图每张 10 页（MOSAIC_PAGES_PER_CALL）：10 页正好一张。
-      name: "10 页 → 1 次",
-      over: { pageCount: 10 },
-      expected: 1,
-    },
-    {
-      // 第 11 页要第二张 —— 向上取整，不能 floor（floor 会低报成 1）。
-      name: "11 页 → 2 次（向上取整）",
-      over: { pageCount: 11 },
-      expected: 2,
-    },
-    { name: "1 页 → 仍是 1 次", over: { pageCount: 1 }, expected: 1 },
-    { name: "页数未知 → 0 次（算不出来）", over: {}, expected: 0 },
-    { name: "页数 0（非法）→ 0 次", over: { pageCount: 0 }, expected: 0 },
-    {
-      // `pageTexts` 只装**成功**的页；重试时这个数正好等于要补的页数。
-      name: "20 页里已有 10 页 → 只算缺的 10 页 = 1 次",
-      over: { pageCount: 20, pageTexts: pages(10) },
-      expected: 1,
-    },
-    {
-      name: "20 页里已有 20 页 → 0 次（不重烧）",
-      over: { pageCount: 20, pageTexts: pages(20) },
-      expected: 0,
-    },
-    {
-      // 手里的页比总页数还多（状态不一致）时要退化成 0，而不是负数的 ceil。
-      name: "手里的页多于总页数 → 0 次",
-      over: { pageCount: 20, pageTexts: pages(25) },
-      expected: 0,
-    },
-    {
-      // 页数未知时 `?? 0` 让 estimateOcrCalls 直接返回 0；不能拿 pageTexts 的个数去凑页数。
-      name: "页数未知 + 手里有几页 → 0 次",
-      over: { pageTexts: pages(3) },
-      expected: 0,
-    },
-  ];
-  for (const c of cases) {
-    it(c.name, () => expect(costOf(row(c.over))).toBe(c.expected));
   }
 });
 

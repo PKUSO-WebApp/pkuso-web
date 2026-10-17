@@ -40,12 +40,17 @@ function installMosaicStub() {
 async function runAnalysis({
   fullScore = false,
   ocrFail = false,
+  ocrError = null as null | {
+    title?: "transient" | "permanent";
+    full?: "transient" | "permanent";
+  },
   llmFail = false,
   loadFail = false,
   renderFailPages = [] as number[],
   names = ["圆号1,2.pdf"],
 } = {}) {
   h.ocrFail = ocrFail;
+  h.ocrError = ocrError;
   h.llmFail = llmFail;
   h.loadFail = loadFail;
   h.renderFailPages = renderFailPages;

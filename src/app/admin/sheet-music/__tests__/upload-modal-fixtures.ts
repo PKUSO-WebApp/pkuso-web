@@ -50,6 +50,23 @@ const h = vi.hoisted(() => ({
    */
   invokeTimeouts: [] as { name: string; timeout?: number }[],
   llm: [] as string[],
+  /**
+   * `ocr-analyze` 桩**报错**（`{ data: null, error }`）的形态。
+   *
+   * ⚠️ 这个桩此前只会「成功」或「`success: false`」，于是 `ocr-client.ts` 的
+   * `if (error)` 那条路**在集成层一次都没跑过**：`tryPage` 的 catch、标题区/整页
+   * 两条失败原因的合并、以及重试次数都只有 `ocr-client.test.ts` 的单测在罩。
+   * `"transient"` = supabase-js 的超时/网络失败形态（`context` 上挂 `AbortError`，
+   * `OCR_TRANSIENT` 命中 ⇒ 按 `OCR_RETRY_DELAYS` 重试）；`"permanent"` = HTTP 400
+   *（`invokeErrorDetail` 读出 body，非瞬时 ⇒ 一次就抛）。
+   *
+   * 键是送检的那张图：`title` = 标题区（`TITLE_TAG`），`full` = 整页（`FULL_TAG`）。
+   * 两者分开才能造出「一条 400 + 一条超时」这种真实形态，也才能分清单张图的重试次数。
+   */
+  ocrError: null as null | {
+    title?: "transient" | "permanent";
+    full?: "transient" | "permanent";
+  },
   ocrFail: false,
   llmFail: false,
   loadFail: false,

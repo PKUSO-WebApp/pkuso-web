@@ -265,6 +265,21 @@ describe("页脚操作行（FooterBar）：上传飞行中的那一支，与「�
     // 前提：取到的确实是把「取消 + 确认上传」装在一起的那一排（不是页面里别的 flex 行）
     expect(row.contains(screen.getByText("取消"))).toBe(true);
   });
+
+  it("展开面板与卡片正文有底色分隔（F12）：面板容器是 bg-muted/30", async () => {
+    await analyzed();
+    expand();
+
+    // 面板根节点 = 「OCR 文本」那块（label + pre）的父级
+    const panel = screen.getByText("OCR 文本：").closest("div")!.parentElement as HTMLElement;
+    // ★ 变异：面板容器删掉 `bg-muted/30` ⇒ 变红。
+    // 这条与 `justify-end` 同性质：jsdom 看不见实际颜色，但这一格是「展开区与行正文
+    // 在视觉上分开」的唯一声明 —— 删掉它面板会和行正文糊成一片，而别的断言全都无感。
+    expect(panel.classList.contains("bg-muted/30")).toBe(true);
+    // 正向同伴：取到的确实是**整块面板**（不是面板里另一个碰巧带底色的子块）
+    expect(panel.contains(screen.getByText("识别结果: 圆号 / F调圆号"))).toBe(true);
+    expect(panel.contains(screen.getByAltText("送去 OCR 的图像"))).toBe(true);
+  });
 });
 
 describe("§28：已经渲染出来、却零断言的文案与颜色", () => {

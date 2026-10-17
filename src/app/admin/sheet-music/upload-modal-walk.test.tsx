@@ -2311,6 +2311,41 @@ describe("#326 §5：桩的缺口补齐之后（拼图成功路径 / 客户端�
     expect(h.ocrStarted).toBe(2); // 第 1 页的两张图，一张都不多
     expect(h.pagesFetched).toEqual([1]); // 第 2 页连取都没取
   });
+
+  it("OCR 请求真的报错（`{data:null,error}`）：400 一次就抛、AbortError 重试用满，两条原因都落到行上", async () => {
+    // 在此之前这个桩只会「成功」或 `success:false` —— `invokeOcr` 的 `if (error)` 在
+    // **集成层**一次都没跑过：`tryPage` 的 catch、标题区/整页两条原因的合并、重试次数
+    // 全都只有 `ocr-client.test.ts` 的单测在罩。
+    // ⚠️ 必须**通过 helper 的参数**传，不要手写 `h.ocrError = …`：helper 会用自己的
+    // 参数（默认 null）覆盖那一行 —— 同本文件别处 `h.llmFail` / `h.renderFailPages` 的坑。
+    await runAnalysis({ ocrError: { title: "permanent", full: "transient" } });
+
+    // 标题区 400 是非瞬时（`OCR_TRANSIENT` 不命中）⇒ 1 发；整页 AbortError 是瞬时
+    // ⇒ 1 + `OCR_RETRY_DELAYS.length` = 3 发。次数是**算出来的**，不是实现复述：
+    // 把重试删掉这里变 2、把非瞬时也重试这里变 6。
+    expect(h.ocr).toEqual([TITLE_TAG, FULL_TAG, FULL_TAG, FULL_TAG]);
+    // 每一发都带着客户端上限（20s）—— 重试路径也不例外（超时是可重试的，所以它必须还在）
+    expect(h.invokeTimeouts.filter((t) => t.name === "ocr-analyze").map((t) => t.timeout)).toEqual([
+      20000, 20000, 20000, 20000,
+    ]);
+
+    // 两条失败原因都进了行（只留最后一条会吞掉「切错位置」这个最常见病因），
+    // 且 `invokeErrorDetail` 真的把上下文读出来了：400 的 body 与 AbortError 的真名。
+    // ★ 变异：`tryPage` 的 catch 只写 `why`（丢掉 `titleError`）⇒ 下面「标题区：」变红。
+    // ★ 变异：`invokeOcr` 对任何 error 都直接抛（不重试）⇒ 上面的 4 发变 2 发。
+    // ★ 变异：非瞬时也重试 ⇒ 6 发，同样在上面的序列变红。
+    fireEvent.click(screen.getByLabelText("查看详情"));
+    const text = screen.getByText(/标题区：OCR 请求失败/).textContent ?? "";
+    expect(text).toContain("bad request（测试）（HTTP 400）");
+    expect(text).toContain("整页：OCR 请求失败");
+    expect(text).toContain("AbortError: aborted");
+
+    // 正向同伴：OCR 全失败**不判死整行**（降级成只凭文件名问 LLM），
+    // 也不该把这一行推成 `error` —— 行仍是「未识别」，还有人工修正的出路。
+    expect(h.llm).toHaveLength(1);
+    expect(screen.getByText(/^未识别（3 页）/)).toBeTruthy();
+    expect(screen.queryByText(/^失败: /)).toBeNull();
+  });
 });
 
 /**

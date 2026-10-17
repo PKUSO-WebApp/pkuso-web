@@ -18,7 +18,7 @@
  */
 import { afterEach, beforeEach, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
-import { h, W, H } from "./upload-modal-fixtures";
+import { h, W, H, TITLE_TAG, FULL_TAG } from "./upload-modal-fixtures";
 
 // 分析链路要跑 pdfjs 假实现 + 多次 Edge Function 往返，默认 5s 不够
 vi.setConfig({ testTimeout: 20000 });
@@ -170,7 +170,34 @@ vi.mock("@/lib/supabase", () => {
                 return { data: { success: true, text }, error: null };
               }
               // 高图。`bandCalls > 0` 之后来的那一张只可能是**补救**（见 `retakeStub` 的说明）；
-              // 分析路径的高图都在窄带之前，不受这个开关影响
+              // 分析路径的高图都在窄带之前，不受这个开关影响。
+              // ⚠️ 先处理**请求报错**：与 `success: false` 是两条路；形态与理由见 `h.ocrError`。
+              const errMode =
+                size === TITLE_TAG
+                  ? h.ocrError?.title
+                  : size === FULL_TAG
+                    ? h.ocrError?.full
+                    : undefined;
+              if (errMode === "transient") {
+                return {
+                  data: null,
+                  error: {
+                    name: "FunctionsFetchError",
+                    message: "Failed to send a request to the Edge Function",
+                    context: { name: "AbortError", message: "aborted" },
+                  },
+                };
+              }
+              if (errMode === "permanent") {
+                return {
+                  data: null,
+                  error: {
+                    context: new Response(JSON.stringify({ error: "bad request（测试）" }), {
+                      status: 400,
+                    }),
+                  },
+                };
+              }
               if (h.bandCalls > 0) {
                 h.retakeStarted += 1;
                 if (h.retakeGate) await h.retakeGate;
@@ -296,6 +323,7 @@ beforeEach(() => {
   h.mosaicBandCount = 3;
   h.mosaicBlankLines = false;
   h.ocrFail = false;
+  h.ocrError = null;
   h.llmFail = false;
   h.loadFail = false;
   h.pagesFetched = [];

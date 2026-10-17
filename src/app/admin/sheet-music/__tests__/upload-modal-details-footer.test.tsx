@@ -403,3 +403,25 @@ describe("§28：已经渲染出来、却零断言的文案与颜色", () => {
     expect(line.classList.contains("text-warning")).toBe(true);
   });
 });
+
+describe("DetailsPanel 自守 hasDetails（pkuso-web#409 第 2 项）", () => {
+  const bare = (over: Partial<UploadFile> = {}): UploadFile => ({
+    file: pdf("x.pdf"),
+    originalName: "x.pdf",
+    status: "analyzed",
+    ...over,
+  });
+
+  it("一个详情字段都没有时，组件自己返回 null（不依赖调用点的门）", () => {
+    // ★ 变异：删掉 details-panel.tsx 顶部那句 `if (!hasDetails(f)) return null;`
+    //   ⇒ 面板会渲染成一个空盒子（有 border/bg 的外壳）⇒ 这条变红。
+    const { container } = render(<DetailsPanel f={bare()} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("有任意一个详情字段就渲染（负向断言的正向同伴）", () => {
+    // 与上一条同一状态、只差一个 `ocrText` —— 没有它，上一条在「组件整个坏了」时也恒真。
+    const { container } = render(<DetailsPanel f={bare({ ocrText: "送检文本" })} />);
+    expect(container.textContent).toContain("OCR");
+  });
+});

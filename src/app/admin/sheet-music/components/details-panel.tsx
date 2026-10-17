@@ -2,19 +2,21 @@
 
 import type { UploadFile } from "../upload-modal.types";
 import { MAX_PAGES_EXAMINED } from "../analysis";
+import { hasDetails } from "../row-text";
 
 /**
  * 行卡片展开后的**排查面板**：送检图像、裁切说明、弃权原因、warning、OCR 文本、LLM 结果。
  *
- * 这里全是「出问题时才要看」的东西，所以整块由 `./file-row` 用
- * `expanded && hasDetails(f)` 把关 —— 面板自己不做「该不该显示」的判断，
- * 拿到的 `f` 有什么就画什么（`f.preview` / `f.warning` 等各自为 undefined 时那一行不出现）。
+ * 这里全是「出问题时才要看」的东西。**组件自己守 `hasDetails(f)`**：调用点
+ * （`./file-row` 的 `expanded && hasDetails(f)`）也守着同一道门，但组件单独被复用时
+ * 不该画出空面板 —— 判据只有一份（`row-text.ts` 的 `hasDetails`），两处都调它。
  */
 type DetailsPanelProps = {
   f: UploadFile;
 };
 
 export function DetailsPanel({ f }: DetailsPanelProps) {
+  if (!hasDetails(f)) return null;
   return (
     <div className="border-t border-border px-3 py-2 text-xs space-y-2 bg-muted/30">
       {f.preview && (

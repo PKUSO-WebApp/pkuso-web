@@ -1,7 +1,8 @@
 import { supabase } from "@/lib/supabase";
 import { LLM_TIMEOUT_MS } from "./analysis";
 import { composeMosaic, ocrMosaic, retakeEmptyBands } from "./band-ocr";
-import { bandPlan } from "./band-render";
+import { bandPlan } from "./band-geometry";
+import { resolveBandPct } from "./band-measure";
 import { packBands } from "./mosaic";
 import { invokeErrorDetail, runOcr } from "./ocr-client";
 import { blobToBase64, OCR_JPEG_QUALITY, openPdf } from "./pdf-render";
@@ -21,9 +22,9 @@ export class SegmentationCancelled extends Error {
  * 逐页渲染顶部等高窄带（#290 Step 1 的输入）。
  *
  * 与 `pdf-render.ts` 的 `renderPagesForAnalysis` **刻意分开**：那个的职责是「从第一张有内容的页起往后走、
- * 决定每页裁到哪」，这个的职责是「每一页都取一条等高的窄带」—— 两者的裁切逻辑必须不同
- * （见 `band-render.ts` 的 `BAND_PCT`）。代价是分析阶段看过的页会被渲染第二次（与 N 次 OCR 相比可忽略），
- * 换来的是两条路径互不牵制。
+ * 决定每页裁到哪」，这个的职责是「每一页都取一条**等高**的窄带」—— 两者的裁切逻辑必须不同
+ * （窄带高度是整份文档一个值，见 `band-height.ts` 的采样/聚合判据）。代价是分析阶段看过的页
+ * 会被渲染第二次（与 N 次 OCR 相比可忽略），换来的是两条路径互不牵制。
  *
  * ⚠️ 内存：每页渲染后会 `page.cleanup()`。渲染一整页的 canvas 峰值在本项目的语料上
  * 量到过 ~282MB（大头是 pdf.js 解码扫描图的**内部**画布），19 页串行跑不会叠加，
@@ -31,7 +32,7 @@ export class SegmentationCancelled extends Error {
  */
 async function renderNarrowBands(
   file: File,
-  opts: { needed: (pageNo: number) => boolean; isCancelled: () => boolean },
+  opts: { needed: (pageNo: number) => boolean; isCancelled: () => boolean; bandPct: number },
 ): Promise<{ pageCount: number; bands: Blob[] }> {
   const task = await openPdf(file);
   try {
@@ -50,8 +51,13 @@ async function renderNarrowBands(
       }
       const page = await pdf.getPage(pageNo);
       try {
-        // 几何（缩放口径 + 窄带高）在 `band-render.ts`：界面上的缩略图与这里必须是同一条窄带
-        const { viewport, canvasWidth, canvasHeight, bandHeight: bandH } = bandPlan(page);
+        // 几何（缩放口径 + 窄带高）在 `band-geometry.ts`：界面上的缩略图与这里必须是同一条窄带
+        const {
+          viewport,
+          canvasWidth,
+          canvasHeight,
+          bandHeight: bandH,
+        } = bandPlan(page, opts.bandPct);
         const canvas = document.createElement("canvas");
         canvas.width = canvasWidth;
         canvas.height = canvasHeight;
@@ -119,9 +125,14 @@ export async function ocrBandsForSegmentation(
   opts: { existing?: PageText[]; isCancelled: () => boolean },
 ): Promise<{ pageCount: number; pageTexts: PageText[]; failedPages: number[] }> {
   const have = new Map((opts.existing ?? []).map((p) => [p.page, p.text]));
+  // 整份文档一个高度：先量一次（按 `File` 缓存，重试/面板缩略图都复用这个结果），
+  // 再拿它渲染每一页。取消 ⇒ `null`，与渲染循环里的取消同一条语义。
+  const resolved = await resolveBandPct(file, { isCancelled: opts.isCancelled });
+  if (resolved === null) throw new SegmentationCancelled();
   const { pageCount, bands } = await renderNarrowBands(file, {
     needed: (pageNo) => !have.has(pageNo),
     isCancelled: opts.isCancelled,
+    bandPct: resolved.pct,
   });
 
   const pageTexts: PageText[] = [];
@@ -208,7 +219,8 @@ export async function ocrBandsForSegmentation(
   /**
    * 补救：哪几页的窄带**取到了、但一个字都没有**（`text` 是空串），换「标题区」那一刀
    * 再取一次（见 `band-ocr.ts` 的 `retakeEmptyBands`）。空串会被后端渲染成「（空白）」
-   * 交给模型，而「窄带空」根本推不出「这一页没文字」—— 居中排版的标题页必然落在 12% 之下。
+   * 交给模型，而「窄带空」根本推不出「这一页没文字」—— 居中排版的标题页必然落在窄带之下
+   * （窄带是页面顶部一条，高度由第一谱线位置自适应）。
    *
    * ⚠️ 判据是**空串**，不是「没读到」（后者在 `failedPages` 里，页根本就不在 `pageTexts`
    * 中）：那种是传输/配额问题，换裁切不治，且后端对缺页已有「不要在那几页上给切点」的提示。

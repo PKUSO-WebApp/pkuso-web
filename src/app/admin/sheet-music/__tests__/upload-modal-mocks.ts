@@ -145,10 +145,12 @@ vi.mock("@/lib/supabase", () => {
                   error: null,
                 };
               }
-              // 窄带（页高 × BAND_PCT 那一小块）：给**逐页不同**的文本，编号按调用序。
+              // 窄带（页高 × `bandPct` 那一小块）：给**逐页不同**的文本，编号按调用序。
               // 判据是「图很矮」—— 夹在**标题条**（`W x 85`，见 TITLE_TAG 的来历）与
               // **整页**（`W x 300` 上下）之间：默认页高下窄带是 36，两端的页高见 `h.pageHeights`。
-              // ⚠️ 这三个常量（`OCR_MAX_SCALE`=3、`BAND_PCT`=0.12、页高）任一变大到把窄带顶过 60，
+              // ⚠️ 本套件把 `resolveBandPct` 钉成 0.12（见上面的 mock）：真实自适应用假像素
+              // 会量到 28.3%、窄带 85px，与标题条同高，这条「图很矮」就不再命中。
+              // 三个量（`OCR_MAX_SCALE`=3、`bandPct`=0.12、页高）任一变大到把窄带顶过 60，
               // 这条分支就不再命中 —— 那时两条 prompt 会退化成同一个常量、断言**打红**（不是静默变绿），
               // 但要照着这里才能看懂报错。
               if (Number(size.split("x")[1]) < 60) {
@@ -264,6 +266,30 @@ vi.mock("pdfjs-dist", () => ({
   OPS: { paintImageXObject: 1, paintImageXObjectRepeat: 2, paintInlineImageXObject: 3 },
 }));
 vi.mock("pdfjs-dist/build/pdf.worker.min.mjs", () => ({}));
+
+/**
+ * 窄带高度在这个集成套件里**钉成 0.12**。
+ *
+ * 为什么可以钉：这套用例验的是**分段编排**（拼图、取消、失败页、重试、拆分），
+ * 不是「第一谱线检测得准不准」；而后者的真实输入（整页渲染 + 图像检测）在
+ * `band-render.test.ts` / `band-height.test.ts` 里有专门的用例。假页面是均匀的
+ * 300×300、第一谱线固定在 28.3%，若让真实的自适应逻辑跑起来，窄带会变成 85px、
+ * 与 `TITLE_TAG`（标题裁切条）同高 —— 假依赖用来区分两条路的唯一维度就没了。
+ *
+ * 钉在 0.12 是**保持假世界的既有语义**（窄带 300×36，明显矮于 300×85 的标题条），
+ * 不是替实现决定线上高度。真实高度的取值与兜底由 `band-height.ts` 的用例负责。
+ *
+ * ⚠️ 必须 mock `band-measure`（取数模块）而不是 `band-render`：分段与面板缩略图都
+ * 从前者拿高度，而 `renderBandThumbs` 是在**模块内部**调它的 —— 替换 `band-render`
+ * 的导出管不到那次内部调用，面板那条路会照跑真实测量（把采样页全渲染一遍）。
+ */
+vi.mock("../band-measure", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../band-measure")>();
+  return {
+    ...actual,
+    resolveBandPct: async () => ({ pct: 0.12, fallback: false }),
+  };
+});
 
 /**
  * 造一页「有标题区、下面有乐谱」的像素：第一组 5 条谱线（间距 3px，落在页高 28.3%）

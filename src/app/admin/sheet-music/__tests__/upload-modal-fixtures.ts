@@ -61,7 +61,8 @@ const h = vi.hoisted(() => ({
    * 逐页的页高（pt）。默认等高。
    *
    * 它决定 pdfjs 桩渲染出的页高（下面 `getPage` 的 `height`），也就决定窄带的像素高
-   * （`round(canvas.height × BAND_PCT)`）—— OCR 桩靠「图很矮」认出窄带。买的是**渲染尺寸**。
+   * （`round(canvas.height × bandPct)`；本套件把 `resolveBandPct` 钉成 0.12）——
+   * OCR 桩靠「图很矮」认出窄带。买的是**渲染尺寸**。
    *
    * ⚠️ 默认环境下它买不到「不等高 ⇒ 不拼图」：jsdom 没有 `createImageBitmap`，
    * `composeMosaic` 的第一句就抛，抛在「本组必须等高」那条判据**之前**，被
@@ -182,7 +183,7 @@ const h = vi.hoisted(() => ({
   /**
    * 让**第 N 页**的窄带 OCR **成功、但一个字都没有**（页序 = 调用序）——
    * 与 `bandFailFor`（整条请求失败）是**两种不同的形态**，这一种才是居中排版的标题页
-   * 在真机上的样子：窄带取到了，可那张图上没有字（标题块整块落在 12% 之下）。
+   * 在真机上的样子：窄带取到了，可那张图上没有字（标题块整块落在窄带之下；本套件钉成 12%）。
    */
   bandEmptyFor: [] as number[],
   /**

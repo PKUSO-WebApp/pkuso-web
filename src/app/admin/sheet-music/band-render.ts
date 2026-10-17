@@ -1,66 +1,28 @@
 import type { PDFPageProxy } from "pdfjs-dist";
-import { makePreview, OCR_MAX_SCALE, OCR_TARGET_LONGEST_SIDE, openPdf } from "./pdf-render";
+import { bandPlan, releaseCanvas } from "./band-geometry";
+import { resolveBandPct } from "./band-measure";
+import { makePreview, openPdf } from "./pdf-render";
 
 /**
- * 窄带的**几何**与**按需渲染**（pkuso-backend#96 §6：让分段结果看得见、能当场核实）。
+ * 窄带的**按需出图**（核实面板的缩略图）与它用的几何（pkuso-backend#96 §6）。
  *
  * ## 为什么单独一个模块
  *
- * 1. `BAND_PCT` 与「怎么缩放、窄带取多高」是**一条判据**：分段那次 OCR 看到的那条窄带，
+ * 1. 窄带高度与「怎么缩放、窄带取多高」是**一条判据**：分段那次 OCR 看到的那条窄带，
  *    与用户在界面上看到的那张缩略图，必须**是同一条** —— 否则「模型看到的就是这个」
- *    是一句假话。两处各写一份 `round(高 × 0.12)` 迟早会漂，所以这里是唯一来源，
- *    `segmentation-run.ts` 的逐页渲染也用它。
+ *    是一句假话。几何的唯一来源是 `band-geometry.ts`（`bandPlan`），高度由
+ *    `band-measure.ts` 按文档量出来；`segmentation-run.ts` 的逐页渲染与这里都从它们拿。
  * 2. 面板上的缩略图是**新的一类调用**（用户在确认阶段点开才跑，与「跑一次分段」无关），
  *    它的取消与释放纪律自成一块：整页渲染一张 scale 3 的画布约 20MB 后备存储，
  *    取消点必须落在**每一页之间**，`page.cleanup()` 与画布清零一个都不能漏。
+ *
+ * ⚠️ 高度**一份文档只有一个**（`resolveBandPct` 按 `File` 缓存）：面板里看到的条
+ * 必须就是模型看到的那条，包括「同一份文档只取一个高度」这条性质。
  */
 
-/**
- * 顶部窄带的固定高度（页高比例）。
- *
- * ⚠️ **必须是固定值，不能用 `decideTitleCrop`**：续页在裁切逻辑下会因「顶部过薄」
- * 退化成整页，那就把「续页只有页眉」这个判据本身毁掉了（#290 正文里写明了这条）。
- *
- * 12% 的来历：issue 正文给的例子是 12%；另一处提到的 33% 是 `decideTitleCrop` 的
- * `MAX_CROP_PCT`（**裁切上限**，另一件事），不是窄带高度。12% 在真实语料上验过
- * （语料、轮次与结论见 #290 的评论）—— **别在这里写份数/页数**：那是会腐烂的计数，
- * 每加一份语料就错一次。
- */
-export const BAND_PCT = 0.12;
-
-/**
- * 一页的窄带几何：**缩放后的整页画布尺寸 + 窄带高**。
- *
- * 缩放口径与 `renderPageToJpeg` 是同一套（最长边压到 `OCR_TARGET_LONGEST_SIDE` 以内、
- * `OCR_MAX_SCALE` 封顶、**不设下限**），理由见那里：页面本身超过目标尺寸时（图片转 PDF
- * 会把 MediaBox 设成扫描像素尺寸），任何下限都会让它不再往目标收敛。
- */
-export function bandPlan<V extends { width: number; height: number }>(page: {
-  getViewport(opts: { scale: number }): V;
-}): { viewport: V; canvasWidth: number; canvasHeight: number; bandHeight: number } {
-  const unscaled = page.getViewport({ scale: 1 });
-  const longestSide = Math.max(unscaled.width, unscaled.height);
-  const fitScale = longestSide > 0 ? OCR_TARGET_LONGEST_SIDE / longestSide : OCR_MAX_SCALE;
-  const viewport = page.getViewport({ scale: Math.min(OCR_MAX_SCALE, fitScale) });
-  const canvasWidth = Math.ceil(viewport.width);
-  const canvasHeight = Math.ceil(viewport.height);
-  return {
-    viewport,
-    canvasWidth,
-    canvasHeight,
-    bandHeight: Math.max(1, Math.round(canvasHeight * BAND_PCT)),
-  };
-}
-
-/** 释放画布后备存储（与 `renderPageToJpeg` 同一条规矩：自己立的规矩自己不守就是长泄漏的地方） */
-function release(c: HTMLCanvasElement) {
-  c.width = 0;
-  c.height = 0;
-}
-
-/** 一页 → 顶部窄带的缩略图（data URL）。宽 `maxWidth`，高按比例 */
-async function bandThumb(page: PDFPageProxy, maxWidth: number): Promise<string> {
-  const { viewport, canvasWidth, canvasHeight, bandHeight } = bandPlan(page);
+/** 一页 → 顶部窄带的缩略图（data URL）。宽 `maxWidth`，高按 `bandPct` */
+async function bandThumb(page: PDFPageProxy, maxWidth: number, bandPct: number): Promise<string> {
+  const { viewport, canvasWidth, canvasHeight, bandHeight } = bandPlan(page, bandPct);
   const canvas = document.createElement("canvas");
   canvas.width = canvasWidth;
   canvas.height = canvasHeight;
@@ -83,13 +45,16 @@ async function bandThumb(page: PDFPageProxy, maxWidth: number): Promise<string> 
     bctx.drawImage(canvas, 0, 0, canvas.width, bandHeight, 0, 0, band.width, band.height);
     return makePreview(band, maxWidth);
   } finally {
-    release(canvas);
-    release(band);
+    releaseCanvas(canvas);
+    releaseCanvas(band);
   }
 }
 
 /**
  * 按需渲染**指定页**的窄带缩略图 → `页号 → data URL`。
+ *
+ * 高度走 `resolveBandPct`（与分段 OCR 共用同一份缓存）—— 面板里看到的条
+ * 必须就是模型看到的那条，包括**同一份文档只取一个高度**这条性质。
  *
  * ⚠️ **只在用户展开面板时才调**（面板默认关着 = 零成本）；⚠️ **不进行状态**：一张缩略图
  * 是几十 KB 的 data URL，十几页塞进 `UploadFile` 会跟着每次 `setFiles` 一起被复制。
@@ -110,6 +75,10 @@ export async function renderBandThumbs(
     .sort((a, b) => a - b);
   if (want.length === 0) return out;
 
+  // 取消就一页都不开（分辨率阶段也一样）；null 只在取消时出现
+  const bandPct = await resolveBandPct(file, opts);
+  if (bandPct === null) return out;
+
   const task = await openPdf(file);
   try {
     const pdf = await task.promise;
@@ -123,7 +92,7 @@ export async function renderBandThumbs(
       let page: PDFPageProxy | null = null;
       try {
         page = await pdf.getPage(pageNo);
-        out.set(pageNo, await bandThumb(page, opts.maxWidth ?? 360));
+        out.set(pageNo, await bandThumb(page, opts.maxWidth ?? 360, bandPct.pct));
       } catch {
         // 这一页没画出来：留在 map 外面，由调用方说一句（见 docblock）
       } finally {

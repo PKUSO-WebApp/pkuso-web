@@ -237,19 +237,52 @@ export function moveSegmentStart(
 }
 
 /**
- * 把第 `i` 段从中间拆成两段 —— **模型漏切时人工补一个边界**。
+ * 页 `page` 当前落在**第几段**（`starts` 的下标）；不在任何段里返回 `-1`。
+ *
+ * 用途是「把模型给的候选首页采用为边界」：插入边界要告诉 `splitSegment` 是**哪一段**，
+ * 而这个归属只能由 `starts` 现算 —— 用户可能刚挪过/删过边界，响应里的段划分已经不是
+ * 界面上的这一套了（拿响应里的 `ranges` 会让边界插进别的段）。
+ */
+export function segmentIndexOfPage(starts: number[], page: number, pageCount: number): number {
+  if (!Number.isSafeInteger(pageCount) || pageCount < 1) return -1;
+  if (!Number.isSafeInteger(page) || page < 1 || page > pageCount) return -1;
+  let idx = -1;
+  for (let i = 0; i < starts.length; i++) {
+    if (starts[i] <= page) idx = i;
+    else break;
+  }
+  return idx;
+}
+
+/**
+ * 把第 `i` 段拆成两段 —— **模型漏切时人工补一个边界**。
  *
  * 后端刻意「宁可少切不可多切」（少切只是当成一份处理，多切会把两份谱混进一段），
  * 所以「补边界」是用户的高频动作，不能只提供「移动」。
  * 只有一页的段拆不开，原样返回（用引用相等判断「没改」）。
+ *
+ * `at` 给了就**在这一页**插边界（「采用候选首页」走这条入口，见 `SegEvidence`）；
+ * 它必须严格落在段内部，否则原样返回 —— **绝不悄悄退回中点**，那会加一条用户没要的边界。
+ * 不传 `at` 时保持原行为（中点），「拆分」按钮靠的是它。
  */
-export function splitSegment(starts: number[], i: number, pageCount: number): number[] {
+export function splitSegment(
+  starts: number[],
+  i: number,
+  pageCount: number,
+  at?: number,
+): number[] {
   if (!Number.isSafeInteger(pageCount) || pageCount < 1) return starts;
   if (!Number.isSafeInteger(i) || i < 0 || i >= starts.length) return starts;
   const from = starts[i];
   const to = i + 1 < starts.length ? starts[i + 1] - 1 : pageCount;
   if (to - from < 1) return starts;
-  const mid = from + Math.floor((to - from + 1) / 2);
+  let mid: number;
+  if (at === undefined) {
+    mid = from + Math.floor((to - from + 1) / 2);
+  } else {
+    if (!Number.isSafeInteger(at) || at <= from || at > to) return starts;
+    mid = at;
+  }
   const next = [...starts];
   next.splice(i + 1, 0, mid);
   return next;

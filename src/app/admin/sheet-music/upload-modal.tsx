@@ -857,11 +857,13 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    *
    * 后端刻意「宁可少切，不可多切」，所以**模型漏切是常态** —— 没有这个按钮，
    * 用户唯一的出路就是重跑分段（再烧 N 次 OCR），而那还不一定能切得更好。
+   *
+   * `at` = 把边界落在指定页（「采用候选首页」走同一条入口）；不给就是段中点。
    */
-  const splitSegmentAt = (index: number, segIndex: number) =>
+  const splitSegmentAt = (index: number, segIndex: number, at?: number) =>
     editSegments(index, (f) => {
       const starts = startsOf(f);
-      const next = splitSegment(starts, segIndex, f.pageCount ?? 1);
+      const next = splitSegment(starts, segIndex, f.pageCount ?? 1, at);
       if (next === starts) return null;
       const text = [...startTextOf(f)];
       text.splice(segIndex + 1, 0, String(next[segIndex + 1]));

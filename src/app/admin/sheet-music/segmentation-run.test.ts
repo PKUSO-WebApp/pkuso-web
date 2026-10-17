@@ -197,6 +197,94 @@ describe("requestSegmentation —— rejected 的收口", () => {
   });
 });
 
+describe("requestSegmentation —— candidates（候选首页 + 置信度 + 后端裁决）", () => {
+  it("原样带出全部候选：已采纳与低置信未采纳都在，reason / confidence / rejection 不丢", async () => {
+    h.results.push({
+      data: {
+        success: true,
+        cuts: [3],
+        evidence: ["Corno II in F"],
+        rawCuts: [3, 4],
+        rejected: [{ page: 4, reason: "low-confidence" }],
+        candidates: [
+          { page: 3, reason: "标题块与第 1 页同形状", confidence: 0.92, accepted: true },
+          {
+            page: 4,
+            reason: "页眉换成了 Corno II",
+            confidence: 0.3,
+            accepted: false,
+            rejection: "low-confidence",
+          },
+        ],
+      },
+      error: null,
+    });
+
+    const res = await requestSegmentation(5, pageTexts);
+    expect(res.candidates).toEqual([
+      { page: 3, reason: "标题块与第 1 页同形状", confidence: 0.92, accepted: true },
+      {
+        page: 4,
+        reason: "页眉换成了 Corno II",
+        confidence: 0.3,
+        accepted: false,
+        rejection: "low-confidence",
+      },
+    ]);
+    // 契约是**只加不改**：cuts 的语义与新增字段之前逐字一致
+    expect(res.cuts).toEqual([3]);
+    expect(res.rawCuts).toEqual([3, 4]);
+  });
+
+  it("**缺字段 ⇒ `undefined`，空数组 ⇒ `[]`**（两者不许同形）", async () => {
+    // 完全没带 candidates（= 未部署新后端）
+    h.results.push({ data: { success: true, cuts: [3] }, error: null });
+    const missing = await requestSegmentation(5, pageTexts);
+    expect(missing.candidates).toBeUndefined();
+
+    // 回了、里面是空的 —— 这是一句**不同的话**（后端升级了，这次确实没有候选）
+    h.results.push({ data: { success: true, cuts: [], candidates: [] }, error: null });
+    const empty = await requestSegmentation(5, pageTexts);
+    expect(empty.candidates).toEqual([]);
+    expect(empty.candidates).not.toBeUndefined();
+
+    // 带了但形状不对：当没带（`undefined`），而不是当空数组
+    for (const bad of ["x", {}, null, 3]) {
+      h.results.push({ data: { success: true, cuts: [3], candidates: bad }, error: null });
+      expect((await requestSegmentation(5, pageTexts)).candidates).toBeUndefined();
+    }
+  });
+
+  it("单条形状收口：非对象丢弃；page / confidence 非有限数字⇒null；reason 空⇒null；accepted 非 true⇒false", async () => {
+    h.results.push({
+      data: {
+        success: true,
+        cuts: [],
+        candidates: [
+          // 非对象：没有可展示的信息，丢掉（不是造一行「第 ? 页」）
+          null,
+          "x",
+          42,
+          // 全都不合形状：page / confidence 归一成 null，空 reason 也归一成 null
+          { page: "4", reason: "  ", confidence: "0.9", accepted: "yes" },
+          // NaN / Infinity 在本地与线上可能是两种形状（JSON 里都是 null），一律归一
+          { page: NaN, reason: "a", confidence: Infinity, accepted: false, rejection: 7 },
+          // 合法条目原样保留；reason 去掉首尾空白
+          { page: 4.5, reason: " 理由 ", confidence: 0.5, accepted: true },
+        ],
+      },
+      error: null,
+    });
+
+    const res = await requestSegmentation(5, pageTexts);
+    expect(res.candidates).toEqual([
+      { page: null, reason: null, confidence: null, accepted: false },
+      { page: null, reason: "a", confidence: null, accepted: false },
+      { page: 4.5, reason: "理由", confidence: 0.5, accepted: true },
+    ]);
+  });
+});
+
 describe("requestSegmentation —— 失败路径（不许被改动碰坏）", () => {
   it("传输层 error ⇒ 抛错并带上 invokeErrorDetail 的文案", async () => {
     h.results.push({ data: null, error: { message: "boom" } });

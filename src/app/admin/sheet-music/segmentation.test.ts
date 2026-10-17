@@ -11,6 +11,7 @@ import {
   needsSegmentation,
   normalizeSegments,
   parseBoundaryText,
+  segmentIndexOfPage,
   segmentsFromResponse,
   splitSegment,
   startsFromResponse,
@@ -329,6 +330,36 @@ describe("加/删边界（模型漏切时人工补，后端刻意宁可少切）
   it("拆分：在段中间插一条边界，段数 +1", () => {
     expect(splitSegment([1, 7, 13, 17], 0, 19)).toEqual([1, 4, 7, 13, 17]);
     expect(splitSegment([1, 7, 13, 17], 3, 19)).toEqual([1, 7, 13, 17, 18]);
+  });
+
+  it("**按指定页拆分**（「采用候选首页」）：边界落在候选页，不是段中点", () => {
+    // 第 0 段 = 1..6，中点是 4 —— 指定 2 时必须插在 2，而不是 4
+    expect(splitSegment([1, 7, 13, 17], 0, 19, 2)).toEqual([1, 2, 7, 13, 17]);
+    // 段末尾单独成段
+    expect(splitSegment([1, 7, 13, 17], 0, 19, 6)).toEqual([1, 6, 7, 13, 17]);
+    expect(splitSegment([1, 7, 13, 17], 1, 19, 12)).toEqual([1, 7, 12, 13, 17]);
+  });
+
+  it("指定页不在段内部 ⇒ 原样返回（**绝不退回中点**，否则会加一条用户没要的边界）", () => {
+    const starts = [1, 7, 13, 17];
+    for (const at of [1, 7, 8, 0, 20, 4.5, NaN]) {
+      expect(splitSegment(starts, 0, 19, at)).toBe(starts);
+    }
+  });
+
+  it("`segmentIndexOfPage`：按**当前** starts 算候选页落在哪一段（用户挪过边界后仍对）", () => {
+    expect(segmentIndexOfPage([1, 7, 13], 1, 19)).toBe(0);
+    expect(segmentIndexOfPage([1, 7, 13], 6, 19)).toBe(0);
+    expect(segmentIndexOfPage([1, 7, 13], 7, 19)).toBe(1);
+    expect(segmentIndexOfPage([1, 7, 13], 13, 19)).toBe(2);
+    expect(segmentIndexOfPage([1, 7, 13], 19, 19)).toBe(2);
+  });
+
+  it("`segmentIndexOfPage`：非法页码 / 越界 / 非法页数一律 -1", () => {
+    for (const page of [0, -1, 20, 4.5, NaN]) {
+      expect(segmentIndexOfPage([1, 7, 13], page, 19)).toBe(-1);
+    }
+    expect(segmentIndexOfPage([1, 7, 13], 5, 0)).toBe(-1);
   });
 
   it("拆分后仍闭合覆盖，且新边界落在原段内部", () => {

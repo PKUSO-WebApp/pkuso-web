@@ -70,7 +70,7 @@ type FileRowProps = {
   onSegmentStartRawChange: (index: number, segIndex: number, raw: string) => void;
   onCommitSegmentStart: (index: number, segIndex: number) => void;
   onMergeSegment: (index: number, segIndex: number) => void;
-  onSplitSegment: (index: number, segIndex: number) => void;
+  onSplitSegment: (index: number, segIndex: number, at?: number) => void;
   onSplitIntoSegments: (index: number, freshRow?: UploadFile) => void;
 };
 

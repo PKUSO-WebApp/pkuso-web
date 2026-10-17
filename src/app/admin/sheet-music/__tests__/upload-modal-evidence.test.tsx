@@ -18,7 +18,7 @@
  * ⚠️ 用共享 harness（`./upload-modal-harness`）而不是自己搭假依赖：`vi.mock` 的注册时机
  * 有一条硬约束（见那个文件的头注释）。⚠️ **不要**把这批用例写进 `upload-modal-walk.test.tsx`。
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { h, readyToSegment, startSegmentation } from "./upload-modal-harness";
 import { SegEvidence } from "../components/seg-evidence";
@@ -115,6 +115,8 @@ describe("核实面板：『模型弃权』与『后端没回这个字段』必�
         starts={[1]}
         onSegmentStartRawChange={() => {}}
         onCommitSegmentStart={() => {}}
+        onMergeSegment={() => {}}
+        onSplitSegment={() => {}}
       />,
     );
 
@@ -258,6 +260,8 @@ describe("核实面板：口径不能对读者说假话（独立渲染）", () =
         starts={[1, 3]}
         onSegmentStartRawChange={() => {}}
         onCommitSegmentStart={() => {}}
+        onMergeSegment={() => {}}
+        onSplitSegment={() => {}}
       />,
     );
   }
@@ -288,5 +292,176 @@ describe("核实面板：口径不能对读者说假话（独立渲染）", () =
     openPanel();
     expect(screen.getByText("模型给了 1 个切点")).toBeTruthy();
     expect(screen.queryByText(/后端留下/)).toBeNull();
+  });
+});
+
+describe("核实面板：候选首页（页码 / 理由 / 置信度 / 后端裁决）", () => {
+  /** 6 页；cuts=[3]（两段 1–2 / 3–6），两个候选：第 3 页已采纳、第 4 页低置信未采纳。
+   *  跑完会自动拆成两行 —— 用「还原为一份」把源行（连同诊断字段）放回来。
+   *
+   *  ⚠️ 候选页选 **4**（不是段 3..6 的中点 5）：这样「采用为边界」若没把页号传给
+   *  `splitSegment`、退回了中点，断言会当场变红（这正是本组用例要钉的那条）。 */
+  async function setupCandidates() {
+    h.pages = 6;
+    h.segmentCuts = [3];
+    h.segmentExtra = {
+      evidence: ["Corno II in F"],
+      rawCuts: [3, 4],
+      rejected: [{ page: 4, reason: "low-confidence" }],
+      candidates: [
+        { page: 3, reason: "标题块与第 1 页同形状", confidence: 0.92, accepted: true },
+        {
+          page: 4,
+          reason: "页眉换成了 Corno II",
+          confidence: 0.3,
+          accepted: false,
+          rejection: "low-confidence",
+        },
+      ],
+    };
+    await readyToSegment();
+    await startSegmentation();
+    fireEvent.click(screen.getAllByText("还原为一份")[0]);
+    await waitFor(() => expect(screen.getByText("识别出 2 段 —— 可改分段点")).toBeTruthy());
+    // 等段级识别（每段一次 llm-analyze）落地再取基线，否则长尾会让「没调模型」偶发假红
+    await waitFor(() => expect(h.llm.length).toBe(3), { timeout: 10000 });
+    return {
+      ocr: h.ocr.length,
+      llm: h.llm.length,
+      bandCalls: h.bandCalls,
+      mosaicCalls: h.mosaicCalls,
+      invokes: h.invokeTimeouts.length,
+    };
+  }
+
+  it("列出全部候选；低置信整行警告色；「取消这条边界」走合并入口且不重跑 OCR / 模型", async () => {
+    const base = await setupCandidates();
+    openPanel();
+
+    expect(screen.getByText("第 3 页 · 置信度 92% · 已采纳")).toBeTruthy();
+    expect(screen.getByText("第 4 页 · 置信度 30% · 未采纳（low-confidence）")).toBeTruthy();
+    expect(screen.getByText("理由：标题块与第 1 页同形状")).toBeTruthy();
+    expect(screen.getByText("理由：页眉换成了 Corno II")).toBeTruthy();
+    expect(
+      screen.getByText("第 4 页 · 置信度 30% · 未采纳（low-confidence）").closest("li"),
+    ).toHaveClass("text-warning");
+
+    // 第 3 页当前是边界 ⇒ 「取消」；第 4 页不是 ⇒ 「采用」
+    fireEvent.click(screen.getByText("取消这条边界"));
+    await waitFor(() => expect(screen.getByText("识别出 1 段")).toBeTruthy());
+    // 段数变回 1，边界输入框也随之消失（只有第 1 段，起点恒为第 1 页）
+    expect(screen.queryByDisplayValue("3")).toBeNull();
+
+    // 只是改 starts：零 OCR、零模型调用（页文本与诊断都还在手里）
+    expect(h.ocr.length).toBe(base.ocr);
+    expect(h.llm.length).toBe(base.llm);
+    expect(h.bandCalls).toBe(base.bandCalls);
+    expect(h.mosaicCalls).toBe(base.mosaicCalls);
+    expect(h.invokeTimeouts.length).toBe(base.invokes);
+  });
+
+  it("低置信候选「采用为边界」：边界落在**候选页**（不是段中点），只改 starts、不重跑 OCR", async () => {
+    const base = await setupCandidates();
+    openPanel();
+
+    fireEvent.click(screen.getByText("采用为边界"));
+    await waitFor(() => expect(screen.getByText("识别出 3 段 —— 可改分段点")).toBeTruthy());
+    // 第 4 页成为边界（段 3..6 的中点是 5 —— 没传页号的实现会在这里插 5）
+    expect(screen.getByDisplayValue("4")).toBeTruthy();
+    expect(screen.queryByDisplayValue("5")).toBeNull();
+    // 区间：1–2 / 3–3 / 4–6
+    expect(screen.getByText("– 第 2 页")).toBeTruthy();
+    expect(screen.getByText("– 第 3 页")).toBeTruthy();
+    expect(screen.getByText("– 第 6 页")).toBeTruthy();
+
+    expect(h.ocr.length).toBe(base.ocr);
+    expect(h.llm.length).toBe(base.llm);
+    expect(h.bandCalls).toBe(base.bandCalls);
+    expect(h.mosaicCalls).toBe(base.mosaicCalls);
+    expect(h.invokeTimeouts.length).toBe(base.invokes);
+  });
+});
+
+describe("核实面板：候选字段『缺失』与『空数组』不许说成同一句话", () => {
+  function renderPanel(diag: Record<string, unknown>, starts = [1, 3]) {
+    const onMerge = vi.fn();
+    const onSplit = vi.fn();
+    render(
+      <SegEvidence
+        f={
+          {
+            file: new File([new Uint8Array([1])], "x.pdf", { type: "application/pdf" }),
+            pageCount: 6,
+            pageTexts: [{ page: 1, text: "第1页页眉" }],
+            segmentStarts: starts,
+            segDiagnostics: { cuts: [3], evidence: [], rawCuts: [3], rejected: [], ...diag },
+          } as unknown as UploadFile
+        }
+        i={0}
+        phase="confirm"
+        segBusy={false}
+        starts={starts}
+        onSegmentStartRawChange={() => {}}
+        onCommitSegmentStart={() => {}}
+        onMergeSegment={onMerge}
+        onSplitSegment={onSplit}
+      />,
+    );
+    openPanel();
+    return { onMerge, onSplit };
+  }
+
+  it("没有 candidates 字段 ⇒ 说「后端还没升级」，**不许**说成「没有候选」", () => {
+    renderPanel({});
+    expect(screen.getByText("这次响应没有候选字段（后端还没升级）")).toBeTruthy();
+    expect(screen.queryByText("这次响应里没有候选首页")).toBeNull();
+  });
+
+  it("candidates: [] ⇒ 说「这次响应里没有候选首页」，不许说成「后端还没升级」", () => {
+    renderPanel({ candidates: [] });
+    expect(screen.getByText("这次响应里没有候选首页")).toBeTruthy();
+    expect(screen.queryByText("这次响应没有候选字段（后端还没升级）")).toBeNull();
+  });
+
+  it("渲染页码 / 理由 / 置信度百分比 / 采纳状态；理由缺失与置信度缺失直说", () => {
+    renderPanel({
+      candidates: [
+        { page: 3, reason: "标题块与第 1 页同形状", confidence: 0.926, accepted: true },
+        {
+          page: 4,
+          reason: "页眉换成了 Corno II",
+          confidence: 0.3,
+          accepted: false,
+          rejection: "low-confidence",
+        },
+        { page: 5, reason: null, confidence: null, accepted: false },
+      ],
+    });
+    expect(screen.getByText("第 3 页 · 置信度 93% · 已采纳")).toBeTruthy();
+    expect(screen.getByText("第 4 页 · 置信度 30% · 未采纳（low-confidence）")).toBeTruthy();
+    expect(screen.getByText("第 5 页 · 置信度未给出 · 未采纳")).toBeTruthy();
+    expect(screen.getByText("理由：标题块与第 1 页同形状")).toBeTruthy();
+    expect(screen.getByText("理由：页眉换成了 Corno II")).toBeTruthy();
+    expect(screen.getByText("理由：（模型没写理由）")).toBeTruthy();
+  });
+
+  it("按钮接到**已有的**合并/拆分入口：取消 → onMerge(i, 边界下标)；采用 → onSplit(i, 段下标, 候选页)", () => {
+    const { onMerge, onSplit } = renderPanel({
+      candidates: [
+        { page: 3, reason: "a", confidence: 0.9, accepted: true },
+        { page: 4, reason: "b", confidence: 0.3, accepted: false, rejection: "low-confidence" },
+      ],
+    });
+    fireEvent.click(screen.getByText("取消这条边界"));
+    expect(onMerge).toHaveBeenCalledWith(0, 1);
+    fireEvent.click(screen.getByText("采用为边界"));
+    // 第 4 页落在第 1 段（starts=[1,3]）—— 段下标与页号都要传对
+    expect(onSplit).toHaveBeenCalledWith(0, 1, 4);
+  });
+
+  it("动作按**当前** starts 判断：已采纳的候选若已被用户删掉，给的是「采用」而不是「取消」", () => {
+    renderPanel({ candidates: [{ page: 3, reason: "a", confidence: 0.9, accepted: true }] }, [1]);
+    expect(screen.getByText("采用为边界")).toBeTruthy();
+    expect(screen.queryByText("取消这条边界")).toBeNull();
   });
 });

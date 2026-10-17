@@ -1830,7 +1830,7 @@ describe("段卡片上的三个入口（合并 / 拆分 / 段起点框）", () =
 });
 
 describe("分段的三种状态与失败页（#317 里那批「桩只会成功、状态支没人渲染」的缺口）", () => {
-  it("分段飞行中：写「识别中…（约 N 次 OCR）」—— 用户要知道在烧钱、且知道烧多少", async () => {
+  it("分段飞行中：写「识别中…」", async () => {
     await readyToSegment();
     let release!: () => void;
     h.ocrGate = new Promise<void>((r) => {
@@ -1838,7 +1838,7 @@ describe("分段的三种状态与失败页（#317 里那批「桩只会成功�
     });
     fireEvent.click(screen.getByText(/^识别分段（/));
 
-    await waitFor(() => expect(screen.getByText("识别中…（约", { exact: false })).toBeTruthy(), {
+    await waitFor(() => expect(screen.getByText("识别中…", { exact: false })).toBeTruthy(), {
       timeout: 10000,
     });
     // ⚠️ 光有那句文案不够 —— 它在点击的**同一次同步流程**里就写上了。

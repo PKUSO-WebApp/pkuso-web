@@ -26,8 +26,6 @@ type SegmentBlockProps = {
   segBusy: boolean;
   hasAnalyzingFiles: boolean;
   /* ↓↓ 纯 helper（都是 `(f) => …`）：由父组件传进来，而不是在这里重写 —— */
-  /** 这一行跑分段要几次 OCR（`segmentation.ts` 的 `estimateOcrCalls`） */
-  costOf: (f: UploadFile) => number;
   /** 归一化后的段列表 */
   segmentsOf: (f: UploadFile) => { from: number; to: number }[];
   /** 段的起点数组（界面上编辑的那个） */
@@ -52,7 +50,6 @@ export function SegmentBlock({
   phase,
   segBusy,
   hasAnalyzingFiles,
-  costOf,
   segmentsOf,
   startsOf,
   startTextOf,
@@ -67,9 +64,7 @@ export function SegmentBlock({
     <div className="space-y-1">
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="text-xs text-text-muted">分段：</span>
-        {f.segState === "running" && (
-          <span className="text-xs text-text-muted">识别中…（约 {costOf(f)} 次 OCR）</span>
-        )}
+        {f.segState === "running" && <span className="text-xs text-text-muted">识别中…</span>}
         {f.segState === "error" && <span className="text-xs text-danger">失败：{f.segError}</span>}
         {f.segState === undefined && (
           <span className="text-xs text-text-muted">

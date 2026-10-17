@@ -21,35 +21,10 @@ export const LLM_TIMEOUT_MS = 45000;
  * 扩成了两个含义 —— 「最多跳几页空白」与「最多升几页」—— 因为两者现在是**同一个循环**
  * （见 `pdf-render.ts` 的 `renderPagesForAnalysis`），一个上界同时管住它们。
  *
- * 它也是**配额上界**：每页最多 `MAX_OCR_IMAGES_PER_PAGE` 次 OCR（标题区 + 整页）。改大它
- * 等于改一份文件的最坏成本，界面上的数字（`estimateAnalysisOcrCalls`）跟着变。
+ * 它也是**配额上界**：每页最多送两张图给 OCR（标题区 + 整页）。改大它等于改一份文件的
+ * 最坏成本。
  */
 export const MAX_PAGES_EXAMINED = 3;
-
-/** 一页最多送两张图给 OCR：标题区一张、整页一张（未裁切时两者是同一张，只送一次） */
-const MAX_OCR_IMAGES_PER_PAGE = 2;
-
-/**
- * 一份文件在分析阶段**最多**烧几次 OCR。
- *
- * 这是**上界**，与分段那边「约 N 次」的估算不同 —— 它由几个常量相乘得出、不依赖语料，
- * 所以可以写成确定的数。真实值通常是 1（第 1 页就读出乐器），扉页起排的总谱是 2~3。
- */
-const MAX_ANALYSIS_OCR_PER_FILE = MAX_OCR_IMAGES_PER_PAGE;
-
-const MAX_ANALYSIS_OCR_PER_FILE_ESCALATED = MAX_PAGES_EXAMINED * MAX_OCR_IMAGES_PER_PAGE;
-
-/**
- * 一批文件在**分析阶段**最多烧几次 OCR —— 点火前给用户看的那个数。
- *
- * ⚠️ 与 `segmentation.ts` 的 `estimateOcrCalls` / `estimateTotalOcrCalls` **不是一回事**：
- * 那两个算的是**分段**的成本、报的是「约 N 次」（每页窄带多大要渲染完才知道，估不准）；
- * 这个只由上面的常量相乘得出、不依赖语料，所以报的是**确定的上界**。
- */
-export function estimateAnalysisOcrCalls(fileCount: number, escalate: boolean): number {
-  if (!Number.isSafeInteger(fileCount) || fileCount < 1) return 0;
-  return fileCount * (escalate ? MAX_ANALYSIS_OCR_PER_FILE_ESCALATED : MAX_ANALYSIS_OCR_PER_FILE);
-}
 
 /**
  * 这一页要试哪几张图、按什么顺序试。

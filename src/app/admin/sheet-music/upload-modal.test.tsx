@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { UploadModal } from "./upload-modal";
-import { analysisSettled, estimateAnalysisOcrCalls, pageAttempts } from "./analysis";
+import { analysisSettled, pageAttempts } from "./analysis";
 
 /**
  * 渲染冒烟测试。**存在的理由是两次真实的漏网**：
@@ -74,34 +74,10 @@ describe("select 阶段左下角的两个开关（#297）", () => {
     // `AUTO_SEGMENT_DEFAULT` —— 后者是恒真的同义反复，改默认值时不会变红。
     // ★ 变异：`AUTO_SEGMENT_DEFAULT` 改回 `true` → 这一条变红。
     expect(segment.checked, "「乐谱分段」默认关").toBe(false);
-    // 这两颗开关的字号翻倍（需求：原来的字太小）；只动这两颗 label，成本行不受影响。
-    // ★ 变异：LABEL_CLASS 里的 `text-2xl` 改回 `text-xs` ⇒ 两句一起红。
-    expect(fullScore.closest("label")?.className).toContain("text-2xl");
-    expect(segment.closest("label")?.className).toContain("text-2xl");
-  });
-
-  it("勾上「分析总谱」后成本数字跟着变（不跟着变，那个数就是假的）", async () => {
-    await selectOne(); // 1 份文件
-    const cost = () => screen.getByTestId("analysis-ocr-cost").textContent;
-    expect(cost()).toBe("分析最多 2 次 OCR");
-    fireEvent.click(screen.getByLabelText("分析总谱"));
-    expect(cost()).toBe("分析最多 6 次 OCR（多数文件 1 次）");
-  });
-});
-
-describe("点火前的成本上界", () => {
-  it("按常量算，不按语料估 —— 所以是确定的上界（分段那边才是「约」）", () => {
-    expect(estimateAnalysisOcrCalls(1, false)).toBe(2);
-    expect(estimateAnalysisOcrCalls(1, true)).toBe(6);
-    expect(estimateAnalysisOcrCalls(12, false)).toBe(24);
-    expect(estimateAnalysisOcrCalls(12, true)).toBe(72);
-  });
-
-  it("非法份数给 0 —— 免得把 NaN 渲染到界面上（NaN 会让「最多 N 次」变成「最多 NaN 次」）", () => {
-    expect(estimateAnalysisOcrCalls(0, true)).toBe(0);
-    expect(estimateAnalysisOcrCalls(NaN, true)).toBe(0);
-    expect(estimateAnalysisOcrCalls(-1, true)).toBe(0);
-    expect(estimateAnalysisOcrCalls(1.5, true)).toBe(0);
+    // 这两颗开关的字号（需求：先放大，再缩 25%）；只动这两颗 label。
+    // ★ 变异：LABEL_CLASS 里的 `text-lg` 改回 `text-2xl` 或 `text-xs` ⇒ 两句一起红。
+    expect(fullScore.closest("label")?.className).toContain("text-lg");
+    expect(segment.closest("label")?.className).toContain("text-lg");
   });
 });
 

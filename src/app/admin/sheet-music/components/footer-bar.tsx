@@ -26,9 +26,8 @@ type FooterBarProps = {
   segBusy: boolean;
   /** 段级识别还在飞的行数。> 0 时「确认上传」必须禁用（否则按没号的快照落库） */
   refiningCount: number;
-  /** 待分段的行（`{ f, i }`）。长度决定按钮在不在、写几次 OCR */
+  /** 待分段的行（`{ f, i }`）。长度决定按钮在不在 */
   segTargets: { f: UploadFile; i: number }[];
-  segCost: number;
   onClose: () => void;
   onStartSegmentation: () => void;
   onConfirmUpload: () => void;
@@ -44,7 +43,6 @@ export function FooterBar({
   segBusy,
   refiningCount,
   segTargets,
-  segCost,
   onClose,
   onStartSegmentation,
   onConfirmUpload,
@@ -52,7 +50,7 @@ export function FooterBar({
   return (
     <div className="flex justify-end gap-3 pt-2 border-t border-border">
       {/* 分段**不自动跑**：一份 N 页的合订谱要烧 N 次 OCR，而免费档是 500 次/天/IP。
-          所以这个按钮把代价写在脸上（#290 验收标准：调用次数在导入前可见）。
+          ⚠️ 界面上**只写份数、不写 OCR 次数**（2026-10-17 需求：管理员不用看到）。
           ⚠️ 不打 `mr-auto`：操作行按 #182 一律靠右下角，不许左右两端分布。 */}
       {/* `!allDone` 只在一个**瞬态窗口**里为假：部分行已 `done`、另一行还在上传队列里
           （那时 `phase === "uploading"`，下面 disabled 已经挡住按钮）。保留它是因为
@@ -74,7 +72,7 @@ export function FooterBar({
         >
           {segTargets.some(({ f }) => f.segState === "running")
             ? "识别分段中..."
-            : `识别分段（${segTargets.length} 份，约 ${segCost} 次 OCR）`}
+            : `识别分段（${segTargets.length} 份）`}
         </button>
       )}
       <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">

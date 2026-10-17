@@ -12,7 +12,6 @@ import { STORAGE_BUCKETS, sheetMusicPath } from "@/lib/storage";
 import { FULL_SCORE_SECTION } from "@/constants/instruments";
 import {
   boundarySpan,
-  estimateTotalOcrCalls,
   mergeSegmentIntoPrev,
   moveSegmentStart,
   parseBoundaryText,
@@ -656,14 +655,6 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
   const segPending = (f: UploadFile) => segEligible(f) && f.segState !== "done";
   const segTargets = files.map((f, i) => ({ f, i })).filter(({ f }) => segPending(f));
 
-  const segCost = estimateTotalOcrCalls(
-    segTargets.map(({ f }) => ({
-      pageCount: f.pageCount ?? null,
-      eligible: true,
-      donePages: f.pageTexts?.length ?? 0,
-    })),
-  );
-
   /**
    * 跑分段（#290 Step 1）。**手点与自动（#386）共用这一个入口**：同一份并发池、同一份切点
    * 推导、同一处拆行、同一处取消与失败落款。差别只在目标集 —— 手点按 `segPending` 现算
@@ -672,8 +663,8 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
    * ⚠️ `only` 留着「不传」这一档，所以调用处**别把函数引用直接交给 `onClick`**：那样
    * MouseEvent 会被当成第一个实参。页脚传的是 `() => startSegmentation()`。
    *
-   * 点火前让人看见代价这件事没丢：手点是按钮脸上那个「约 M 次 OCR」，自动路径是
-   * **选文件阶段那颗开关**（勾 = 同意为这一批按页数付账，见 `AUTO_SEGMENT_DEFAULT`）。
+   * 点火前的代价不再显示给管理员（2026-10-17 需求）：界面上只有份数，没有 OCR 次数。
+   * 自动路径的同意点是**选文件阶段那颗开关**（见 `AUTO_SEGMENT_DEFAULT`）。
    *
    * 切点判出来之后**直接拆成 N 行**（用户 2026-09-25 定）：导入者本来就不想读，
    * 所以主路径上不再需要点「确认这 N 段」。
@@ -1712,7 +1703,6 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                 </div>
                 {/* 开关块抽在 `components/pipeline-options.tsx`：它不进操作行（#182 靠右下角） */}
                 <PipelineOptions
-                  fileCount={files.length}
                   analyzeFullScore={analyzeFullScore}
                   onAnalyzeFullScoreChange={setAnalyzeFullScore}
                   autoSegment={autoSegment}
@@ -1721,7 +1711,7 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
                 {/*
                  * ⚠️ 开关块**必须在操作行之外**（上面那一行），不能塞进来做左右两端分布：
                  * CLAUDE.md #182 定的是操作行一律 `justify-end` 靠右下角、禁止左右两端分布，
-                 * 而窄屏上那么放还会让按钮组吃掉小半行，把左边的成本行挤成好几行。
+                 * 而窄屏上那么放还会让按钮组吃掉小半行。
                  */}
                 <div className="flex justify-end gap-3">
                   <button onClick={onClose} className="px-4 py-2 text-text-muted hover:text-text">
@@ -1790,7 +1780,6 @@ export function UploadModal({ open, onClose, scoreId, onUploaded }: UploadModalP
               segBusy={segBusy}
               refiningCount={refiningCount}
               segTargets={segTargets}
-              segCost={segCost}
               onClose={onClose}
               // ⚠️ 这层包装不是多余的：`startSegmentation` 现在收一个可选的目标集参数，
               // 直接传函数引用的话 onClick 会把 MouseEvent 当目标集塞进去。

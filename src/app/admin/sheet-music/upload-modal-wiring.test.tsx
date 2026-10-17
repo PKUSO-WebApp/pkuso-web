@@ -201,7 +201,7 @@ async function runAnalysisWithRealPdf(pageCount: number, name: string) {
 }
 
 describe("接线点：段行上的两个函数 prop（#326 §5）", () => {
-  it("「识别分段」按钮上的 OCR 次数是**算出来的**：25 页 × 2 份 ⇒ 约 6 次（不是份数、不是常量）", async () => {
+  it("「识别分段」按钮上写份数（管理员不需要看到 OCR 次数）", async () => {
     h.pages = 25;
     h.llmReplyFor = {
       "圆号.pdf": { ...okReply("圆号", "F调圆号"), subParts: [1] },
@@ -209,11 +209,8 @@ describe("接线点：段行上的两个函数 prop（#326 §5）", () => {
     };
     await runAnalysis({ names: ["圆号.pdf", "长笛.pdf"] });
 
-    // 两份 × `ceil(25 / MOSAIC_PAGES_PER_CALL(10))` = 6
-    // ★ 变异：`segCost={segCost}` → `{0}`（或任何常量、或 `{segTargets.length}`）⇒ 变红。
-    //   单独断言它，是因为这个数字是 #290 的验收标准（「调用次数在导入前可见」）——
-    //   用户按它决定要不要跑，写错就是让用户按错的钱做决定。
-    expect(screen.getByText("识别分段（2 份，约 6 次 OCR）")).toBeTruthy();
+    // ★ 变异：把份数写死或写成 OCR 次数 ⇒ 变红。
+    expect(screen.getByText("识别分段（2 份）")).toBeTruthy();
   });
 
   it("同组里已有一段上传成功 ⇒「还原为一份」灰着并用 title 说明；同组不重名时那句提示**不出现**", async () => {

@@ -45,26 +45,6 @@ export const MOSAIC_BUDGET_BYTES = 700 * 1024;
 export const MOSAIC_MAX_PAGES = 24;
 
 /**
- * 分组用的**保守每页字节**：成本估算拿它把字节预算折成「每张几页」。
- *
- * ⚠️ 为什么必须有：`MOSAIC_MAX_PAGES` 只是**页数**上限，真实分组是「700KB **或** 24 页，
- * 先到先算」。窄带偏大时（页更宽 / 扫描噪声多）字节先到 —— 只按 24 页估算会**低报**
- * （实测：每页 40KB 时 100 页真实要 6 次而不是 5 次；每页 1.4MB 时 30 页要 30 次而不是 2 次），
- * 而「调用次数在导入前可见」正是 #290 的验收标准。
- *
- * 取 70KB = **实测窄带的上限**（`.render-harness` 的 manifest：1800×288 那条窄带
- * 平均 44KB、最大 71.8KB）→ 每张约 10 页。代价是界面数字比典型情况高报约 2 倍
- * （Egmont 那批 116 页：界面「约 12 次」、实际 5 次）—— 宁可高报。
- */
-export const MOSAIC_TYPICAL_BAND_BYTES = 70 * 1024;
-
-/** 成本估算用的**每张页数**：页数上限与字节预算两条线里更紧的那条 */
-export const MOSAIC_PAGES_PER_CALL = Math.max(
-  1,
-  Math.min(MOSAIC_MAX_PAGES, Math.floor(MOSAIC_BUDGET_BYTES / MOSAIC_TYPICAL_BAND_BYTES)),
-);
-
-/**
  * **硬上限**：免费档一次 1MB。分组是按估算来的（安全上界），但合成之后拿到的是真实字节数 ——
  * 提交前再核一次，超了就让调用方退回逐页 OCR，而不是发一个注定被拒的请求。
  * （合成不花 OCR 配额，所以这次核对是免费的。）

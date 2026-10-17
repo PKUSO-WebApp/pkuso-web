@@ -2156,13 +2156,13 @@ describe("#326 §5：桩的缺口补齐之后（拼图成功路径 / 客户端�
     expect(h.mosaicCalls).toBe(1);
     expect(h.bandCalls).toBe(0);
     // ★ 变异：`canvas.height = bandHeight * bitmaps.length` → `* (n - 1)`（少画一条窄带）
-    //   ⇒ 长图变 300x72 ⇒ 红（在这一行，报错直接说出少画了多高）。
-    expect(h.mosaicSizes).toEqual([`${W}x108`]);
+    //   ⇒ 长图变 300x90 ⇒ 红（在这一行，报错直接说出少画了多高）。
+    expect(h.mosaicSizes).toEqual([`${W}x135`]);
     // ★ 变异：`ctx.drawImage(bmp, 0, i * bandHeight)` → `ctx.drawImage(bmp, 0, 0)`
     //   （三条窄带全叠在顶上）⇒ 红在这一行。
     //   只钉 `canvas.height` 是不够的：画布够高、可画在同一处，长图上照样只剩一条，
     //   而本用例的其它断言全都看不出来（OCR 桩按收到的图高算坐标，与画了什么无关）。
-    expect(h.draws.filter((d) => d.w === W && d.h === 108).map((d) => d.dy)).toEqual([0, 36, 72]);
+    expect(h.draws.filter((d) => d.w === W && d.h === 135).map((d) => d.dy)).toEqual([0, 45, 90]);
 
     // ② 归页的结果，直接看**发给后端的那一份**（分段请求体）。它同时钉两件事：
     //    - 每页拿到的是**自己那条窄带**的文本 —— 不是全归第 1 页、也不是全归最后一页
@@ -2202,8 +2202,8 @@ describe("#326 §5：桩的缺口补齐之后（拼图成功路径 / 客户端�
     // ★ 变异：窄带渲染循环倒着走（`for (pageNo = pdf.numPages; pageNo >= 1; pageNo--)`）
     //   ⇒ 尺寸序列反过来 ⇒ 红。页序**只能靠尺寸**看：桩回的文本是按调用序编号的，
     //   倒序之后照样一一对应（`bandTexts` 看不出来），而尺寸来自**那一条**窄带本身 ——
-    //   页高不等（36/36/43）才分得开，倒序 = 第 1 页拿到第 3 页的窄带。
-    expect(h.bandSizes).toEqual([`${W}x36`, `${W}x36`, `${W}x43`]);
+    //   页高不等（45/45/54）才分得开，倒序 = 第 1 页拿到第 3 页的窄带。
+    expect(h.bandSizes).toEqual([`${W}x45`, `${W}x45`, `${W}x54`]);
 
     // 正值对照：退回逐页之后**结果仍然对**（这才是那条判据的完整后果，
     // 它保证「不拼图」不是把整批变成空文本）
@@ -2316,7 +2316,7 @@ describe("#326 §5：桩的缺口补齐之后（拼图成功路径 / 客户端�
 /**
  * 窄带**取空**（成功、但一个字都没有）的那几页的补救（pkuso-backend#96 的输入侧）。
  *
- * 机制：窄带是**固定的几何裁切**（页高 12%），而居中排版的标题页整块落在 12% 之下 ——
+ * 机制：窄带是**固定的几何裁切**（页高 15%），而居中排版的标题页整块落在 15% 之下 ——
  * 渲染出来是一张白纸，OCR 成功但回空串。那个空串会被后端 `segment-parts` 渲染成
  * 「第 N 页: （空白）」交给模型，于是模型**把「窄带没取到」读成「这一页没有文字」**：
  * 「第 1 页空白 + 第 2 页一个完整标题块」直接导向「第 2 页是新的一份的开头」（多切）。
@@ -2336,8 +2336,8 @@ describe("窄带取空的补救（#96：空串被当成「这一页没文字」�
     await startSegmentation();
 
     // ★ 变异：删掉 `ocrBandsForSegmentation` 里那次 `retakeEmptyBands` ⇒ 只剩三条窄带 ⇒ 红。
-    // ★ 变异：补救改回窄带那一刀（`bands[p-1]`）⇒ 第四发是 300x36 而不是标题区 ⇒ 红。
-    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x36`, `${W}x36`, `${W}x36`, TITLE_TAG]);
+    // ★ 变异：补救改回窄带那一刀（`bands[p-1]`）⇒ 第四发是 300x45 而不是标题区 ⇒ 红。
+    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x45`, `${W}x45`, `${W}x45`, TITLE_TAG]);
     // ★ 变异：文本拿到了却不写回（丢掉 `retaken` 的返回值）⇒ 第 1 页仍是空串 ⇒ 红。
     // ★ 变异：改成「每一页都补一发」⇒ 上面那条序列先红（多发三发）。
     expect(h.segmentBody).toEqual({
@@ -2359,7 +2359,7 @@ describe("窄带取空的补救（#96：空串被当成「这一页没文字」�
     // ★ 变异：触发判据从「文本是空串」改成「页不在 `pageTexts` 里」⇒ 第 1 页也补一发 ⇒ 红。
     //   那一页本来就在 `failedPages` 里（后端对缺页已有「不要在那几页上给切点」的提示），
     //   把两种形态混在一起 = 对传输失败白烧配额。
-    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x36`, `${W}x36`, `${W}x36`]);
+    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x45`, `${W}x45`, `${W}x45`]);
     // 缺页的语义一字不变：载荷里仍然没有它（既不补成空串、也不补成补救文本）
     expect(h.segmentBody).toEqual({
       pageCount: 3,
@@ -2400,7 +2400,7 @@ describe("窄带取空的补救（#96：空串被当成「这一页没文字」�
     // 那一发**真的发出去了**（否则这条在「根本没实现补救」的世界里也绿 —— 空转）：
     // 上面那条期望（第 1 页保持空串）在「没实现补救」与「补救失败」两种世界下都为真，
     // 只有这一条把两者分开。★ 变异：删掉补救 ⇒ 只剩三条窄带 ⇒ 红。
-    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x36`, `${W}x36`, `${W}x36`, TITLE_TAG]);
+    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x45`, `${W}x45`, `${W}x45`, TITLE_TAG]);
   });
 
   it("补救**仍然为空**时同样保持窄带那条结果（「成功」≠「拿到了文字」）", async () => {
@@ -2428,7 +2428,7 @@ describe("窄带取空的补救（#96：空串被当成「这一页没文字」�
     );
     // 那一发**真的发出去了**（否则这条在「没实现补救」的世界里也绿 —— 空转）
     // ★ 变异：删掉补救 ⇒ 只剩三条窄带 ⇒ 红
-    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x36`, `${W}x36`, `${W}x36`, TITLE_TAG]);
+    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x45`, `${W}x45`, `${W}x45`, TITLE_TAG]);
     await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
       timeout: 10000,
     });
@@ -2463,7 +2463,7 @@ describe("窄带取空的补救（#96：空串被当成「这一页没文字」�
     // ★ 变异：删掉补救 ⇒ `retakeOpens` 恒为 0 ⇒ 红
     expect(h.retakeOpens).toBe(1);
     // 一个 *窄带* OCR 都没多发（补救在发请求之前就倒了）
-    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x36`, `${W}x36`, `${W}x36`]);
+    expect(h.ocr.slice(ocrBefore)).toEqual([`${W}x45`, `${W}x45`, `${W}x45`]);
     await waitFor(() => expect(screen.getAllByText("还原为一份")).toHaveLength(2), {
       timeout: 10000,
     });

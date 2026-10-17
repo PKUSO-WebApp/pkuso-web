@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { boundaryCandidates, evidenceByPage } from "../segmentation";
+import { boundaryCandidates, evidenceByPage, segmentIndexOfPage } from "../segmentation";
 import { renderBandThumbs } from "../band-render";
 import type { UploadFile, UploadPhase } from "../upload-modal.types";
 
@@ -16,8 +16,8 @@ import type { UploadFile, UploadPhase } from "../upload-modal.types";
  * ## 四条纪律（改这个文件前先读）
  *
  * 1. **默认关着，关着 = 零成本**：不解析 PDF、不渲染图、不发请求。展开才按需出图。
- * 2. **不猜**：分不出来的事（老响应里没有 `rawCuts` 字段）就直说分不出来，**不许**显示成
- *    「模型弃权」；没有引文就说没有，不拿别的字段凑一句像样的话。
+ * 2. **不猜**：分不出来的事（老响应里没有 `rawCuts` / `candidates` 字段）就直说分不出来，
+ *    **不许**显示成「模型弃权」或「没有候选」；没有引文就说没有，不拿别的字段凑一句像样的话。
  * 3. **挪边界走的是与输入框同一个入口**（`onSegmentStartRawChange` + `onCommitSegmentStart`）：
  *    不重跑 OCR —— 页文本与窄带图都已经在手里（#290 的验收标准之一）。
  *    ⚠️ 两次调用在**同一个 tick** 里发是安全的：`editSegments` 用的是函数式 `setFiles`，
@@ -38,10 +38,18 @@ type SegEvidenceProps = {
   starts: number[];
   onSegmentStartRawChange: (i: number, si: number, text: string) => void;
   onCommitSegmentStart: (i: number, si: number) => void;
+  /** 删一条边界（「取消这条边界」）—— 与段块里的「合并」是同一个入口 */
+  onMergeSegment: (i: number, si: number) => void;
+  /** 在指定页插一条边界（「采用为边界」）—— 与段块里的「拆分」是同一个入口，`at` 指定页 */
+  onSplitSegment: (i: number, si: number, at?: number) => void;
 };
 
 /** 窄带图片的显示宽度（px）。真实窄带约 6:1，所以它是个「一条」的形状 */
 const THUMB_PX = 112;
+
+/** 候选首页行里的动作按钮（「取消这条边界」/「采用为边界」共用一套样式） */
+const CANDIDATE_BUTTON_CLASS =
+  "px-2 py-0.5 text-xs border border-border rounded shrink-0 hover:text-primary disabled:opacity-50";
 
 export function SegEvidence({
   f,
@@ -51,6 +59,8 @@ export function SegEvidence({
   starts,
   onSegmentStartRawChange,
   onCommitSegmentStart,
+  onMergeSegment,
+  onSplitSegment,
 }: SegEvidenceProps) {
   const [open, setOpen] = useState(false);
   /** 页号 → data URL。`null` = 这一轮还没跑完（「渲染中」与「没渲染出来」是两件事） */
@@ -166,6 +176,84 @@ export function SegEvidence({
               )}
             </>
           )}
+          {/* ④ 候选首页：模型给的全部候选 + 后端裁决（pkuso-backend#96 §6）。
+              ⚠️ **缺失字段 ≠ 空数组**：前者是「后端还没升级」，后者是「回了、但没有候选」。
+              未采纳的候选也要列出来 —— 模型漏切时这里是人工补边界的入口。
+              低置信（后端 slug `low-confidence`）整行用警告色：它不是「模型没看见」，
+              而是「看见了但没把握」，正是最该让人看一眼的那一类。 */}
+          {diag && (
+            <div className="border-t border-border pt-1.5 space-y-1">
+              <p className="text-text-muted">候选首页（模型给的 + 后端裁决）：</p>
+              {diag.candidates === undefined ? (
+                <p className="text-text-muted">这次响应没有候选字段（后端还没升级）</p>
+              ) : diag.candidates.length === 0 ? (
+                <p className="text-text-muted">这次响应里没有候选首页</p>
+              ) : (
+                <ul className="space-y-1">
+                  {diag.candidates.map((c, k) => {
+                    // 后端 slug。**不**在前端重算「置信度 < 某阈值」：那是后端的判据，
+                    // 抄一份阈值到界面上，后端一调这里就开始说假话。
+                    const low = c.rejection === "low-confidence";
+                    const page = c.page;
+                    // 动作看**当前** `starts`，不看 `accepted` 的历史快照：用户可能已经
+                    // 手动采用/取消过。`accepted` 只用于显示后端当时的裁决。
+                    const boundaryAt = page === null ? -1 : starts.indexOf(page);
+                    const segAt =
+                      page !== null && page > 1 && boundaryAt < 0
+                        ? segmentIndexOfPage(starts, page, f.pageCount ?? 1)
+                        : -1;
+                    const pageText = page === null ? "页码未给出" : `第 ${page} 页`;
+                    const confText =
+                      c.confidence === null
+                        ? "置信度未给出"
+                        : `置信度 ${Math.round(c.confidence * 100)}%`;
+                    const statusText = c.accepted
+                      ? "已采纳"
+                      : c.rejection
+                        ? `未采纳（${c.rejection}）`
+                        : "未采纳";
+                    return (
+                      <li
+                        key={k}
+                        className={`border-t border-border pt-1 space-y-0.5 ${
+                          low ? "text-warning" : "text-text"
+                        }`}
+                      >
+                        <p>{`${pageText} · ${confText} · ${statusText}`}</p>
+                        <p className="break-all">{`理由：${c.reason ?? "（模型没写理由）"}`}</p>
+                        {boundaryAt >= 1 ? (
+                          <button
+                            onClick={() => onMergeSegment(i, boundaryAt)}
+                            disabled={locked}
+                            className={CANDIDATE_BUTTON_CLASS}
+                            title="删掉这条边界，把这一段并进上一段"
+                          >
+                            取消这条边界
+                          </button>
+                        ) : page !== null && page > 1 && segAt >= 0 ? (
+                          <button
+                            onClick={() => onSplitSegment(i, segAt, page)}
+                            disabled={locked}
+                            className={CANDIDATE_BUTTON_CLASS}
+                            title={`把第 ${page} 页采用为一条边界（不重跑 OCR）`}
+                          >
+                            采用为边界
+                          </button>
+                        ) : (
+                          <p className="text-text-muted">
+                            {page === 1
+                              ? "第 1 页是第 1 段的定义，不是边界"
+                              : "这一页无法作为边界（页码未给出或超出页数）"}
+                          </p>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
+
           {thumbErr && <p className="text-danger">{`窄带图没能渲染：${thumbErr}`}</p>}
 
           {/* ② 每条边界：模型为它给的引文 + 那几页的窄带图（点图 = 把边界挪过去） */}

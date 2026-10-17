@@ -224,6 +224,9 @@ export interface PageText {
  * - `abstainReason` → 展开面板的「上一次识别后端弃权」（排查用）
  * - `segment-parts` 的 `evidence` / `rawCuts` / `rejected` → `UploadFile.segDiagnostics`
  *   （分段面板：逐条引文，以及「没拿到切点」与「切点被丢掉」分开显示）
+ * - `segment-parts` 的 `candidates` → `UploadFile.segDiagnostics` + 面板的「候选首页」块
+ *   （页码 / 理由 / 置信度 / 后端裁决；未采纳的候选可一键采用为边界 —— 缺字段时必须
+ *   与「回了空数组」分开显示）
  * - `isFullScore` → `isFullScoreRow`（声部落总谱、不进分段）
  * - `extraSections` → `editsOf().extraSections`（一份谱落成几行）
  *

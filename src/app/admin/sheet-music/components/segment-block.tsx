@@ -41,7 +41,8 @@ type SegmentBlockProps = {
   onSegmentStartRawChange: (i: number, si: number, text: string) => void;
   onCommitSegmentStart: (i: number, si: number) => void;
   onMergeSegment: (i: number, si: number) => void;
-  onSplitSegment: (i: number, si: number) => void;
+  /** `at` = 边界落在指定页（「采用候选首页」）；不给 = 段中点 */
+  onSplitSegment: (i: number, si: number, at?: number) => void;
   onSplitIntoSegments: (i: number) => void;
 };
 
@@ -182,6 +183,8 @@ export function SegmentBlock({
           starts={startsOf(f)}
           onSegmentStartRawChange={onSegmentStartRawChange}
           onCommitSegmentStart={onCommitSegmentStart}
+          onMergeSegment={onMergeSegment}
+          onSplitSegment={onSplitSegment}
         />
       )}
       {/* 边界确认完了就拆成多行（#290 Step 2）：拆完每段各占一行、

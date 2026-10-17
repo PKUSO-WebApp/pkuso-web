@@ -267,9 +267,34 @@ export interface SegmentationRejection {
 }
 
 /**
+ * 一个**候选首页**（pkuso-backend#96 §6 的契约字段）：模型说「这一页像新一份的开头」，
+ * 后端给出裁决（`accepted`）与没采纳的理由（`rejection`）。
+ *
+ * ⚠️ `reason` / `confidence` 是**模型自报**的，只能当提示：采纳判据是「证据校验 +
+ * 置信度 ≥ 阈值」，两者都可能不成立。未采纳的候选**必须也列出来**让人决定 ——
+ * 「不确定就交给人工」正是本仓「泛化，不是特化」方针在界面上的落点。
+ */
+export interface SegmentationCandidate {
+  /** 页号；不是有限数字时为 `null`（这一条无法作为边界） */
+  page: number | null;
+  /** 模型写的理由；缺失/空串时为 `null`（后端对无理由的候选一律不采纳） */
+  reason: string | null;
+  /** 模型自报的置信度（0..1）；不是有限数字时为 `null` */
+  confidence: number | null;
+  /** 后端是否把它放进了 `cuts` */
+  accepted: boolean;
+  /**
+   * 没被采纳的理由（后端 slug，取值由后端 `REJECTION_REASONS` 定义 —— **别在这里抄一套
+   * 字面量联合**，理由与 `SegmentationRejection.reason` 同一条规矩）。
+   */
+  rejection?: string;
+}
+
+/**
  * 一次 `segment-parts` 的响应。⚠️ **不校验 `cuts`**：那是 `segmentation.ts` 的
  * `startsFromResponse` 的职责，`cuts` 保持 `unknown` 原样传下去（在本模块再写一份判据 =
- * 第三份实现）；`rawCuts` / `rejected` 本模块只负责带出来（展示与否是另一个决定），所以只做形状级收口。
+ * 第三份实现）；`rawCuts` / `rejected` / `candidates` 本模块只负责带出来（展示与否是另一个
+ * 决定），所以只做形状级收口。
  */
 export interface SegmentationResponse {
   /** 通过校验的切点（升序，1-based，恒不含第 1 页） */
@@ -287,6 +312,14 @@ export interface SegmentationResponse {
    */
   rawCuts?: unknown[];
   rejected: SegmentationRejection[];
+  /**
+   * 模型给的全部候选首页 + 后端裁决（pkuso-backend#96 §6）。
+   *
+   * ⚠️ 缺字段是 `undefined`（**不是 `[]`**）：与 `rawCuts` 同一条分界线 ——
+   * 「后端没回这个字段」与「回了、一个候选都没有」在界面上是两句不同的话。
+   * 前者只能说「后端还没升级」，后者才能说「这次没有候选」。
+   */
+  candidates?: SegmentationCandidate[];
 }
 
 /** 后端 `rejected` → 类型化的数组。非数组、非对象、缺 `reason` 的一律丢掉 */
@@ -301,6 +334,36 @@ function normalizeRejections(raw: unknown): SegmentationRejection[] {
     const pageNo = typeof page === "number" && Number.isFinite(page) ? page : null;
     return [
       typeof evidence === "string" ? { page: pageNo, reason, evidence } : { page: pageNo, reason },
+    ];
+  });
+}
+
+/**
+ * 后端 `candidates` → 类型化数组。
+ *
+ * **缺字段 / 形状不对一律 `undefined`**（与 `rawCuts` 同一口径），不是 `[]` —— 补一个空数组
+ * 会把「后端没回这个字段」说成「后端回了、没有候选」，而这两件事在界面上的动作不同
+ *（前者只能提示升级后端，后者可以让人放心地人工补边界）。
+ *
+ * 单条的形状收口与后端 `pickCandidate` 同源，只是**不做采纳判断**：`accepted` 不是 `true`
+ * 就按未采纳处理 —— 不能凭一个坏值给出「取消这条边界」这种**删边界**的动作。
+ */
+function normalizeCandidates(raw: unknown): SegmentationCandidate[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return raw.flatMap((item): SegmentationCandidate[] => {
+    if (!item || typeof item !== "object") return [];
+    const { page, reason, confidence, accepted, rejection } = item as Record<string, unknown>;
+    // 不是有限数字就是 `null`（`JSON.stringify(NaN)` 是 `"null"`，不显式挡会在本地与线上出现两种形状）
+    const pageNo = typeof page === "number" && Number.isFinite(page) ? page : null;
+    const conf = typeof confidence === "number" && Number.isFinite(confidence) ? confidence : null;
+    return [
+      {
+        page: pageNo,
+        reason: typeof reason === "string" && reason.trim() ? reason.trim() : null,
+        confidence: conf,
+        accepted: accepted === true,
+        ...(typeof rejection === "string" && rejection ? { rejection } : {}),
+      },
     ];
   });
 }
@@ -323,11 +386,13 @@ export async function requestSegmentation(
   if (!data?.success) {
     throw new Error(`分段失败: ${data?.error || data?.message || "未知错误"}`);
   }
-  // `cuts` / `rawCuts` 缺字段就传 `undefined`（不补 `?? []`）：`startsFromResponse` 对「不是数组」同样处置成「不切」，补默认值却会抹平「后端没回字段」
+  // `cuts` / `rawCuts` / `candidates` 缺字段就传 `undefined`（不补 `?? []`）：`startsFromResponse`
+  // 对「不是数组」同样处置成「不切」，补默认值却会抹平「后端没回字段」
   return {
     cuts: data.cuts,
     evidence: data.evidence,
     rawCuts: Array.isArray(data.rawCuts) ? data.rawCuts : undefined,
     rejected: normalizeRejections(data.rejected),
+    candidates: normalizeCandidates(data.candidates),
   };
 }

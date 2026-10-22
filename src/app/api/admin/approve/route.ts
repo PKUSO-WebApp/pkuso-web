@@ -1,4 +1,5 @@
 import { createServerSupabase } from "@/lib/supabase-server";
+import { normalizeProfileInstrument } from "@/constants/instrument-aliases";
 import type { ProfileUpdate } from "@/types/database";
 import { NextResponse } from "next/server";
 
@@ -92,7 +93,14 @@ export async function POST(request: Request) {
               updates.email = memberInfo.email;
             }
             if (!fullProfile.instrument && memberInfo.instrument_name) {
-              updates.instrument = memberInfo.instrument_name;
+              // 同 sync-profiles：DB 严格校验之前先归一；归不动的按「其他」。
+              const normalized = normalizeProfileInstrument(memberInfo.instrument_name);
+              if (!normalized) {
+                console.warn(
+                  `[Admin Approve] ${targetProfile.full_name}: 声部「${memberInfo.instrument_name}」不在标准列表内，按「其他」处理`,
+                );
+              }
+              updates.instrument = normalized ?? "其他";
             }
             if (!fullProfile.college && memberInfo.college) {
               updates.college = memberInfo.college;

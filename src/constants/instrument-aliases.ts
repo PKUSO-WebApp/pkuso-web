@@ -1,3 +1,5 @@
+import { INSTRUMENT_ORDER, OTHER_INSTRUMENT_GROUP } from "./instruments";
+
 /**
  * 声部别名映射：缩写/别名 → 规范中文名
  * 用于管理端配置页面批量导入时自动解析
@@ -77,4 +79,24 @@ export function resolveInstrumentName(input: string): string {
 
   // 未匹配到别名，返回原值
   return trimmed;
+}
+
+/**
+ * `profiles.instrument` 的合法值：16 个乐器 + 「其他」。
+ *
+ * 注意**不含「总谱」** —— 它是 `sheet_music_parts.section` 的特殊值，
+ * 不是一个人可以属于的声部。与 DB 触发器 `validate_profile_instrument` 同一条判据。
+ */
+const PROFILE_INSTRUMENTS = new Set<string>([...INSTRUMENT_ORDER, OTHER_INSTRUMENT_GROUP]);
+
+/**
+ * 把任意输入归一成 `profiles.instrument` 的合法值；无法归一返回 null。
+ *
+ * 用在「Excel 导入 → member_info → profiles」这条链上：`member_info.instrument_name`
+ * 最终会被 `sync-profiles` / 审批预填写进 `profiles.instrument`，而 DB 已经开了严格校验，
+ * 所以必须在源头归一，否则导入时看着成功、同步时才被触发器拒掉。
+ */
+export function normalizeProfileInstrument(input: string): string | null {
+  const resolved = resolveInstrumentName(input);
+  return PROFILE_INSTRUMENTS.has(resolved) ? resolved : null;
 }

@@ -1,4 +1,5 @@
 import { createServerSupabase } from "@/lib/supabase-server";
+import { normalizeProfileInstrument } from "@/constants/instrument-aliases";
 import type { ProfileUpdate } from "@/types/database";
 import { NextResponse } from "next/server";
 
@@ -104,9 +105,15 @@ export async function POST(request: Request) {
       // 构建更新字段（全量覆盖，但邮箱为空时不覆盖已有邮箱）
       const updates: ProfileUpdate = {};
 
-      // 乐器/声部
+      // 乐器/声部：DB 已开严格校验，必须归一后再写；归不动的按「其他」落库并留日志。
       if (memberInfo.instrument_name) {
-        updates.instrument = memberInfo.instrument_name;
+        const normalized = normalizeProfileInstrument(memberInfo.instrument_name);
+        if (!normalized) {
+          console.warn(
+            `[SyncProfiles] ${p.full_name}: 声部「${memberInfo.instrument_name}」不在标准列表内，按「其他」处理`,
+          );
+        }
+        updates.instrument = normalized ?? "其他";
       }
 
       // 学院

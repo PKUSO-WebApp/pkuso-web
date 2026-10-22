@@ -238,6 +238,12 @@ export function uploadBlocker({
   if (badInstrument) return unsafeNameMessage("乐器名", badInstrument);
   const badSection = findUnsafeInName(section);
   if (badSection) return unsafeNameMessage("声部名", badSection);
+  // 严格校验（DB 触发器 20261023120100）会拒绝词典外声部；这里先拦，
+  // 让用户在点「确认上传」之前就知道该改哪一格。判据与 `sectionWarning` 同源。
+  // 「总谱」「其他」是 section 的合法特殊值，`isKnownSection` 认它们。
+  if (!isKnownSection(section)) {
+    return `声部「${section}」不在标准列表内，请先选择标准声部`;
+  }
   // 分声部号非法就**别传**：文件名是前端生成的，非法输入会被原样写进文件名与库
   if (subPartsInvalid) return subPartsInvalid;
   // **模型给了号却谁都没读懂，就必须拦住。**

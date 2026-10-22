@@ -123,7 +123,7 @@ describe("useProfiles", () => {
   });
 
   // ---- update ----
-  it("update 成功时返回 true 并更新本地数据", async () => {
+  it("update 成功时返回 { ok: true } 并更新本地数据", async () => {
     const c = mockClient([
       { data: [{ id: "1", full_name: "张三", status: "approved" }], error: null },
       { data: [{ id: "1" }], error: null },
@@ -131,16 +131,16 @@ describe("useProfiles", () => {
     const { result } = renderHook(() => useProfiles({ status: "approved" }, c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    let ok = false;
+    let saved: Awaited<ReturnType<typeof result.current.update>> | undefined;
     await act(async () => {
-      ok = await result.current.update("1", { phone_number: "13800138000" });
+      saved = await result.current.update("1", { phone_number: "13800138000" });
     });
-    expect(ok).toBe(true);
+    expect(saved).toEqual({ ok: true });
     expect(result.current.data[0].phone_number).toBe("13800138000");
     expect(result.current.error).toBeNull();
   });
 
-  it("update 被 RLS 拒绝（返回空数组，静默失败）时返回 false 并设置错误", async () => {
+  it("update 被 RLS 拒绝（返回空数组，静默失败）时返回错误结果并设置错误", async () => {
     const c = mockClient([
       { data: [{ id: "1", full_name: "张三", status: "approved" }], error: null },
       { data: [], error: null }, // RLS 拒绝：PostgREST 返回 200 + 空数据
@@ -148,17 +148,17 @@ describe("useProfiles", () => {
     const { result } = renderHook(() => useProfiles({ status: "approved" }, c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    let ok = true;
+    let saved: Awaited<ReturnType<typeof result.current.update>> | undefined;
     await act(async () => {
-      ok = await result.current.update("1", { phone_number: "13800138000" });
+      saved = await result.current.update("1", { phone_number: "13800138000" });
     });
-    expect(ok).toBe(false);
+    expect(saved).toEqual({ ok: false, message: "无权限或记录不存在" });
     expect(result.current.error).toBe("无权限或记录不存在");
     // 本地数据不应被污染（保留旧值）
     expect(result.current.data[0]).not.toHaveProperty("phone_number", "13800138000");
   });
 
-  it("update 数据库错误时返回 false 并设置错误信息", async () => {
+  it("update 数据库错误时返回库的原始错误并设置错误信息", async () => {
     const c = mockClient([
       { data: [], error: null },
       { data: null, error: { message: "db error" } },
@@ -166,11 +166,11 @@ describe("useProfiles", () => {
     const { result } = renderHook(() => useProfiles(undefined, c as never));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    let ok = true;
+    let saved: Awaited<ReturnType<typeof result.current.update>> | undefined;
     await act(async () => {
-      ok = await result.current.update("1", { full_name: "李四" });
+      saved = await result.current.update("1", { full_name: "李四" });
     });
-    expect(ok).toBe(false);
+    expect(saved).toEqual({ ok: false, message: "db error" });
     expect(result.current.error).toBe("db error");
   });
 

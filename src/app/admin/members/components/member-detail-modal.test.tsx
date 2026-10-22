@@ -4,7 +4,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { AdminMemberDetailModal } from "./member-detail-modal";
 import { Modal } from "@/components/ui/Modal";
 import type { ProfileRow } from "@/types/database";
-import type { ProfileUpdatePayload } from "@/hooks/useProfiles";
+import type { ProfileUpdatePayload, ProfileUpdateResult } from "@/hooks/useProfiles";
 
 const mockModal = vi.mocked(Modal);
 
@@ -69,9 +69,9 @@ const baseUser: ProfileRow = {
 
 function renderModal(props?: {
   user?: ProfileRow | null;
-  onSave?: (id: string, payload: ProfileUpdatePayload) => Promise<boolean>;
+  onSave?: (id: string, payload: ProfileUpdatePayload) => Promise<ProfileUpdateResult>;
 }) {
-  const onSave = props?.onSave ?? vi.fn().mockResolvedValue(true);
+  const onSave = props?.onSave ?? vi.fn().mockResolvedValue({ ok: true });
   const onClose = vi.fn();
   render(
     <AdminMemberDetailModal
@@ -198,20 +198,30 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
     });
   });
 
-  it("保存失败时提示错误且不关闭", async () => {
-    const onSave = vi.fn().mockResolvedValue(false);
+  it("保存失败时显示库返回的原始错误（不是笼统的「保存失败」）且不关闭", async () => {
+    const onSave = vi.fn().mockResolvedValue({ ok: false, message: "unknown_instrument: 小提琴" });
     const { onClose } = renderModal({ onSave });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
-      expect(screen.getByText("保存失败，请重试")).toBeInTheDocument();
+      expect(screen.getByText("unknown_instrument: 小提琴")).toBeInTheDocument();
       expect(onClose).not.toHaveBeenCalled();
     });
   });
 
+  it("失败结果没带 message 时退回笼统文案", async () => {
+    const onSave = vi.fn().mockResolvedValue({ ok: false, message: "" });
+    renderModal({ onSave });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("保存失败，请重试")).toBeInTheDocument();
+    });
+  });
+
   it("提交中禁用保存按钮（防重复提交）", async () => {
-    let resolveSave!: (v: boolean) => void;
-    const savePromise = new Promise<boolean>((resolve) => {
+    let resolveSave!: (v: ProfileUpdateResult) => void;
+    const savePromise = new Promise<ProfileUpdateResult>((resolve) => {
       resolveSave = resolve;
     });
     const onSave = vi.fn().mockReturnValue(savePromise);
@@ -224,7 +234,7 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
       expect(submittingBtn).toBeDisabled();
     });
 
-    resolveSave(true);
+    resolveSave({ ok: true });
   });
 
   it("user 为 null 时不渲染表单", () => {
@@ -246,7 +256,7 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
         open
         user={baseUser}
         onClose={() => {}}
-        onSave={vi.fn().mockResolvedValue(true)}
+        onSave={vi.fn().mockResolvedValue({ ok: true })}
       />,
     );
     // 先编辑旧成员，制造脏状态
@@ -258,7 +268,7 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
         open
         user={otherUser}
         onClose={() => {}}
-        onSave={vi.fn().mockResolvedValue(true)}
+        onSave={vi.fn().mockResolvedValue({ ok: true })}
       />,
     );
 
@@ -272,8 +282,8 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
   });
 
   it("提交中禁止关闭：closeOnOverlay=false 且标题栏关闭按钮不触发 onClose", async () => {
-    let resolveSave!: (v: boolean) => void;
-    const savePromise = new Promise<boolean>((resolve) => {
+    let resolveSave!: (v: ProfileUpdateResult) => void;
+    const savePromise = new Promise<ProfileUpdateResult>((resolve) => {
       resolveSave = resolve;
     });
     const onSave = vi.fn().mockReturnValue(savePromise);
@@ -294,7 +304,7 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
     expect(onClose).not.toHaveBeenCalled();
 
     // 保存成功后才正常关闭
-    resolveSave(true);
+    resolveSave({ ok: true });
     await waitFor(() => {
       expect(onClose).toHaveBeenCalled();
     });

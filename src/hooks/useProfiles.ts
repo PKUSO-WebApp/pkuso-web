@@ -43,6 +43,15 @@ export type ProfileUpdatePayload = Partial<
   >
 >;
 
+/**
+ * 资料保存结果。
+ *
+ * 不能只返回 boolean：严格校验（DB 触发器 20261023120100）会拒掉词典外的
+ * `instrument`，界面必须显示库返回的原始错误，否则用户只看到「保存失败，请重试」，
+ * 不知道是声部名不标准。
+ */
+export type ProfileUpdateResult = { ok: true } | { ok: false; message: string };
+
 export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient = defaultClient) {
   const [data, setData] = React.useState<ProfileRow[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -279,7 +288,7 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
    * （静默失败），0 行更新视为失败，避免 UI 声称成功但数据未写入。
    */
   const update = React.useCallback(
-    async (id: string, payload: ProfileUpdatePayload) => {
+    async (id: string, payload: ProfileUpdatePayload): Promise<ProfileUpdateResult> => {
       const { data: rows, error: dbError } = await client
         .from("profiles")
         .update(payload as never)
@@ -287,15 +296,16 @@ export function useProfiles(filter?: ProfileFilter, client: typeof defaultClient
         .select("id");
       if (dbError) {
         setError(dbError.message);
-        return false;
+        return { ok: false, message: dbError.message };
       }
       if (!rows || rows.length === 0) {
-        setError("无权限或记录不存在");
-        return false;
+        const message = "无权限或记录不存在";
+        setError(message);
+        return { ok: false, message };
       }
       setData((prev) => prev.map((r) => (r.id === id ? { ...r, ...payload } : r)));
       setError(null);
-      return true;
+      return { ok: true };
     },
     [client],
   );

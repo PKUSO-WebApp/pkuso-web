@@ -180,6 +180,20 @@ describe("uploadBlocker：这一行为什么不能上传", () => {
     expect(uploadBlocker({ section: "圆号:1", instrument: "F调圆号:2" })).toContain("乐器名");
   });
 
+  it("非标准声部拦下（与 DB 严格校验同一条判据）", () => {
+    expect(uploadBlocker({ section: "小提琴", instrument: "小提琴" })).toBe(
+      "声部「小提琴」不在标准列表内，请先选择标准声部",
+    );
+    expect(uploadBlocker({ section: "木管", instrument: "长笛" })).toBe(
+      "声部「木管」不在标准列表内，请先选择标准声部",
+    );
+  });
+
+  it("总谱 / 其他 仍可上传（它们是 section 的合法特殊值）", () => {
+    expect(uploadBlocker({ section: "总谱", instrument: "总谱" })).toBe("");
+    expect(uploadBlocker({ section: "其他", instrument: "其他" })).toBe("");
+  });
+
   it("号非法 / 模型给的号没读懂 → 各自的文案（后者是统一的 unreadMessage）", () => {
     expect(
       uploadBlocker({ section: "圆号", instrument: "F调圆号", subPartsInvalid: "号不合法" }),

@@ -113,9 +113,13 @@ export function MemberImportModal({ open, onClose, onSuccess }: MemberImportModa
         return;
       }
 
+      // 行级警告（例如声部被归成「其他」）挂在 success 的 details 里；
+      // 不显示的话，用户只会看到「成功导入 N 条」，不知道有行被改写了。
+      const warnings = Array.isArray(result.warnings) ? (result.warnings as string[]) : [];
       setImportResult({
         success: true,
         message: result.message || `成功导入 ${result.imported} 条数据`,
+        details: warnings.length > 0 ? warnings : undefined,
       });
       setState("success");
       onSuccess();

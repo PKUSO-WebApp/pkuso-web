@@ -94,6 +94,12 @@ export default function AdminCreateRehearsalPage() {
       alert("排练不能跨天，结束时间不得晚于当天 23:59");
       return;
     }
+    // 分排必须选声部：DB 触发器 `rehearsals_validate_target_section` 会兜底，
+    // 这里先拦是为了让用户看到一句能照着做的话，而不是提交后的 23514。
+    if (form.type === "section" && form.targetSections.length === 0) {
+      alert("分排必须至少选择一个声部");
+      return;
+    }
     let geoFields: Record<string, unknown> = {
       checkin_lat: null,
       checkin_lng: null,

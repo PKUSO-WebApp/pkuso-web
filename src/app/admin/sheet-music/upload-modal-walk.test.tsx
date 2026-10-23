@@ -1239,7 +1239,9 @@ describe("「没有号」逃生口（判据现在只有一份，这里驱动真�
     // 点一下就把那个号静默抹掉（落库 `sub_parts = {}`）—— 与「消灭静默丢号」正好相反。
     h.llmReply = {
       success: true,
-      section: "小提琴",
+      // 声部必须是词典里的规范名（`isKnownSection` / DB 触发器都认它）；
+      // 「小提琴」是乐器名，不是声部名。推导出 [1] 的那条路仍是第一小提琴。
+      section: "第一小提琴",
       instrument: "小提琴",
       subParts: [1],
       subPartsRaw: "1,2",

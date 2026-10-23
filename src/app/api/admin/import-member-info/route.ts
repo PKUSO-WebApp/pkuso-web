@@ -1,6 +1,10 @@
 import { createServerSupabase } from "@/lib/supabase-server";
 import { NextResponse } from "next/server";
-import { resolveInstrumentName, INSTRUMENT_ALIAS_MAP } from "@/constants/instrument-aliases";
+import {
+  INSTRUMENT_ALIAS_MAP,
+  normalizeProfileInstrument,
+  resolveInstrumentName,
+} from "@/constants/instrument-aliases";
 
 /**
  * 导入团员信息 API
@@ -81,6 +85,8 @@ export async function POST(request: Request) {
     // 4. 解析并校验数据
     const parsedRows: MemberInfoRow[] = [];
     const errors: string[] = [];
+    // 行级警告：不阻断导入，但要告诉用户这一行被归成了「其他」
+    const warnings: string[] = [];
     const fullNames = new Set<string>();
 
     for (let i = 0; i < rows.length; i++) {
@@ -139,6 +145,21 @@ export async function POST(request: Request) {
             }
           }
           break;
+        }
+      }
+
+      // 严格校验：member_info 的值最终会被 sync-profiles / 审批预填写进
+      // profiles.instrument，而 DB 已开严格触发器，所以必须在源头归一。
+      // 无法归一的值沿用现有 fallback：按「其他」落库，并留一条行级警告。
+      if (instrumentName) {
+        const normalized = normalizeProfileInstrument(instrumentName);
+        if (normalized) {
+          instrumentName = normalized;
+        } else {
+          warnings.push(
+            `第 ${rowNum} 行：声部「${instrumentName}」不在标准列表内，已按「其他」处理`,
+          );
+          instrumentName = "其他";
         }
       }
 
@@ -221,6 +242,7 @@ export async function POST(request: Request) {
       success: true,
       imported: parsedRows.length,
       message: `成功导入 ${parsedRows.length} 条团员信息`,
+      warnings: warnings.length > 0 ? warnings : undefined,
     });
   } catch (err) {
     console.error("[ImportMemberInfo] 服务器错误:", err);

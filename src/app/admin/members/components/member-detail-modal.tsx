@@ -6,7 +6,7 @@ import { Toggle } from "@/components/ui/Toggle";
 import { INSTRUMENT_ORDER, OTHER_INSTRUMENT_GROUP } from "@/constants/instruments";
 import { isValidPhoneNumber } from "@/lib/validation";
 import type { ProfileRow } from "@/types/database";
-import type { ProfileUpdatePayload } from "@/hooks/useProfiles";
+import type { ProfileUpdatePayload, ProfileUpdateResult } from "@/hooks/useProfiles";
 
 /** 在团情况二选一（编辑表单用）：在团 → is_in_orchestra=true，不在团 → false */
 const ORCHESTRA_STATUS_OPTIONS = ["在团", "不在团"] as const;
@@ -16,8 +16,8 @@ type AdminMemberDetailModalProps = {
   /** 当前编辑的成员，null 时不展示内容 */
   user: ProfileRow | null;
   onClose: () => void;
-  /** 保存回调（由页面传入 useProfiles 的 update 方法），返回 true 表示保存成功 */
-  onSave: (id: string, payload: ProfileUpdatePayload) => Promise<boolean>;
+  /** 保存回调（由页面传入 useProfiles 的 update 方法），失败时带回库的原始错误 */
+  onSave: (id: string, payload: ProfileUpdatePayload) => Promise<ProfileUpdateResult>;
 };
 
 type FormState = {
@@ -88,7 +88,7 @@ function MemberEditForm({
 }: {
   user: ProfileRow;
   onClose: () => void;
-  onSave: (id: string, payload: ProfileUpdatePayload) => Promise<boolean>;
+  onSave: (id: string, payload: ProfileUpdatePayload) => Promise<ProfileUpdateResult>;
   isSubmitting: boolean;
   setSubmitting: (v: boolean) => void;
 }) {
@@ -138,7 +138,7 @@ function MemberEditForm({
     setSubmitting(true);
     setFormError(null);
     try {
-      const ok = await onSave(user.id, {
+      const result = await onSave(user.id, {
         full_name: form.full_name.trim(),
         instrument: form.instrument.trim() || null,
         college: form.college.trim() || null,
@@ -148,14 +148,16 @@ function MemberEditForm({
         is_section_leader: form.is_section_leader,
         is_in_orchestra: form.is_in_orchestra,
       });
-      if (ok) {
+      if (result.ok) {
         // 先解除提交状态（setSubmitting 同步更新 ref），再关闭，避免 handleClose 守卫拦截
         submittingRef.current = false;
         setSubmitting(false);
         onClose();
         return;
       }
-      setFormError("保存失败，请重试");
+      // 严格校验拒掉非标准声部时，这里就是用户唯一能看到的线索（例如
+      // `unknown_instrument: 小提琴`），不能再吞成一句笼统的「保存失败」。
+      setFormError(result.message || "保存失败，请重试");
     } finally {
       submittingRef.current = false;
       setSubmitting(false);

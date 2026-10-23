@@ -20,7 +20,7 @@ const h = vi.hoisted(() => ({
   prefill: { data: [{ id: "u1" }], error: null } as Res,
   /** 预填的三次读取 */
   targetProfile: { full_name: "张三" } as Row | null,
-  memberInfo: { email: "a@b.c", instrument_name: "小提琴", college: "元培" } as Row | null,
+  memberInfo: { email: "a@b.c", instrument_name: "第一小提琴", college: "元培" } as Row | null,
   fullProfile: { email: null, instrument: null, college: null } as Row | null,
   /** 每次写操作的记录：`selected` 为假说明这条链拿不回被影响的行 */
   writes: [] as { table: string; cols: string | undefined; selected: boolean; payload: Row }[],
@@ -89,7 +89,7 @@ describe("POST /api/admin/approve — 0 行更新检测", () => {
     h.approve = { data: [{ id: "u1" }], error: null };
     h.prefill = { data: [{ id: "u1" }], error: null };
     h.targetProfile = { full_name: "张三" };
-    h.memberInfo = { email: "a@b.c", instrument_name: "小提琴", college: "元培" };
+    h.memberInfo = { email: "a@b.c", instrument_name: "第一小提琴", college: "元培" };
     h.fullProfile = { email: null, instrument: null, college: null };
     h.writes = [];
   });
@@ -108,7 +108,7 @@ describe("POST /api/admin/approve — 0 行更新检测", () => {
         table: "profiles",
         cols: "id",
         selected: true,
-        payload: { email: "a@b.c", instrument: "小提琴", college: "元培" },
+        payload: { email: "a@b.c", instrument: "第一小提琴", college: "元培" },
       },
     ]);
   });
@@ -142,5 +142,17 @@ describe("POST /api/admin/approve — 0 行更新检测", () => {
 
     expect(res.status).toBe(200);
     expect(log.mock.calls.flat().join(" ")).toContain("已从 member_info 预填 profile");
+  });
+
+  it("member_info 的声部不在标准列表内 → 预填按「其他」写（不让 DB 触发器拒掉）", async () => {
+    h.memberInfo = { email: "a@b.c", instrument_name: "小提琴", college: "元培" };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const res = await approve();
+
+    expect(res.status).toBe(200);
+    const prefill = h.writes.find((w) => "instrument" in w.payload);
+    expect(prefill?.payload.instrument).toBe("其他");
+    expect(warn.mock.calls.flat().join(" ")).toContain("不在标准列表内");
   });
 });

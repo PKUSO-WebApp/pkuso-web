@@ -3,17 +3,16 @@
 import React from "react";
 import { useRouter } from "next/navigation";
 import { useRehearsals } from "@/hooks/useRehearsals";
-import { useAttendance, type AttendanceEntry } from "@/hooks/useAttendance";
 import { useSchedule } from "@/hooks/useSchedule";
-import { useProfiles } from "@/hooks/useProfiles";
+import { useSheetMusicOptions } from "@/hooks/useSheetMusicOptions";
 import { Modal } from "@/components/ui/Modal";
 import {
   CreateRehearsalForm,
   MAX_CHECKIN_RADIUS_M,
   MIN_CHECKIN_RADIUS_M,
   type CreateFormState,
+  type RepertoirePiece,
 } from "@/components/create-rehearsal-form";
-import type { ProfileRow } from "@/types/database";
 import { formatLocalISO, getLocalDateString } from "@/lib/date-utils";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
 import { sectionsToDisplayString } from "@/constants/instruments";
@@ -27,7 +26,7 @@ const EMPTY_FORM: CreateFormState = {
   startTime: null,
   endTime: null,
   location: "",
-  repertoire: "",
+  pieces: [],
   geofenceEnabled: true,
   checkinLat: DEFAULT_GEOFENCE_CENTER.lat,
   checkinLng: DEFAULT_GEOFENCE_CENTER.lng,
@@ -37,10 +36,9 @@ const EMPTY_FORM: CreateFormState = {
 export default function AdminCreateRehearsalPage() {
   const router = useRouter();
   const { setTitle, setOnBack } = useAdminPageHeader();
-  const { create } = useRehearsals();
-  const { batchInsert } = useAttendance();
+  const { createWithRepertoire } = useRehearsals();
   const { checkConflict } = useSchedule();
-  const { data: allProfiles } = useProfiles({ status: "approved" });
+  const sheetMusicOptions = useSheetMusicOptions();
 
   React.useEffect(() => {
     setTitle("发布排练日程");
@@ -55,7 +53,7 @@ export default function AdminCreateRehearsalPage() {
 
   const handleChange = (
     field: keyof CreateFormState,
-    value: string | number | boolean | Date | null | string[],
+    value: string | number | boolean | Date | null | string[] | RepertoirePiece[],
   ) => {
     if (field === "startTime" && value instanceof Date) {
       // +3h 默认时长，但不允许跨天：最晚 capped 到当天 23:59
@@ -76,15 +74,12 @@ export default function AdminCreateRehearsalPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (
-      submittingRef.current ||
-      submitting ||
-      !form.startTime ||
-      !form.endTime ||
-      !form.location ||
-      !form.repertoire
-    )
+    if (submittingRef.current || submitting || !form.startTime || !form.endTime || !form.location)
       return;
+    if (form.pieces.length === 0) {
+      alert("请至少添加一首曲目");
+      return;
+    }
     if (form.endTime <= form.startTime) {
       alert("结束时间必须晚于开始时间");
       return;
@@ -143,37 +138,35 @@ export default function AdminCreateRehearsalPage() {
         return;
       }
 
+      const repertoireText = form.pieces
+        .map((p) => p.title.trim())
+        .filter(Boolean)
+        .join("、");
+
       const payload: Record<string, unknown> = {
         type: form.type,
         target_section: form.type === "section" ? form.targetSections : [],
         start_time: formatLocalISO(form.startTime),
         end_time: formatLocalISO(form.endTime),
         location: form.location,
-        repertoire: form.repertoire,
+        repertoire: repertoireText,
         sign_in_code: null,
         ...geoFields,
       };
 
-      const rehearsalId = await create(payload);
+      // 创建排练 + 曲目在一个后端事务里完成：补名单必须发生在曲目写入之后
+      // （考勤名单由 DB 触发器生成，web 端不再手工 batchInsert）
+      const rehearsalId = await createWithRepertoire(
+        payload,
+        form.pieces.map((p, i) => ({
+          sheet_music_id: p.sheetMusicId,
+          title: p.title.trim(),
+          sort_order: i,
+        })),
+      );
       if (!rehearsalId) {
         alert("发布失败");
         return;
-      }
-
-      // 新建排练时自动为所有已批准团员生成出勤记录（默认缺勤）
-      // 只算团员（role === "member"）：管理员与 score_manager 都不是团员，不该进考勤名单。
-      // role 可空（列上没有 NOT NULL），空值按列默认值 member 算，别静默漏人
-      const members = (allProfiles as ProfileRow[]).filter(
-        (r) => (r.role ?? "member") === "member",
-      );
-      if (members.length > 0) {
-        const rows: AttendanceEntry[] = members.map((m) => ({
-          rehearsal_id: rehearsalId,
-          user_id: m.id,
-          status: "absent",
-        }));
-        const errMsg = await batchInsert(rows);
-        if (errMsg) console.error("批量创建出勤记录失败:", errMsg);
       }
 
       if (notifyByEmail) {
@@ -194,7 +187,7 @@ export default function AdminCreateRehearsalPage() {
               ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
             },
             body: JSON.stringify({
-              title: form.repertoire,
+              title: repertoireText,
               dateStr,
               location: form.location,
               type: form.type,
@@ -222,6 +215,7 @@ export default function AdminCreateRehearsalPage() {
         <CreateRehearsalForm
           form={form}
           submitting={submitting}
+          sheetMusicOptions={sheetMusicOptions}
           notifyByEmail={notifyByEmail}
           onNotifyByEmailChange={setNotifyByEmail}
           onChange={handleChange}

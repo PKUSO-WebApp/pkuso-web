@@ -71,7 +71,9 @@ export function useAttendance(client: typeof defaultClient = defaultClient) {
       setList([]);
       const { data, error } = await client
         .from("attendances")
-        .select("*, profiles!inner(full_name, instrument)")
+        // attendances 现在有两条指向 profiles 的 FK（user_id 与 updated_by），
+        // PostgREST 无法再自动选路；显式指定 user_id 那条（与仓库既有 feedback 的写法一致）
+        .select("*, profiles!attendances_user_id_profiles_fkey!inner(full_name, instrument)")
         .eq("rehearsal_id", rehearsalId);
       // 过期响应：一个 state 都不写（否则会把上一场的名单与 loading=false 盖到新一轮上）
       if (seq !== listSeqRef.current) return null;

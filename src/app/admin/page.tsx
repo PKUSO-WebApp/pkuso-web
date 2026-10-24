@@ -12,6 +12,7 @@ import {
   Megaphone,
   Music,
   Calendar,
+  ClipboardCheck,
   ClipboardList,
   UsersRound,
   MessagesSquare,
@@ -64,22 +65,29 @@ export default function AdminHomePage() {
 
   const [pendingApprovalCount, setPendingApprovalCount] = React.useState(0);
   const [pendingLeaveCount, setPendingLeaveCount] = React.useState(0);
+  const [pendingAttendanceChangeCount, setPendingAttendanceChangeCount] = React.useState(0);
 
   // 并行获取徽章计数
   const fetchBadges = React.useCallback(async () => {
     try {
-      const [{ count: approvalCount }, { count: leaveCount }] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "pending"),
-        supabase
-          .from("leave_requests")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "pending"),
-      ]);
+      const [{ count: approvalCount }, { count: leaveCount }, { count: attendanceChangeCount }] =
+        await Promise.all([
+          supabase
+            .from("profiles")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "pending"),
+          supabase
+            .from("leave_requests")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "pending"),
+          supabase
+            .from("attendance_change_requests")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "pending"),
+        ]);
       setPendingApprovalCount(approvalCount ?? 0);
       setPendingLeaveCount(leaveCount ?? 0);
+      setPendingAttendanceChangeCount(attendanceChangeCount ?? 0);
       setHeaderLoading(false);
     } catch {
       setHeaderLoading(false);
@@ -90,19 +98,25 @@ export default function AdminHomePage() {
     let mounted = true;
     const fetch = async () => {
       try {
-        const [{ count: approvalCount }, { count: leaveCount }] = await Promise.all([
-          supabase
-            .from("profiles")
-            .select("id", { count: "exact", head: true })
-            .eq("status", "pending"),
-          supabase
-            .from("leave_requests")
-            .select("id", { count: "exact", head: true })
-            .eq("status", "pending"),
-        ]);
+        const [{ count: approvalCount }, { count: leaveCount }, { count: attendanceChangeCount }] =
+          await Promise.all([
+            supabase
+              .from("profiles")
+              .select("id", { count: "exact", head: true })
+              .eq("status", "pending"),
+            supabase
+              .from("leave_requests")
+              .select("id", { count: "exact", head: true })
+              .eq("status", "pending"),
+            supabase
+              .from("attendance_change_requests")
+              .select("id", { count: "exact", head: true })
+              .eq("status", "pending"),
+          ]);
         if (mounted) {
           setPendingApprovalCount(approvalCount ?? 0);
           setPendingLeaveCount(leaveCount ?? 0);
+          setPendingAttendanceChangeCount(attendanceChangeCount ?? 0);
           setHeaderLoading(false);
         }
       } catch {
@@ -122,6 +136,7 @@ export default function AdminHomePage() {
   useAdminRealtime({
     onLeaveRequestChange: fetchBadges,
     onProfileChange: fetchBadges,
+    onAttendanceChangeRequestChange: fetchBadges,
   });
 
   const features: FeatureItem[] = [
@@ -132,6 +147,12 @@ export default function AdminHomePage() {
       badgeCount: pendingApprovalCount,
     },
     { title: "请假审批", href: "/admin/leave", icon: CalendarCheck, badgeCount: pendingLeaveCount },
+    {
+      title: "考勤修改申请",
+      href: "/admin/attendance-requests",
+      icon: ClipboardCheck,
+      badgeCount: pendingAttendanceChangeCount,
+    },
     { title: "公告管理", href: "/admin/announcements", icon: Megaphone },
     { title: "排练管理", href: "/admin/rehearsals", icon: Music },
     { title: "排练房预约", href: "/admin/schedule", icon: Calendar },

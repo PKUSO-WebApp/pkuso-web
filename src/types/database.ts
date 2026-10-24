@@ -22,6 +22,8 @@ export type PostRow = PublicSchema["Tables"]["posts"]["Row"];
 export type ScheduleRow = PublicSchema["Tables"]["schedules"]["Row"];
 export type ScheduleGroupRow = PublicSchema["Tables"]["schedule_groups"]["Row"];
 export type LeaveRequestRow = PublicSchema["Tables"]["leave_requests"]["Row"];
+export type AttendanceChangeRequestRow =
+  PublicSchema["Tables"]["attendance_change_requests"]["Row"];
 export type NotificationRow = PublicSchema["Tables"]["notifications"]["Row"];
 export type FeedbackRow = PublicSchema["Tables"]["feedback"]["Row"];
 export type SystemNotificationRow = PublicSchema["Tables"]["system_notifications"]["Row"];
@@ -45,6 +47,7 @@ export type ProfileRole = PublicSchema["Enums"]["profileRole"];
 export type PostType = PublicSchema["Enums"]["postType"];
 export type AttendanceStatus = PublicSchema["Enums"]["attendanceStatus"];
 export type LeaveStatus = PublicSchema["Enums"]["leaveStatus"];
+export type AttendanceChangeRequestStatus = PublicSchema["Enums"]["attendanceChangeRequestStatus"];
 export type NotificationCategory = PublicSchema["Enums"]["notificationCategory"];
 
 // ---- Join 扩展(Supabase join 返回的嵌套对象不在生成 schema 中) ----
@@ -62,5 +65,20 @@ export type LeaveRequestWithDetails = LeaveRequestRow & {
     start_time?: string | null;
     end_time?: string | null;
     location?: string | null;
+  } | null;
+};
+
+/** 出勤修改申请的列表行：target/requester/decider 是 API 的 to-one 嵌入别名。 */
+export type AttendanceChangeRequestWithDetails = AttendanceChangeRequestRow & {
+  target?: { full_name?: string | null; instrument?: string | null } | null;
+  requester?: { full_name?: string | null; instrument?: string | null } | null;
+  decider?: { full_name?: string | null } | null;
+  rehearsals?: {
+    repertoire?: string | null;
+    title?: string | null;
+    start_time?: string | null;
+    end_time?: string | null;
+    type?: string | null;
+    target_section?: string[] | null;
   } | null;
 };

@@ -7,6 +7,7 @@ interface RealtimeBadgeCallbacks {
   onLeaveRequestChange?: () => void;
   onProfileChange?: () => void;
   onNotificationChange?: () => void;
+  onAttendanceChangeRequestChange?: () => void;
 }
 
 export function useAdminRealtime(callbacks: RealtimeBadgeCallbacks) {
@@ -30,6 +31,11 @@ export function useAdminRealtime(callbacks: RealtimeBadgeCallbacks) {
       )
       .on("postgres_changes", { event: "*", schema: "public", table: "notifications" }, () =>
         callbacksRef.current.onNotificationChange?.(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "attendance_change_requests" },
+        () => callbacksRef.current.onAttendanceChangeRequestChange?.(),
       )
       .subscribe();
 

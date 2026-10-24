@@ -1,11 +1,13 @@
 import React from "react";
 
-type ButtonVariant = "primary" | "secondary";
+type ButtonVariant = "primary" | "secondary" | "success" | "danger";
 
 const BASE = "rounded-full px-4 py-2 text-xs font-medium disabled:opacity-60";
 const VARIANT: Record<ButtonVariant, string> = {
   primary: "bg-primary text-primary-foreground hover:opacity-90",
   secondary: "border border-border bg-surface text-text-muted hover:bg-muted",
+  success: "bg-success text-success-foreground hover:opacity-90",
+  danger: "bg-danger text-danger-foreground hover:opacity-90",
 };
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {

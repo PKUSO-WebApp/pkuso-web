@@ -137,12 +137,21 @@ export function buildPrincipalScopes(
     }));
 }
 
-/** 现任显示：优先用花名册里的姓名；查不到（已退团/改角色）时给出可辨认的兜底 */
-export function personLabel(roster: ProfileRosterRow[], userId: string | null): string {
+/**
+ * 现任显示：优先用花名册里的姓名；查不到（已退团/改角色）时给出可辨认的兜底。
+ *
+ * 乐器作用域的标题本身就是乐器，姓名后再缀 `（第一小提琴）` 是重复信息；
+ * 组作用域（木管/铜管）标题只是组名，保留乐器能说明这位部长是哪件乐器的。
+ */
+export function personLabel(
+  roster: ProfileRosterRow[],
+  userId: string | null,
+  showInstrument = false,
+): string {
   if (!userId) return "未任命";
   const person = roster.find((row) => row.id === userId);
   if (!person) return "未知成员";
   const name = person.full_name?.trim() || "未填写姓名";
   const instrument = person.instrument?.trim();
-  return instrument ? `${name}（${instrument}）` : name;
+  return showInstrument && instrument ? `${name}（${instrument}）` : name;
 }

@@ -194,7 +194,8 @@ export default function SectionLeadershipPage() {
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-text">{item.section.name}</p>
                     <p className="mt-0.5 text-xs text-text-muted">
-                      现任：{personLabel(roster, item.currentId)}
+                      现任：
+                      {personLabel(roster, item.currentId, item.section.kind === "group")}
                     </p>
                     {item.conflict && (
                       <p className="mt-1 text-xs text-warning">

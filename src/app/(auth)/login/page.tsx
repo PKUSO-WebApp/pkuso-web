@@ -49,7 +49,10 @@ export default function LoginPage() {
     const landing = profileError || !profile ? null : landingPathFor(profile.role);
 
     if (!landing) {
-      await supabase.auth.signOut();
+      // 只结束本设备的会话。默认 scope=global 会把这个账号在**小程序端**的会话
+      // 一起吊销：2026-10-24 实测，用团员账号在 web dev 登录被拒后，mp 阅读器的
+      // compose-annotated-pdf 开始 401「Session not found」（token 本身还没过期）。
+      await supabase.auth.signOut({ scope: "local" });
       setSubmitting(false);
       setErrorMsg(LOGIN_BLOCKED_MSG);
       return;

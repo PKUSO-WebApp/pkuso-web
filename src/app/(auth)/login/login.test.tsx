@@ -161,7 +161,7 @@ describe("LoginPage", () => {
         screen.getByText("成员请使用微信小程序登录（网页端仅限管理员与谱务账号）"),
       ).toBeInTheDocument();
     });
-    expect(supabase.auth.signOut).toHaveBeenCalled();
+    expect(supabase.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
   });
 
   it("profile 查询出错时同样拦截并登出", async () => {
@@ -187,7 +187,7 @@ describe("LoginPage", () => {
         screen.getByText("成员请使用微信小程序登录（网页端仅限管理员与谱务账号）"),
       ).toBeInTheDocument();
     });
-    expect(supabase.auth.signOut).toHaveBeenCalled();
+    expect(supabase.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
   });
 
   // ==========================================
@@ -236,7 +236,7 @@ describe("LoginPage", () => {
           screen.getByText("成员请使用微信小程序登录（网页端仅限管理员与谱务账号）"),
         ).toBeInTheDocument();
       });
-      expect(supabase.auth.signOut).toHaveBeenCalled();
+      expect(supabase.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
       expect(mockReplace).not.toHaveBeenCalled();
     });
   });

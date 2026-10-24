@@ -275,9 +275,17 @@ export default function ScoreDetailPage() {
         {score.notes && <p className="text-sm text-text-muted">{score.notes}</p>}
 
         <div>
-          <h2 className="text-sm font-medium text-text-muted mb-3">
-            声部 ({parts.length}) · 文件 ({totalFiles})
-          </h2>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-medium text-text-muted">
+              声部 ({parts.length}) · 文件 ({totalFiles})
+            </h2>
+            <button
+              onClick={() => router.push(`/admin/sheet-music/${scoreId}/print`)}
+              className="rounded-lg border border-border px-3 py-1 text-sm text-primary hover:bg-primary/10"
+            >
+              印制清单
+            </button>
+          </div>
 
           {parts.length === 0 ? (
             <div className="text-center py-12 text-text-muted border border-border rounded-lg">

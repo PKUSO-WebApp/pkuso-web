@@ -20,6 +20,7 @@ import {
   Mail,
   Upload,
   FileMusic,
+  ShieldCheck,
 } from "lucide-react";
 
 interface FeatureItem {
@@ -136,6 +137,7 @@ export default function AdminHomePage() {
     { title: "排练房预约", href: "/admin/schedule", icon: Calendar },
     { title: "考勤管理", href: "/admin/attendance", icon: ClipboardList },
     { title: "成员花名册", href: "/admin/roster", icon: UsersRound },
+    { title: "角色任命", href: "/admin/section-leadership", icon: ShieldCheck },
     { title: "社区管理", href: "/admin/community", icon: MessagesSquare },
     { title: "系统通知", href: "/admin/system-notify", icon: Bell },
     { title: "反馈查看", href: "/admin/feedback", icon: MessageSquare },

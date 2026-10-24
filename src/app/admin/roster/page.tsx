@@ -1,12 +1,14 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import { useProfiles } from "@/hooks/useProfiles";
 import { groupProfilesByInstrument } from "@/lib/roster-utils";
 import { filterByName } from "@/lib/name-search";
 import { isSyntheticEmail } from "@/lib/email-utils";
 import { matchInstrumentSection } from "@/lib/instrument-search";
 import { AdminMemberDetailModal } from "@/app/admin/members/components/member-detail-modal";
+import { RoleBadge } from "@/components/ui/RoleBadge";
 import type { ProfileRow } from "@/types/database";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
 
@@ -45,13 +47,21 @@ export default function RosterPage() {
   return (
     <div className="flex h-full min-h-0 flex-col space-y-4 pb-2">
       <div className="flex-1 min-h-0 space-y-4">
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="搜索姓名，声部"
-          className="input"
-        />
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="搜索姓名，声部"
+            className="input min-w-0 flex-1"
+          />
+          <Link
+            href="/admin/section-leadership"
+            className="shrink-0 rounded-full border border-border bg-surface px-3 py-2 text-xs font-medium text-text-muted hover:bg-muted"
+          >
+            角色任命
+          </Link>
+        </div>
         <div className="max-h-[500px] space-y-5 overflow-y-auto">
           {rosterLoading ? (
             <p className="py-8 text-center text-xs text-text-subtle">加载中…</p>
@@ -77,11 +87,8 @@ export default function RosterPage() {
                       >
                         <p className="flex flex-wrap items-center gap-1.5 font-medium text-text">
                           <span>{(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}</span>
-                          {u.is_section_leader && (
-                            <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-caption text-warning">
-                              🏅 声部长
-                            </span>
-                          )}
+                          {u.is_section_leader && <RoleBadge role="section_leader" />}
+                          {u.is_principal && <RoleBadge role="principal" />}
                         </p>
                         <p className="mt-0.5 text-text-muted">学院：{u.college?.trim() || "—"}</p>
                         <p className="mt-0.5 text-text-muted">

@@ -8,7 +8,7 @@ import { createServerSupabase } from "@/lib/supabase-server";
 export async function verifyAdmin(
   request: Request,
 ): Promise<
-  | { ok: true; supabaseServer: ReturnType<typeof createServerSupabase> }
+  | { ok: true; supabaseServer: ReturnType<typeof createServerSupabase>; userId: string }
   | { ok: false; response: NextResponse }
 > {
   const supabaseServer = createServerSupabase();
@@ -33,5 +33,5 @@ export async function verifyAdmin(
   if (profile?.role !== "admin")
     return { ok: false, response: NextResponse.json({ error: "权限不足" }, { status: 403 }) };
 
-  return { ok: true, supabaseServer };
+  return { ok: true, supabaseServer, userId: user.id };
 }

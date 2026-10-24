@@ -3,6 +3,7 @@
 import React from "react";
 import { Modal } from "@/components/ui/Modal";
 import { Toggle } from "@/components/ui/Toggle";
+import { RoleBadge } from "@/components/ui/RoleBadge";
 import { INSTRUMENT_ORDER, OTHER_INSTRUMENT_GROUP } from "@/constants/instruments";
 import { isValidPhoneNumber } from "@/lib/validation";
 import type { ProfileRow } from "@/types/database";
@@ -27,7 +28,6 @@ type FormState = {
   email: string;
   phone_number: string;
   join_date: string;
-  is_section_leader: boolean;
   is_in_orchestra: boolean;
 };
 
@@ -99,7 +99,6 @@ function MemberEditForm({
     email: user.email ?? "",
     phone_number: user.phone_number ?? "",
     join_date: user.join_date ?? "",
-    is_section_leader: user.is_section_leader,
     // 历史数据可能为 NULL（未设置）：表单为二元选择，默认按在团处理，保存时写入显式布尔
     is_in_orchestra: user.is_in_orchestra ?? true,
   }));
@@ -145,7 +144,6 @@ function MemberEditForm({
         email: form.email.trim() || null,
         phone_number: phone || null,
         join_date: form.join_date.trim() || null,
-        is_section_leader: form.is_section_leader,
         is_in_orchestra: form.is_in_orchestra,
       });
       if (result.ok) {
@@ -166,8 +164,11 @@ function MemberEditForm({
 
   return (
     <form onSubmit={handleSubmit} className="mt-2 space-y-3">
-      {user.is_section_leader && (
-        <p className="rounded-full bg-warning-bg px-2 py-0.5 text-xs text-warning">🏅 声部长</p>
+      {(user.is_section_leader || user.is_principal) && (
+        <div className="flex flex-wrap gap-1.5">
+          {user.is_section_leader && <RoleBadge role="section_leader" size="md" />}
+          {user.is_principal && <RoleBadge role="principal" size="md" />}
+        </div>
       )}
       <div>
         <label className="mb-1 block text-xs font-medium text-text-muted">姓名</label>
@@ -242,16 +243,6 @@ function MemberEditForm({
           onChange={(v) => setField("is_in_orchestra", v === "在团")}
         />
       </div>
-      <label className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          checked={form.is_section_leader}
-          onChange={(e) => setField("is_section_leader", e.target.checked)}
-          className="h-4 w-4 accent-primary"
-        />
-        <span className="text-sm text-text">声部长</span>
-      </label>
-
       {formError && <p className="text-xs text-danger">{formError}</p>}
 
       <div className="flex justify-end gap-2 pt-1">

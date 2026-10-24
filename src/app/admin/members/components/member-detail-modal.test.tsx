@@ -104,13 +104,15 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
     );
     expect((screen.getByPlaceholderText("如：2026秋") as HTMLInputElement).value).toBe("2024秋");
     expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("第一小提琴");
-    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
+    // P0c：声部长改为角色任命页管理，成员详情不再提供 checkbox
+    expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
-  it("声部长成员勾选声部长 checkbox", () => {
-    renderModal({ user: { ...baseUser, is_section_leader: true } });
-    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
+  it("声部长 / 首席身份只展示徽章，不提供可编辑 checkbox", () => {
+    renderModal({ user: { ...baseUser, is_section_leader: true, is_principal: true } });
     expect(screen.getByText("🏅 声部长")).toBeInTheDocument();
+    expect(screen.getByText("🎻 首席")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
   it("在团情况：入团时间下方展示 Toggle，默认跟随成员数据（在团）", () => {
@@ -181,7 +183,6 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
     const { onSave, onClose } = renderModal();
     const phoneInput = screen.getByPlaceholderText("11 位手机号") as HTMLInputElement;
     fireEvent.change(phoneInput, { target: { value: "18812345678" } });
-    fireEvent.click(screen.getByRole("checkbox"));
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
@@ -192,7 +193,6 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
         email: "zhangsan@example.com",
         phone_number: "18812345678",
         join_date: "2024秋",
-        is_section_leader: true,
         is_in_orchestra: true,
       });
       expect(onClose).toHaveBeenCalled();
@@ -279,7 +279,7 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
     expect((screen.getByPlaceholderText("11 位手机号") as HTMLInputElement).value).toBe(
       "18812345678",
     );
-    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText("🏅 声部长")).toBeInTheDocument();
   });
 
   it("提交中禁止关闭：closeOnOverlay=false 且标题栏关闭按钮不触发 onClose", async () => {

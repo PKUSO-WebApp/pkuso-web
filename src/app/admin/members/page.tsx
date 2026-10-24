@@ -10,6 +10,7 @@ import { useAttendanceEditor } from "@/hooks/useAttendanceEditor";
 import { AttendanceModal } from "@/components/attendance-modal";
 import { STATUS_LABEL } from "@/lib/attendance-status";
 import { Toggle } from "@/components/ui/Toggle";
+import { RoleBadge } from "@/components/ui/RoleBadge";
 import { parseLocalISO, getLocalDateString } from "@/lib/date-utils";
 import { groupProfilesByInstrument } from "@/lib/roster-utils";
 import { filterByName } from "@/lib/name-search";
@@ -424,11 +425,8 @@ export default function MembersPage() {
                           >
                             <p className="flex flex-wrap items-center gap-1.5 font-medium text-text">
                               <span>{(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}</span>
-                              {u.is_section_leader && (
-                                <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-caption text-warning">
-                                  🏅 声部长
-                                </span>
-                              )}
+                              {u.is_section_leader && <RoleBadge role="section_leader" />}
+                              {u.is_principal && <RoleBadge role="principal" />}
                             </p>
                             <p className="mt-0.5 text-text-muted">
                               学院：{u.college?.trim() || "—"}

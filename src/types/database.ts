@@ -24,6 +24,11 @@ export type LeaveRequestRow = PublicSchema["Tables"]["leave_requests"]["Row"];
 export type NotificationRow = PublicSchema["Tables"]["notifications"]["Row"];
 export type FeedbackRow = PublicSchema["Tables"]["feedback"]["Row"];
 export type SystemNotificationRow = PublicSchema["Tables"]["system_notifications"]["Row"];
+export type SectionRow = PublicSchema["Tables"]["sections"]["Row"];
+export type SectionGroupMemberRow = PublicSchema["Tables"]["section_group_members"]["Row"];
+export type SectionLeaderRow = PublicSchema["Tables"]["section_leaders"]["Row"];
+export type InstrumentPrincipalRow = PublicSchema["Tables"]["instrument_principals"]["Row"];
+export type ProfileRosterRow = PublicSchema["Views"]["profiles_roster"]["Row"];
 
 // ---- 表写入类型(Update) ----
 // `.update()` 的载荷用这些别名，别用 `Record<string, unknown>`：

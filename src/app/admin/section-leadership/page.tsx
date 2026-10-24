@@ -11,12 +11,14 @@ import type { SectionRow } from "@/types/database";
 import {
   buildLeaderScopes,
   buildPrincipalScopes,
+  findLeadershipMember,
   personLabel,
   toLeadershipMembers,
   type LeadershipMember,
 } from "./leadership";
+import { PresidentPanel, type PresidentEntry } from "./components/president-panel";
 
-type Tab = "leaders" | "principals";
+type Tab = "leaders" | "principals" | "presidents";
 type AssignmentKind = "leader" | "principal";
 
 type ScopeItem = {
@@ -29,7 +31,7 @@ type ScopeItem = {
 
 type PickerState = ScopeItem;
 
-/** 角色任命页（P0c）：声部长 / 首席两个 tab；团长任命等 P9 能力清单确定后再做。 */
+/** 角色任命页（P0c）：声部长 / 首席 / 团长三个 tab。 */
 export default function SectionLeadershipPage() {
   const { setTitle } = useAdminPageHeader();
   React.useEffect(() => {
@@ -41,6 +43,7 @@ export default function SectionLeadershipPage() {
     groupMembers,
     leaders,
     principals,
+    presidents,
     roster,
     loading,
     error,
@@ -50,6 +53,8 @@ export default function SectionLeadershipPage() {
     removeLeader,
     assignPrincipal,
     removePrincipal,
+    assignPresident,
+    removePresident,
   } = useSectionLeadership();
 
   const [tab, setTab] = React.useState<Tab>("leaders");
@@ -61,13 +66,50 @@ export default function SectionLeadershipPage() {
   const savingRef = React.useRef(false);
 
   const members = React.useMemo(() => toLeadershipMembers(roster), [roster]);
+  const presidentIds = React.useMemo(
+    () => new Set(presidents.map((row) => row.user_id)),
+    [presidents],
+  );
+  // 团长不能是声部长：声部长候选人里先去掉已有团长能力的人；首席不受影响。
+  const leaderMembers = React.useMemo(
+    () => members.filter((member) => !presidentIds.has(member.id)),
+    [members, presidentIds],
+  );
   const leaderScopes = React.useMemo(
-    () => buildLeaderScopes(sections, groupMembers, leaders, members),
-    [sections, groupMembers, leaders, members],
+    () => buildLeaderScopes(sections, groupMembers, leaders, leaderMembers),
+    [sections, groupMembers, leaders, leaderMembers],
   );
   const principalScopes = React.useMemo(
     () => buildPrincipalScopes(sections, principals, members),
     [sections, principals, members],
+  );
+
+  const presidentEntries: PresidentEntry[] = React.useMemo(() => {
+    const byUser = new Map<string, string[]>();
+    for (const row of presidents) {
+      byUser.set(row.user_id, [...(byUser.get(row.user_id) ?? []), row.capability]);
+    }
+    return [...byUser.entries()]
+      .map(([userId, capabilities]) => ({
+        userId,
+        member:
+          members.find((member) => member.id === userId) ?? findLeadershipMember(roster, userId),
+        capabilities: capabilities.sort(),
+        isPrincipal: principals.some((row) => row.principal_id === userId),
+      }))
+      .sort((a, b) =>
+        String(a.member?.full_name ?? "").localeCompare(String(b.member?.full_name ?? ""), "zh-CN"),
+      );
+  }, [presidents, members, principals, roster]);
+
+  const sectionLeaderIds = React.useMemo(
+    () => new Set(leaders.map((row) => row.leader_id)),
+    [leaders],
+  );
+  const presidentCandidates = React.useMemo(
+    () =>
+      members.filter((member) => !sectionLeaderIds.has(member.id) && !presidentIds.has(member.id)),
+    [members, sectionLeaderIds, presidentIds],
   );
 
   const list: ScopeItem[] =
@@ -79,13 +121,15 @@ export default function SectionLeadershipPage() {
           conflict: scope.conflict,
           kind: "leader",
         }))
-      : principalScopes.map((scope) => ({
-          section: scope.section,
-          members: scope.members,
-          currentId: scope.currentPrincipalId,
-          conflict: false,
-          kind: "principal",
-        }));
+      : tab === "principals"
+        ? principalScopes.map((scope) => ({
+            section: scope.section,
+            members: scope.members,
+            currentId: scope.currentPrincipalId,
+            conflict: false,
+            kind: "principal",
+          }))
+        : [];
 
   const pickerMembers = React.useMemo(
     () => (picker ? filterByName(picker.members, search) : []),
@@ -159,15 +203,20 @@ export default function SectionLeadershipPage() {
     <div className="flex h-full min-h-0 flex-col space-y-4">
       <div className="flex items-center justify-between gap-3">
         <Toggle
-          options={["leaders", "principals"] as const}
+          options={["leaders", "principals", "presidents"] as const}
           value={tab}
+          disabled={saving}
           onChange={(value) => {
             setTab(value);
             setActionError(null);
           }}
-          getLabel={(value) => (value === "leaders" ? "声部长" : "首席")}
+          getLabel={(value) =>
+            value === "leaders" ? "声部长" : value === "principals" ? "首席" : "团长"
+          }
         />
-        <span className="text-xs text-text-muted">{list.length} 个作用域</span>
+        <span className="text-xs text-text-muted">
+          {tab === "presidents" ? `${presidentEntries.length} 位团长` : `${list.length} 个作用域`}
+        </span>
       </div>
 
       {error && (
@@ -183,6 +232,14 @@ export default function SectionLeadershipPage() {
       <div className="flex-1 min-h-0 space-y-2 overflow-y-auto">
         {loading ? (
           <p className="py-8 text-center text-xs text-text-subtle">加载中…</p>
+        ) : tab === "presidents" ? (
+          <PresidentPanel
+            presidents={presidentEntries}
+            candidates={presidentCandidates}
+            saving={saving}
+            onAssign={assignPresident}
+            onRemove={removePresident}
+          />
         ) : list.length === 0 ? (
           <p className="py-8 text-center text-xs text-text-muted">暂无可任命的作用域</p>
         ) : (
@@ -203,7 +260,9 @@ export default function SectionLeadershipPage() {
                       </p>
                     )}
                     {item.members.length === 0 && (
-                      <p className="mt-1 text-xs text-text-subtle">该声部暂无可任命的在册团员</p>
+                      <p className="mt-1 text-xs text-text-subtle">
+                        该声部暂无可任命的在册团员（团长不能兼任声部长）
+                      </p>
                     )}
                   </div>
                   <div className="flex shrink-0 gap-2">

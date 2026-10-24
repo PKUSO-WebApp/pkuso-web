@@ -183,4 +183,18 @@ describe("角色任命页（P0c）", () => {
     expect(screen.getByText("长笛")).toBeInTheDocument();
     expect(screen.queryByText("木管")).not.toBeInTheDocument();
   });
+
+  it("搜索把已选成员过滤掉后，保存按钮失效（不能提交不可见的人）", async () => {
+    renderWithProviders(<SectionLeadershipPage />);
+    await screen.findByText("第一小提琴");
+    fireEvent.click(screen.getAllByRole("button", { name: "任命声部长" })[0]);
+
+    fireEvent.click(screen.getByRole("radio", { name: /张三/ }));
+    expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
+
+    fireEvent.change(screen.getByPlaceholderText("搜索姓名"), {
+      target: { value: "李四" },
+    });
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+  });
 });

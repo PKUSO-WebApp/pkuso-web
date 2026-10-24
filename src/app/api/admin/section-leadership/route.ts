@@ -24,8 +24,10 @@ const ERROR_MESSAGES: Record<string, string> = {
   actor_not_admin: "权限不足",
 };
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim() !== "";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
 
 function parseBody(value: unknown): Body | null {
@@ -33,22 +35,24 @@ function parseBody(value: unknown): Body | null {
   const body = value as Record<string, unknown>;
 
   if (body.action === "set_section_leader") {
-    return isNonEmptyString(body.section) && isNonEmptyString(body.userId)
-      ? { action: body.action, section: body.section, userId: body.userId }
-      : null;
+    const section = readString(body.section);
+    const userId = readString(body.userId);
+    if (!section || !userId || !UUID_RE.test(userId)) return null;
+    return { action: body.action, section, userId };
   }
   if (body.action === "remove_section_leader") {
-    return isNonEmptyString(body.section) ? { action: body.action, section: body.section } : null;
+    const section = readString(body.section);
+    return section ? { action: body.action, section } : null;
   }
   if (body.action === "set_principal") {
-    return isNonEmptyString(body.instrument) && isNonEmptyString(body.userId)
-      ? { action: body.action, instrument: body.instrument, userId: body.userId }
-      : null;
+    const instrument = readString(body.instrument);
+    const userId = readString(body.userId);
+    if (!instrument || !userId || !UUID_RE.test(userId)) return null;
+    return { action: body.action, instrument, userId };
   }
   if (body.action === "remove_principal") {
-    return isNonEmptyString(body.instrument)
-      ? { action: body.action, instrument: body.instrument }
-      : null;
+    const instrument = readString(body.instrument);
+    return instrument ? { action: body.action, instrument } : null;
   }
   return null;
 }
@@ -60,7 +64,13 @@ function interpretError(error: { message?: string; code?: string }): {
 } {
   const raw = error.message ?? "";
   const key = Object.keys(ERROR_MESSAGES).find((candidate) => raw.startsWith(candidate));
-  if (key) return { message: ERROR_MESSAGES[key], code: key, status: 400 };
+  if (key) {
+    return {
+      message: ERROR_MESSAGES[key],
+      code: key,
+      status: key === "actor_not_admin" ? 403 : 400,
+    };
+  }
   if (error.code === "42501") return { message: "权限不足", status: 403 };
   return { message: "保存失败，请重试", status: 500 };
 }

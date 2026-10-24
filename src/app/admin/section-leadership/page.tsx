@@ -91,6 +91,9 @@ export default function SectionLeadershipPage() {
     () => (picker ? filterByName(picker.members, search) : []),
     [picker, search],
   );
+  // 搜索把已选成员过滤掉后，保存按钮必须一起失效；否则会提交一个屏幕上不可见的人。
+  const selectedVisible =
+    selectedId !== null && pickerMembers.some((member) => member.id === selectedId);
 
   const openPicker = (item: ScopeItem) => {
     setPicker(item);
@@ -101,6 +104,7 @@ export default function SectionLeadershipPage() {
     );
     setSearch("");
     setPickerError(null);
+    setActionError(null);
   };
 
   const closePicker = () => {
@@ -113,8 +117,13 @@ export default function SectionLeadershipPage() {
 
   const handleAssign = async () => {
     if (!picker || !selectedId || savingRef.current) return;
+    if (!pickerMembers.some((member) => member.id === selectedId)) {
+      setPickerError("请先选择一个成员");
+      return;
+    }
     savingRef.current = true;
     setPickerError(null);
+    setActionError(null);
     const result =
       picker.kind === "leader"
         ? await assignLeader(picker.section.name, selectedId)
@@ -130,14 +139,20 @@ export default function SectionLeadershipPage() {
   };
 
   const handleRemove = async (item: ScopeItem) => {
+    if (savingRef.current) return;
     const roleLabel = item.kind === "leader" ? "声部长" : "首席";
     if (!window.confirm(`确定撤销「${item.section.name}」的${roleLabel}任命吗？`)) return;
+    savingRef.current = true;
     setActionError(null);
-    const result =
-      item.kind === "leader"
-        ? await removeLeader(item.section.name)
-        : await removePrincipal(item.section.name);
-    if (!result.ok) setActionError(result.message);
+    try {
+      const result =
+        item.kind === "leader"
+          ? await removeLeader(item.section.name)
+          : await removePrincipal(item.section.name);
+      if (!result.ok) setActionError(result.message);
+    } finally {
+      savingRef.current = false;
+    }
   };
 
   return (
@@ -146,7 +161,10 @@ export default function SectionLeadershipPage() {
         <Toggle
           options={["leaders", "principals"] as const}
           value={tab}
-          onChange={setTab}
+          onChange={(value) => {
+            setTab(value);
+            setActionError(null);
+          }}
           getLabel={(value) => (value === "leaders" ? "声部长" : "首席")}
         />
         <span className="text-xs text-text-muted">{list.length} 个作用域</span>
@@ -251,7 +269,10 @@ export default function SectionLeadershipPage() {
                       type="radio"
                       name="leadership-member"
                       checked={selectedId === member.id}
-                      onChange={() => setSelectedId(member.id)}
+                      onChange={() => {
+                        setSelectedId(member.id);
+                        setPickerError(null);
+                      }}
                       className="h-4 w-4 accent-primary"
                     />
                     <span className="text-sm text-text">
@@ -269,7 +290,7 @@ export default function SectionLeadershipPage() {
               </Button>
               <Button
                 type="button"
-                disabled={saving || !selectedId}
+                disabled={saving || !selectedVisible}
                 onClick={() => void handleAssign()}
               >
                 {saving ? "保存中…" : "保存"}

@@ -73,7 +73,9 @@ export function useSectionLeadership(client: typeof defaultClient = defaultClien
         roster.error,
       ].find((item) => item != null);
       if (firstError) {
-        setError(firstError.message);
+        // 管理员只需要知道「没加载出来」；PostgREST 的英文原文留在控制台排查。
+        console.error("[SectionLeadership] fetch failed", firstError);
+        setError("加载角色数据失败，请重试");
         setData(EMPTY_DATA);
         return;
       }
@@ -118,8 +120,12 @@ export function useSectionLeadership(client: typeof defaultClient = defaultClien
           },
           body: JSON.stringify(body),
         });
-        const result = (await response.json().catch(() => ({}))) as { error?: string };
-        if (!response.ok) {
+        const result = (await response.json().catch(() => ({}))) as {
+          ok?: boolean;
+          error?: string;
+        };
+        // 200 + 非 JSON（网关/保护页）不能被当成成功；只有明确的 { ok: true } 才算写入成功。
+        if (!response.ok || result.ok !== true) {
           return { ok: false, message: result.error || "保存失败，请重试" };
         }
         await fetch();

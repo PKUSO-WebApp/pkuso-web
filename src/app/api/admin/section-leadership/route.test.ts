@@ -13,6 +13,7 @@ import { POST } from "./route";
 
 const LEADER_ID = "11111111-1111-4111-8111-111111111111";
 const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
+const PRESIDENT_ID = "33333333-3333-4333-8333-333333333333";
 
 const invoke = (body: unknown) =>
   POST(
@@ -82,6 +83,51 @@ describe("POST /api/admin/section-leadership", () => {
     });
   });
 
+  it("团长：调用 admin_set_president / admin_remove_president", async () => {
+    const setRes = await invoke({ action: "set_president", userId: PRESIDENT_ID });
+    expect(setRes.status).toBe(200);
+    expect(h.rpc).toHaveBeenCalledWith("admin_set_president", {
+      p_user_id: PRESIDENT_ID,
+      p_actor_id: "admin-1",
+    });
+
+    h.rpc.mockClear();
+    const removeRes = await invoke({ action: "remove_president", userId: PRESIDENT_ID });
+    expect(removeRes.status).toBe(200);
+    expect(h.rpc).toHaveBeenCalledWith("admin_remove_president", {
+      p_user_id: PRESIDENT_ID,
+      p_actor_id: "admin-1",
+    });
+  });
+
+  it("团长/声部长互斥错误映射为中文", async () => {
+    h.rpc.mockResolvedValue({
+      data: null,
+      error: { message: "section_leader_cannot_be_president" },
+    });
+    const res = await invoke({ action: "set_president", userId: PRESIDENT_ID });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "声部长不能同时担任团长，请先撤销声部长",
+      code: "section_leader_cannot_be_president",
+    });
+
+    h.rpc.mockResolvedValue({
+      data: null,
+      error: { message: "president_cannot_be_section_leader" },
+    });
+    const leaderRes = await invoke({
+      action: "set_section_leader",
+      section: "木管",
+      userId: LEADER_ID,
+    });
+    expect(leaderRes.status).toBe(400);
+    expect(await leaderRes.json()).toEqual({
+      error: "团长不能同时担任声部长",
+      code: "president_cannot_be_section_leader",
+    });
+  });
+
   it("未知 action、缺字段或非法 UUID → 400，不调 RPC", async () => {
     expect((await invoke({ action: "nope" })).status).toBe(400);
     expect((await invoke({ action: "set_section_leader", section: "" })).status).toBe(400);
@@ -89,6 +135,7 @@ describe("POST /api/admin/section-leadership", () => {
     expect(
       (await invoke({ action: "set_principal", instrument: "长笛", userId: "abc" })).status,
     ).toBe(400);
+    expect((await invoke({ action: "set_president", userId: "abc" })).status).toBe(400);
     expect(h.rpc).not.toHaveBeenCalled();
   });
 

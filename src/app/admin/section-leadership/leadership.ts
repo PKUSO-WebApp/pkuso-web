@@ -23,6 +23,16 @@ export type LeadershipMember = {
   instrument: string | null;
 };
 
+/** 团长能力矩阵（2026-10-25 固定六项）；backend `president_capability_keys()` 同源。 */
+export const PRESIDENT_CAPABILITY_LABELS: Record<string, string> = {
+  rehearsal: "排练管理",
+  leave_approval: "请假审批",
+  membership_approval: "入团审批",
+  attendance: "修改考勤",
+  attendance_approval: "考勤修改申请审批",
+  attendance_export: "考勤导出",
+};
+
 export type LeaderScope = {
   section: SectionRow;
   members: LeadershipMember[];
@@ -58,6 +68,17 @@ export function toLeadershipMembers(roster: ProfileRosterRow[]): LeadershipMembe
 }
 
 /** 某个作用域的候选人：乐器精确匹配；组按字典展开 */
+/** 从完整花名册按 id 取人；用于现任团长可能已不在「可任命」过滤集里的情况。 */
+export function findLeadershipMember(
+  roster: ProfileRosterRow[],
+  userId: string | null,
+): LeadershipMember | null {
+  if (!userId) return null;
+  const row = roster.find((item) => item.id === userId);
+  if (!row?.id) return null;
+  return { id: row.id, full_name: row.full_name, instrument: row.instrument };
+}
+
 export function membersForScope(
   section: SectionRow,
   groupMembers: SectionGroupMemberRow[],

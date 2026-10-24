@@ -4,6 +4,7 @@ import React from "react";
 import { supabase as defaultClient } from "@/lib/supabase";
 import type {
   InstrumentPrincipalRow,
+  PresidentCapabilityRow,
   ProfileRosterRow,
   SectionGroupMemberRow,
   SectionLeaderRow,
@@ -22,6 +23,7 @@ type SectionLeadershipData = {
   groupMembers: SectionGroupMemberRow[];
   leaders: SectionLeaderRow[];
   principals: InstrumentPrincipalRow[];
+  presidents: PresidentCapabilityRow[];
   roster: ProfileRosterRow[];
 };
 
@@ -30,6 +32,7 @@ const EMPTY_DATA: SectionLeadershipData = {
   groupMembers: [],
   leaders: [],
   principals: [],
+  presidents: [],
   roster: [],
 };
 
@@ -37,7 +40,9 @@ export type LeadershipMutation =
   | { action: "set_section_leader"; section: string; userId: string }
   | { action: "remove_section_leader"; section: string }
   | { action: "set_principal"; instrument: string; userId: string }
-  | { action: "remove_principal"; instrument: string };
+  | { action: "remove_principal"; instrument: string }
+  | { action: "set_president"; userId: string }
+  | { action: "remove_president"; userId: string };
 
 export type MutationResult = { ok: true } | { ok: false; message: string };
 
@@ -55,11 +60,12 @@ export function useSectionLeadership(client: typeof defaultClient = defaultClien
     setError(null);
 
     try {
-      const [sections, groupMembers, leaders, principals, roster] = await Promise.all([
+      const [sections, groupMembers, leaders, principals, presidents, roster] = await Promise.all([
         client.from("sections").select("*").order("sort_order"),
         client.from("section_group_members").select("*").order("sort_order"),
         client.from("section_leaders").select("*"),
         client.from("instrument_principals").select("*"),
+        client.from("president_capabilities").select("*"),
         client.from("profiles_roster").select("*"),
       ]);
 
@@ -70,6 +76,7 @@ export function useSectionLeadership(client: typeof defaultClient = defaultClien
         groupMembers.error,
         leaders.error,
         principals.error,
+        presidents.error,
         roster.error,
       ].find((item) => item != null);
       if (firstError) {
@@ -85,6 +92,7 @@ export function useSectionLeadership(client: typeof defaultClient = defaultClien
         groupMembers: groupMembers.data ?? [],
         leaders: leaders.data ?? [],
         principals: principals.data ?? [],
+        presidents: presidents.data ?? [],
         roster: roster.data ?? [],
       });
     } catch {
@@ -152,5 +160,7 @@ export function useSectionLeadership(client: typeof defaultClient = defaultClien
     assignPrincipal: (instrument: string, userId: string) =>
       mutate({ action: "set_principal", instrument, userId }),
     removePrincipal: (instrument: string) => mutate({ action: "remove_principal", instrument }),
+    assignPresident: (userId: string) => mutate({ action: "set_president", userId }),
+    removePresident: (userId: string) => mutate({ action: "remove_president", userId }),
   };
 }

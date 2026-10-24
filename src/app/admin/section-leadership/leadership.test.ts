@@ -175,8 +175,9 @@ describe("buildLeaderScopes / buildPrincipalScopes", () => {
 });
 
 describe("personLabel", () => {
-  it("优先显示姓名（乐器），查不到时给兜底", () => {
-    expect(personLabel(rosterRows, "u1")).toBe("张三（长笛）");
+  it("乐器作用域只显示姓名；组作用域才补乐器；查不到时给兜底", () => {
+    expect(personLabel(rosterRows, "u1")).toBe("张三");
+    expect(personLabel(rosterRows, "u1", true)).toBe("张三（长笛）");
     expect(personLabel(rosterRows, null)).toBe("未任命");
     expect(personLabel(rosterRows, "missing")).toBe("未知成员");
   });

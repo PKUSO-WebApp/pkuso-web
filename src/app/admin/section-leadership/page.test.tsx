@@ -171,7 +171,7 @@ describe("角色任命页（P0c）", () => {
       );
     });
 
-    expect(await screen.findByText(/现任：张三（第一小提琴）/)).toBeInTheDocument();
+    expect(await screen.findByText("现任：张三")).toBeInTheDocument();
   });
 
   it("首席 tab 只列 can_principal 的乐器", async () => {

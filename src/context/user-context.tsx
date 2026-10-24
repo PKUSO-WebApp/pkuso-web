@@ -69,7 +69,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     // 它是 `AuthRetryableFetchError`（`CustomAuthError → AuthError`），走的仍是
     // 「返回 { error }」那条路。真正抛的是 storage / `_removeSession` 之类的意外。
     try {
-      const { error } = await supabase.auth.signOut();
+      // 只结束本设备会话：web 与 mp 共用账号，global 会把小程序端一起踢下线
+      const { error } = await supabase.auth.signOut({ scope: "local" });
       if (error) console.error("[user-context] signOut 返回错误", error);
     } catch (error) {
       console.error("[user-context] signOut 抛出异常", error);

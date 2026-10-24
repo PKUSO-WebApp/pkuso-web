@@ -152,7 +152,8 @@ export function useAuth(
   }, [client, sessionUserId, onProfileLoaded, onClearProfile]);
 
   const handleSignOut = async () => {
-    await client.auth.signOut();
+    // 只结束本设备会话；global 会连带吊销 mp 上同一账号的会话
+    await client.auth.signOut({ scope: "local" });
     onClearProfile();
   };
 

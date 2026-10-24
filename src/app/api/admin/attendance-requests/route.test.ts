@@ -157,7 +157,29 @@ describe("/api/admin/attendance-requests", () => {
     const res = await invokePost({ action: "approve", ids: [ID_1, ID_2] });
     expect(await res.json()).toEqual({
       results: [
-        { id: ID_1, ok: false, code: "rpc_error", message: "boom" },
+        { id: ID_1, ok: false, code: "rpc_error" },
+        { id: ID_2, ok: true, status: "approved" },
+      ],
+    });
+  });
+
+  it("42501 映射为 actor_not_admin，不把原始 DB 文案回给浏览器", async () => {
+    h.rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "actor_not_admin" } });
+    const res = await invokePost({ action: "approve", ids: [ID_1] });
+    expect(await res.json()).toEqual({
+      results: [{ id: ID_1, ok: false, code: "actor_not_admin" }],
+    });
+  });
+
+  it("单条 RPC 抛异常只记该条失败，不吞掉同批已成功的 id", async () => {
+    h.rpc
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce({ data: { ok: true, status: "approved" }, error: null });
+    const res = await invokePost({ action: "approve", ids: [ID_1, ID_2] });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      results: [
+        { id: ID_1, ok: false, code: "rpc_error" },
         { id: ID_2, ok: true, status: "approved" },
       ],
     });

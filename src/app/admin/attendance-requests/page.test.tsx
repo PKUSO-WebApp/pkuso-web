@@ -124,6 +124,7 @@ describe("考勤修改申请审批页（P4'）", () => {
     fireEvent.click(screen.getByRole("button", { name: "确认通过" }));
 
     expect(await screen.findByText(/当前 出席/)).toBeInTheDocument();
+    expect(screen.getByText(/1 条考勤已变化/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "强制通过 1 条" }));
 
     await waitFor(() => {
@@ -150,6 +151,16 @@ describe("考勤修改申请审批页（P4'）", () => {
     await waitFor(() => {
       expect(h.reject).toHaveBeenCalledWith(["req-1"], "材料不全");
     });
+  });
+
+  it("手动选中超过 50 条时，批量按钮禁用并提示分批", () => {
+    h.requests = Array.from({ length: 51 }, (_, index) => makeRequest({ id: `req-${index}` }));
+    renderWithProviders(<AttendanceRequestsPage />);
+
+    screen.getAllByRole("checkbox").forEach((box) => fireEvent.click(box));
+
+    expect(screen.getByText(/一次最多处理 50 条/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "批量通过" })).toBeDisabled();
   });
 
   it("已处理 tab 只显示审批结果，不显示勾选框", () => {

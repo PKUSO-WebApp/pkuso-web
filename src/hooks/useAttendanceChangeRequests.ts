@@ -45,12 +45,12 @@ export function useAttendanceChangeRequests(client: typeof defaultClient = defau
           error?: string;
         };
         if (seq !== fetchSeqRef.current) return [];
-        if (!response.ok) {
+        if (!response.ok || !Array.isArray(result.requests)) {
           setError(result.error || "获取考勤修改申请失败");
           if (!opts?.keepOnError) setRequests([]);
           return [];
         }
-        const list = result.requests ?? [];
+        const list = result.requests;
         setRequests(list);
         return list;
       } catch {
@@ -93,16 +93,26 @@ export function useAttendanceChangeRequests(client: typeof defaultClient = defau
           results?: DecisionResult[];
           error?: string;
         };
-        if (!response.ok) {
+        if (!response.ok || !Array.isArray(result.results)) {
           const message = result.error || "处理失败，请重试";
-          setError(message);
+          // 非 2xx 时服务端可能已处理了部分条目；重拉一次对账，避免 UI 仍显示 pending。
+          await fetch({ keepOnError: true });
           return { ok: false, results: [], error: message };
         }
-        const results = Array.isArray(result.results) ? result.results : [];
+        const results = result.results;
+        const resultIds = new Set(results.map((item) => item.id));
+        const complete =
+          results.length === body.ids.length && body.ids.every((id) => resultIds.has(id));
         await fetch({ keepOnError: true });
+        if (!complete) {
+          return {
+            ok: false,
+            results: [],
+            error: "审批结果不完整，请刷新后确认",
+          };
+        }
         return { ok: true, results };
       } catch {
-        setError("网络错误");
         return { ok: false, results: [], error: "网络错误" };
       } finally {
         processingRef.current = false;

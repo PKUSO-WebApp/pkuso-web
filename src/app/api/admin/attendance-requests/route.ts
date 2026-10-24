@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { verifyAdmin } from "@/lib/verify-admin";
-import type { DecisionResult } from "@/lib/attendance-change-request";
+import {
+  MAX_ATTENDANCE_CHANGE_BATCH,
+  normalizeRejectReason,
+  type DecisionResult,
+} from "@/lib/attendance-change-request";
 
 export const runtime = "nodejs";
 
@@ -13,7 +17,7 @@ export const runtime = "nodejs";
  */
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MAX_BATCH = 50;
+const MAX_BATCH = MAX_ATTENDANCE_CHANGE_BATCH;
 
 type Body =
   | { action: "approve"; ids: string[]; force: boolean }
@@ -37,7 +41,8 @@ function parseBody(value: unknown): Body | null {
   }
   if (body.action === "reject") {
     const ids = readIds(body.ids);
-    const rejectReason = typeof body.rejectReason === "string" ? body.rejectReason.trim() : "";
+    const rejectReason =
+      typeof body.rejectReason === "string" ? normalizeRejectReason(body.rejectReason) : "";
     if (!ids || rejectReason === "") return null;
     return { action: "reject", ids, rejectReason };
   }
@@ -102,22 +107,32 @@ export async function POST(request: Request) {
 
   const results: DecisionResult[] = [];
   for (const id of body.ids) {
-    const { data, error } = await auth.supabaseServer.rpc(
-      "admin_decide_attendance_change_request",
-      {
-        p_request_id: id,
-        p_approve: body.action === "approve",
-        p_reject_reason: body.action === "reject" ? body.rejectReason : "",
-        p_force: body.action === "approve" ? body.force : false,
-        p_actor_id: auth.userId,
-      },
-    );
-    if (error) {
-      console.error("[Attendance Requests] decide failed", id, error);
-      results.push({ id, ok: false, code: "rpc_error", message: error.message });
-      continue;
+    try {
+      const { data, error } = await auth.supabaseServer.rpc(
+        "admin_decide_attendance_change_request",
+        {
+          p_request_id: id,
+          p_approve: body.action === "approve",
+          p_reject_reason: body.action === "reject" ? body.rejectReason : "",
+          p_force: body.action === "approve" ? body.force : false,
+          p_actor_id: auth.userId,
+        },
+      );
+      if (error) {
+        console.error("[Attendance Requests] decide failed", id, error);
+        results.push({
+          id,
+          ok: false,
+          code: error.code === "42501" ? "actor_not_admin" : "rpc_error",
+        });
+        continue;
+      }
+      results.push(interpretRpcResult(id, data));
+    } catch (error) {
+      // 单条 RPC 抛异常（网络等）不能吞掉同批已成功的 id；把它记成该条失败后继续。
+      console.error("[Attendance Requests] decide threw", id, error);
+      results.push({ id, ok: false, code: "rpc_error" });
     }
-    results.push(interpretRpcResult(id, data));
   }
 
   return NextResponse.json({ results });

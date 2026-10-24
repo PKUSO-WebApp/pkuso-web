@@ -73,10 +73,11 @@ describe("useAttendanceChangeRequests", () => {
     );
   });
 
-  it("HTTP 失败返回 error，不清空旧列表", async () => {
+  it("HTTP 失败返回 error，并重拉列表对账", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ requests: [{ id: ID, status: "pending" }] }))
-      .mockResolvedValueOnce(jsonResponse({ error: "权限不足" }, false));
+      .mockResolvedValueOnce(jsonResponse({ error: "权限不足" }, false))
+      .mockResolvedValueOnce(jsonResponse({ requests: [{ id: ID, status: "pending" }] }));
     const { result } = renderHook(() => useAttendanceChangeRequests());
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -86,7 +87,11 @@ describe("useAttendanceChangeRequests", () => {
     });
 
     expect(response).toEqual({ ok: false, results: [], error: "权限不足" });
-    expect(result.current.error).toBe("权限不足");
     expect(result.current.requests).toHaveLength(1);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/admin/attendance-requests",
+      expect.objectContaining({ method: "GET" }),
+    );
   });
 });

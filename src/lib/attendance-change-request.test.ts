@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   decisionMessage,
   memberLabel,
+  normalizeRejectReason,
   partitionAttendanceChangeRequests,
   rehearsalLabel,
   statusChangeLabel,
@@ -64,7 +65,13 @@ describe("attendance-change-request helpers", () => {
     expect(decisionMessage("stale", "present")).toContain("当前：出席");
     expect(decisionMessage("not_pending")).toBe("申请已被处理");
     expect(decisionMessage("attendance_missing")).toBe("考勤记录不存在，无法通过");
+    expect(decisionMessage("actor_not_admin")).toBe("当前账号无权审批");
     expect(decisionMessage("unknown")).toBe("处理失败，请重试");
+  });
+
+  it("normalizeRejectReason：普通空白与零宽字符都视为空", () => {
+    expect(normalizeRejectReason("\u200B\uFEFF")).toBe("");
+    expect(normalizeRejectReason("\u200B")).toBe("");
   });
 
   it("partition：pending 与 approved/rejected 分开，canceled 不进入已处理", () => {

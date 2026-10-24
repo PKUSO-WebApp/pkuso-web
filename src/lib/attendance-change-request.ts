@@ -18,6 +18,14 @@ export type DecisionResponse = {
   error?: string;
 };
 
+/** 单次审批上限；与 `/api/admin/attendance-requests` 的校验共用一份。 */
+export const MAX_ATTENDANCE_CHANGE_BATCH = 50;
+
+/** 去掉零宽/方向控制字符再 trim；JS trim 与 Postgres btrim 都不会删 U+200B。 */
+export function normalizeRejectReason(value: string): string {
+  return value.replace(/[\u200B-\u200F\uFEFF]/g, "").trim();
+}
+
 export const ATTENDANCE_CHANGE_STATUS_LABEL: Record<AttendanceChangeRequestStatus, string> = {
   pending: "待审批",
   approved: "已通过",
@@ -69,6 +77,7 @@ export function decisionMessage(code: string, currentStatus?: string): string {
   if (code === "not_found") return "申请不存在";
   if (code === "attendance_missing") return "考勤记录不存在，无法通过";
   if (code === "reject_reason_required") return "请填写驳回原因";
+  if (code === "actor_not_admin") return "当前账号无权审批";
   if (code === "rpc_error") return "处理失败，请重试";
   return "处理失败，请重试";
 }

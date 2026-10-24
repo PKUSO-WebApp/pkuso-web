@@ -8,8 +8,10 @@ import { useAdminPageHeader } from "@/context/admin-page-header-context";
 import { useAttendanceChangeRequests } from "@/hooks/useAttendanceChangeRequests";
 import { STATUS_LABEL } from "@/lib/attendance-status";
 import {
+  MAX_ATTENDANCE_CHANGE_BATCH,
   decisionMessage,
   memberLabel,
+  normalizeRejectReason,
   partitionAttendanceChangeRequests,
   type DecisionFailure,
   type DecisionResult,
@@ -49,6 +51,7 @@ export default function AttendanceRequestsPage() {
   const list = tab === "pending" ? pending : processed;
   const pendingIds = new Set(pending.map((request) => request.id));
   const selectedPending = selectedIds.filter((id) => pendingIds.has(id));
+  const tooManySelected = selectedPending.length > MAX_ATTENDANCE_CHANGE_BATCH;
   const allSelected =
     pending.length > 0 && pending.every((request) => selectedPending.includes(request.id));
 
@@ -59,36 +62,60 @@ export default function AttendanceRequestsPage() {
   };
 
   const toggleAll = () => {
-    setSelectedIds(allSelected ? [] : pending.map((request) => request.id));
+    if (allSelected) {
+      setSelectedIds([]);
+      setActionError(null);
+      return;
+    }
+    if (pending.length > MAX_ATTENDANCE_CHANGE_BATCH) {
+      setSelectedIds(pending.slice(0, MAX_ATTENDANCE_CHANGE_BATCH).map((request) => request.id));
+      setActionError(
+        `一次最多处理 ${MAX_ATTENDANCE_CHANGE_BATCH} 条，已选择前 ${MAX_ATTENDANCE_CHANGE_BATCH} 条`,
+      );
+      return;
+    }
+    setSelectedIds(pending.map((request) => request.id));
   };
 
   const showDecisionResult = (results: DecisionResult[], successVerb: "通过" | "驳回") => {
     const failed = results.filter((result) => !result.ok);
     const stale = failed.filter((result) => result.code === "stale");
     const otherFailed = failed.filter((result) => result.code !== "stale");
-    if (stale.length > 0) {
-      setStaleResults(stale);
-      setStaleOpen(true);
-    }
+    const successCount = results.length - failed.length;
+    const parts: string[] = [];
+    if (successCount > 0) parts.push(`已${successVerb} ${successCount} 条`);
+    if (stale.length > 0) parts.push(`${stale.length} 条考勤已变化，需确认强制通过`);
     if (otherFailed.length > 0) {
-      setNotice({
-        kind: "error",
-        text: `已${successVerb} ${results.length - failed.length} 条；失败：${otherFailed
+      parts.push(
+        `失败：${otherFailed
           .map(
             (result) =>
               `${memberName(requests, result.id)}：${decisionMessage(result.code, result.currentStatus)}`,
           )
           .join("；")}`,
+      );
+    }
+    if (parts.length > 0) {
+      setNotice({
+        kind: stale.length > 0 || otherFailed.length > 0 ? "error" : "success",
+        text: parts.join("；"),
       });
-    } else if (stale.length === 0) {
-      setNotice({ kind: "success", text: `已${successVerb} ${results.length} 条` });
+    }
+    if (stale.length > 0) {
+      setStaleResults(stale);
+      setStaleOpen(true);
     }
   };
 
   const handleApprove = async (ids: string[], force = false) => {
     if (ids.length === 0 || busyRef.current) return;
+    if (ids.length > MAX_ATTENDANCE_CHANGE_BATCH) {
+      setActionError(`一次最多处理 ${MAX_ATTENDANCE_CHANGE_BATCH} 条，请分批选择`);
+      return;
+    }
     busyRef.current = true;
     setActionError(null);
+    setNotice(null);
     try {
       const response = await approve(ids, force);
       if (!response.ok) {
@@ -104,14 +131,19 @@ export default function AttendanceRequestsPage() {
   };
 
   const handleReject = async () => {
-    const reason = rejectReason.trim();
+    const reason = normalizeRejectReason(rejectReason);
     if (reason === "") {
       setRejectError("请填写驳回原因");
       return;
     }
     if (selectedPending.length === 0 || busyRef.current) return;
+    if (selectedPending.length > MAX_ATTENDANCE_CHANGE_BATCH) {
+      setRejectError(`一次最多处理 ${MAX_ATTENDANCE_CHANGE_BATCH} 条，请分批选择`);
+      return;
+    }
     busyRef.current = true;
     setActionError(null);
+    setNotice(null);
     try {
       const response = await reject(selectedPending, reason);
       if (!response.ok) {
@@ -194,14 +226,24 @@ export default function AttendanceRequestsPage() {
         )}
       </div>
 
+      {tab === "pending" && tooManySelected && (
+        <p className="text-xs text-danger">
+          一次最多处理 {MAX_ATTENDANCE_CHANGE_BATCH} 条，请分批选择
+        </p>
+      )}
+
       {tab === "pending" && selectedPending.length > 0 && (
         <div className="flex items-center gap-2 border-t border-border pt-3">
           <Button
             type="button"
             variant="success"
             className="flex-1"
-            disabled={processing}
-            onClick={() => setConfirmApproveOpen(true)}
+            disabled={processing || tooManySelected}
+            onClick={() => {
+              setNotice(null);
+              setActionError(null);
+              setConfirmApproveOpen(true);
+            }}
           >
             批量通过
           </Button>
@@ -209,8 +251,10 @@ export default function AttendanceRequestsPage() {
             type="button"
             variant="danger"
             className="flex-1"
-            disabled={processing}
+            disabled={processing || tooManySelected}
             onClick={() => {
+              setNotice(null);
+              setActionError(null);
               setRejectError(null);
               setRejectOpen(true);
             }}
@@ -278,7 +322,9 @@ export default function AttendanceRequestsPage() {
             setRejectReason(event.target.value);
             setRejectError(null);
           }}
-          className="input mt-2 min-h-24"
+          rows={3}
+          maxLength={200}
+          className="mt-2 w-full rounded-xl border border-border bg-muted px-3 py-3 text-sm leading-[1.5] text-text outline-none focus:border-text-muted"
           placeholder="请填写驳回原因"
         />
         {rejectError && <p className="mt-1 text-xs text-danger">{rejectError}</p>}

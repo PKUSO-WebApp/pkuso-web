@@ -4,6 +4,13 @@ import React from "react";
 import { supabase as defaultClient } from "@/lib/supabase";
 import type { RehearsalRow } from "@/types/database";
 
+/** create_rehearsal_with_repertoire RPC 的曲目载荷 */
+export type RepertoirePiecePayload = {
+  sheet_music_id: string | null;
+  title: string;
+  sort_order: number;
+};
+
 export function useRehearsals(client: typeof defaultClient = defaultClient) {
   const [data, setData] = React.useState<RehearsalRow[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -61,6 +68,29 @@ export function useRehearsals(client: typeof defaultClient = defaultClient) {
       }
       await fetch();
       return (inserted as { id: number }).id;
+    },
+    [client, fetch, reportError],
+  );
+
+  /**
+   * 创建排练 + 曲目（一个后端事务）。
+   * 不能用 create 后再插曲目：补名单触发器在排练 INSERT 时就会跑，
+   * 那时曲目还不存在，考勤会按「无曲目 ⇒ 全员 required」写死。
+   */
+  const createWithRepertoire = React.useCallback(
+    async (payload: Record<string, unknown>, pieces: RepertoirePiecePayload[]) => {
+      setSaving(true);
+      const { data, error } = await client.rpc("create_rehearsal_with_repertoire", {
+        p_rehearsal: payload as never,
+        p_pieces: pieces as never,
+      });
+      setSaving(false);
+      if (error || data == null) {
+        reportError(error?.message ?? "创建失败");
+        return null;
+      }
+      await fetch();
+      return data as number;
     },
     [client, fetch, reportError],
   );
@@ -138,5 +168,16 @@ export function useRehearsals(client: typeof defaultClient = defaultClient) {
     [client, fetch, reportError],
   );
 
-  return { data, loading, error, saving, fetch, create, update, remove, getLastError };
+  return {
+    data,
+    loading,
+    error,
+    saving,
+    fetch,
+    create,
+    createWithRepertoire,
+    update,
+    remove,
+    getLastError,
+  };
 }

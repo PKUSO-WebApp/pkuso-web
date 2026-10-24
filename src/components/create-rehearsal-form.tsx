@@ -5,6 +5,7 @@ import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { Toggle } from "@/components/ui/Toggle";
 import { MapPicker } from "@/app/admin/rehearsals/components/map-picker";
+import type { SheetMusicOption } from "@/hooks/useSheetMusicOptions";
 import { SectionSelect } from "./section-select";
 
 export type DbRehearsalType = "full" | "section";
@@ -12,13 +13,21 @@ export type DbRehearsalType = "full" | "section";
 export const MIN_CHECKIN_RADIUS_M = 10;
 export const MAX_CHECKIN_RADIUS_M = 6_371_000;
 
+/** 排练曲目：有谱（sheetMusicId 非空）或无谱自由文本 */
+export type RepertoirePiece = {
+  /** 编辑已有行时带上，创建时为空 */
+  id?: string;
+  sheetMusicId: string | null;
+  title: string;
+};
+
 export type CreateFormState = {
   type: DbRehearsalType;
   targetSections: string[];
   startTime: Date | null;
   endTime: Date | null;
   location: string;
-  repertoire: string;
+  pieces: RepertoirePiece[];
   geofenceEnabled: boolean;
   checkinLat: number | null;
   checkinLng: number | null;
@@ -29,11 +38,12 @@ type Props = {
   form: CreateFormState;
   submitting: boolean;
   editing?: boolean;
+  sheetMusicOptions: SheetMusicOption[];
   notifyByEmail: boolean;
   onNotifyByEmailChange: (v: boolean) => void;
   onChange: (
     field: keyof CreateFormState,
-    value: string | number | boolean | DbRehearsalType | Date | null | string[],
+    value: string | number | boolean | DbRehearsalType | Date | null | string[] | RepertoirePiece[],
   ) => void;
   onCheckinPick: (lat: number | null, lng: number | null) => void;
   onSubmit: (e: React.FormEvent) => void;
@@ -44,6 +54,7 @@ export function CreateRehearsalForm({
   form,
   submitting,
   editing = false,
+  sheetMusicOptions,
   notifyByEmail,
   onNotifyByEmailChange,
   onChange,
@@ -121,12 +132,11 @@ export function CreateRehearsalForm({
 
         <div className="space-y-1">
           <label className="block text-label font-medium text-text-muted">排练曲目</label>
-          <textarea
-            value={form.repertoire}
-            onChange={(e) => onChange("repertoire", e.target.value)}
-            className="w-full rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
-            rows={2}
-            placeholder="如：柴四第四乐章"
+          <RepertoireEditor
+            pieces={form.pieces}
+            options={sheetMusicOptions}
+            disabled={submitting}
+            onChange={(pieces) => onChange("pieces", pieces)}
           />
         </div>
 
@@ -204,5 +214,125 @@ export function CreateRehearsalForm({
         </button>
       </div>
     </form>
+  );
+}
+
+function RepertoireEditor({
+  pieces,
+  options,
+  disabled,
+  onChange,
+}: {
+  pieces: RepertoirePiece[];
+  options: SheetMusicOption[];
+  disabled: boolean;
+  onChange: (pieces: RepertoirePiece[]) => void;
+}) {
+  const [selectedScoreId, setSelectedScoreId] = React.useState("");
+  const [freeTitle, setFreeTitle] = React.useState("");
+
+  const addScore = () => {
+    const option = options.find((o) => o.id === selectedScoreId);
+    if (!option) return;
+    if (pieces.some((p) => p.sheetMusicId === option.id)) {
+      setSelectedScoreId("");
+      return;
+    }
+    if (pieces.some((p) => p.title === option.title)) {
+      alert("同一场排练已有同名曲目");
+      return;
+    }
+    onChange([...pieces, { sheetMusicId: option.id, title: option.title }]);
+    setSelectedScoreId("");
+  };
+
+  const addFree = () => {
+    const title = freeTitle.trim();
+    if (!title) return;
+    if (pieces.some((p) => p.title === title)) {
+      alert("同一场排练已有同名曲目");
+      return;
+    }
+    onChange([...pieces, { sheetMusicId: null, title }]);
+    setFreeTitle("");
+  };
+
+  return (
+    <div className="space-y-2">
+      {pieces.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-border px-3 py-3 text-center text-caption text-text-muted">
+          尚未添加曲目
+        </p>
+      ) : (
+        <ul className="space-y-1">
+          {pieces.map((piece, index) => (
+            <li
+              key={`${piece.id ?? "new"}-${piece.sheetMusicId ?? "free"}-${index}`}
+              className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2"
+            >
+              <span className="min-w-0 flex-1 truncate text-xs text-text">{piece.title}</span>
+              <span className="shrink-0 rounded-full bg-surface px-1.5 py-0.5 text-caption text-text-muted">
+                {piece.sheetMusicId ? "有谱" : "无谱"}
+              </span>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => onChange(pieces.filter((_, i) => i !== index))}
+                className="shrink-0 rounded-full px-2 py-0.5 text-caption text-danger hover:bg-danger-bg disabled:opacity-50"
+              >
+                移除
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="flex gap-2">
+        <select
+          value={selectedScoreId}
+          onChange={(e) => setSelectedScoreId(e.target.value)}
+          disabled={disabled || options.length === 0}
+          className="min-w-0 flex-1 rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted disabled:opacity-60"
+        >
+          <option value="">{options.length === 0 ? "谱务库暂无曲目" : "从谱务库选择曲目"}</option>
+          {options.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.title}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={disabled || !selectedScoreId}
+          onClick={addScore}
+          className="shrink-0 rounded-full border border-border bg-surface px-3 py-1.5 text-caption text-text hover:bg-muted disabled:opacity-50"
+        >
+          添加
+        </button>
+      </div>
+
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={freeTitle}
+          onChange={(e) => setFreeTitle(e.target.value)}
+          disabled={disabled}
+          placeholder="无谱曲目（自由文本）"
+          className="min-w-0 flex-1 rounded-xl border border-border bg-muted px-3 py-2 text-xs text-text outline-none focus:border-text-muted"
+        />
+        <button
+          type="button"
+          disabled={disabled || !freeTitle.trim()}
+          onClick={addFree}
+          className="shrink-0 rounded-full border border-border bg-surface px-3 py-1.5 text-caption text-text hover:bg-muted disabled:opacity-50"
+        >
+          添加
+        </button>
+      </div>
+
+      <p className="text-caption text-text-muted">
+        有谱曲目按分谱自动分配考勤；无谱曲目按全员 required。
+      </p>
+    </div>
   );
 }

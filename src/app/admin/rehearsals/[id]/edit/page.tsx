@@ -4,19 +4,22 @@ import React from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useRehearsals } from "@/hooks/useRehearsals";
 import { useSchedule } from "@/hooks/useSchedule";
+import { useSheetMusicOptions, type SheetMusicOption } from "@/hooks/useSheetMusicOptions";
+import { supabase } from "@/lib/supabase";
 import { Modal } from "@/components/ui/Modal";
 import {
   CreateRehearsalForm,
   MAX_CHECKIN_RADIUS_M,
   MIN_CHECKIN_RADIUS_M,
   type CreateFormState,
+  type RepertoirePiece,
 } from "@/components/create-rehearsal-form";
 import { formatLocalISO, parseLocalISO, getLocalDateString } from "@/lib/date-utils";
 import { sectionsToDisplayString } from "@/constants/instruments";
-import type { RehearsalRow } from "@/types/database";
+import type { RehearsalRepertoireRow, RehearsalRow } from "@/types/database";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
 
-function buildInitialForm(item: RehearsalRow): CreateFormState {
+function buildInitialForm(item: RehearsalRow, pieces: RepertoirePiece[]): CreateFormState {
   const hasCoords = item.checkin_lat != null && item.checkin_lng != null;
   const hasRadius = item.checkin_radius_m != null;
   return {
@@ -25,7 +28,7 @@ function buildInitialForm(item: RehearsalRow): CreateFormState {
     startTime: item.start_time ? parseLocalISO(item.start_time) : null,
     endTime: item.end_time ? parseLocalISO(item.end_time) : null,
     location: item.location ?? "",
-    repertoire: item.repertoire ?? "",
+    pieces,
     // 三字段齐全视为已启用围栏；全空视为未启用；残缺态也按启用处理以强制补全
     geofenceEnabled: hasCoords || hasRadius,
     checkinLat: item.checkin_lat ?? null,
@@ -48,6 +51,50 @@ export default function AdminEditRehearsalPage() {
 
   const item = React.useMemo(() => schedules?.find((r) => r.id === id) ?? null, [schedules, id]);
 
+  const sheetMusicOptions = useSheetMusicOptions();
+  const [initialPieces, setInitialPieces] = React.useState<RepertoirePiece[] | null>(null);
+  const itemId = item?.id;
+  // 曲目文本只在没有 join 行时作为兜底（存量排练）
+  const repertoireFallback = item?.repertoire ?? "";
+
+  React.useEffect(() => {
+    if (itemId == null) return;
+    let cancelled = false;
+    void supabase
+      .from("rehearsal_repertoire")
+      .select("id, sheet_music_id, title, sort_order")
+      .eq("rehearsal_id", itemId)
+      .order("sort_order")
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.error("[edit rehearsal] 曲目加载失败", error.message);
+          setInitialPieces(
+            repertoireFallback ? [{ sheetMusicId: null, title: repertoireFallback }] : [],
+          );
+          return;
+        }
+        const rows = (data ?? []) as Pick<
+          RehearsalRepertoireRow,
+          "id" | "sheet_music_id" | "title"
+        >[];
+        setInitialPieces(
+          rows.length > 0
+            ? rows.map((r) => ({
+                id: r.id,
+                sheetMusicId: r.sheet_music_id,
+                title: r.title,
+              }))
+            : repertoireFallback
+              ? [{ sheetMusicId: null, title: repertoireFallback }]
+              : [],
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [itemId, repertoireFallback]);
+
   if (loading) {
     return (
       <div className="flex h-full min-h-0 flex-col pb-safe">
@@ -64,23 +111,46 @@ export default function AdminEditRehearsalPage() {
     );
   }
 
+  if (!initialPieces) {
+    return (
+      <div className="flex h-full min-h-0 flex-col pb-safe">
+        <p className="py-12 text-center text-xs text-text-muted">加载中…</p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col pb-safe">
       <section className="flex-1 min-h-0 overflow-y-auto">
         {/* key=id：进入即按当前排练预填表单（懒初始化，避免 setState-in-effect） */}
-        <EditForm key={id} item={item} />
+        <EditForm
+          key={id}
+          item={item}
+          initialPieces={initialPieces}
+          sheetMusicOptions={sheetMusicOptions}
+        />
       </section>
     </div>
   );
 }
 
-function EditForm({ item }: { item: RehearsalRow }) {
+function EditForm({
+  item,
+  initialPieces,
+  sheetMusicOptions,
+}: {
+  item: RehearsalRow;
+  initialPieces: RepertoirePiece[];
+  sheetMusicOptions: SheetMusicOption[];
+}) {
   const router = useRouter();
   const { update, getLastError } = useRehearsals();
   const { checkConflict } = useSchedule();
   const id = item.id;
 
-  const [form, setForm] = React.useState<CreateFormState>(() => buildInitialForm(item));
+  const [form, setForm] = React.useState<CreateFormState>(() =>
+    buildInitialForm(item, initialPieces),
+  );
   const [submitting, setSubmitting] = React.useState(false);
   const submittingRef = React.useRef(false);
   const [conflictModalOpen, setConflictModalOpen] = React.useState(false);
@@ -88,7 +158,7 @@ function EditForm({ item }: { item: RehearsalRow }) {
 
   const handleChange = (
     field: keyof CreateFormState,
-    value: string | number | boolean | Date | null | string[],
+    value: string | number | boolean | Date | null | string[] | RepertoirePiece[],
   ) => {
     if (field === "startTime" && value instanceof Date) {
       // +3h 默认时长，但不允许跨天：最晚 capped 到当天 23:59
@@ -110,7 +180,11 @@ function EditForm({ item }: { item: RehearsalRow }) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submittingRef.current || submitting) return;
-    if (!form.startTime || !form.endTime || !form.location || !form.repertoire) return;
+    if (!form.startTime || !form.endTime || !form.location) return;
+    if (form.pieces.length === 0) {
+      alert("请至少添加一首曲目");
+      return;
+    }
     if (form.endTime <= form.startTime) {
       alert("结束时间必须晚于开始时间");
       return;
@@ -169,13 +243,18 @@ function EditForm({ item }: { item: RehearsalRow }) {
         return;
       }
 
+      const repertoireText = form.pieces
+        .map((p) => p.title.trim())
+        .filter(Boolean)
+        .join("、");
+
       const payload: Record<string, unknown> = {
         type: form.type,
         target_section: form.type === "section" ? form.targetSections : [],
         start_time: formatLocalISO(form.startTime),
         end_time: formatLocalISO(form.endTime),
         location: form.location,
-        repertoire: form.repertoire,
+        repertoire: repertoireText,
         sign_in_code: null,
         ...geoFields,
       };
@@ -184,6 +263,20 @@ function EditForm({ item }: { item: RehearsalRow }) {
       if (!ok) {
         // 同排练详情页的删除：`getLastError()` 是同步出口，`error` state 在这里读是旧值
         alert(getLastError() ?? "更新失败");
+        return;
+      }
+
+      // 曲目替换单独提交（不重算已有考勤，用户批准的「只影响新行」）
+      const { error: piecesError } = await supabase.rpc("save_rehearsal_repertoire", {
+        p_rehearsal_id: id,
+        p_pieces: form.pieces.map((p, i) => ({
+          sheet_music_id: p.sheetMusicId,
+          title: p.title.trim(),
+          sort_order: i,
+        })) as never,
+      });
+      if (piecesError) {
+        alert(`排练信息已保存，但曲目保存失败：${piecesError.message}。请重试保存。`);
         return;
       }
 
@@ -205,7 +298,7 @@ function EditForm({ item }: { item: RehearsalRow }) {
               ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
             },
             body: JSON.stringify({
-              title: form.repertoire,
+              title: repertoireText,
               dateStr,
               location: form.location,
               type: form.type,
@@ -233,6 +326,7 @@ function EditForm({ item }: { item: RehearsalRow }) {
         form={form}
         submitting={submitting}
         editing
+        sheetMusicOptions={sheetMusicOptions}
         notifyByEmail={notifyByEmail}
         onNotifyByEmailChange={setNotifyByEmail}
         onChange={handleChange}

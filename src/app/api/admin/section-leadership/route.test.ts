@@ -51,11 +51,16 @@ describe("POST /api/admin/section-leadership", () => {
     });
   });
 
-  it("撤销声部长：调用 admin_remove_section_leader", async () => {
-    const res = await invoke({ action: "remove_section_leader", section: "木管" });
+  it("撤销声部长：带 expected id 调 admin_remove_section_leader_checked", async () => {
+    const res = await invoke({
+      action: "remove_section_leader",
+      section: "木管",
+      leaderId: LEADER_ID,
+    });
     expect(res.status).toBe(200);
-    expect(h.rpc).toHaveBeenCalledWith("admin_remove_section_leader", {
+    expect(h.rpc).toHaveBeenCalledWith("admin_remove_section_leader_checked", {
       p_section: "木管",
+      p_expected_leader_id: LEADER_ID,
       p_actor_id: "admin-1",
     });
   });
@@ -74,11 +79,16 @@ describe("POST /api/admin/section-leadership", () => {
     });
   });
 
-  it("撤销首席：调用 admin_remove_principal", async () => {
-    const res = await invoke({ action: "remove_principal", instrument: "长笛" });
+  it("撤销首席：带 expected id 调 admin_remove_principal_checked", async () => {
+    const res = await invoke({
+      action: "remove_principal",
+      instrument: "长笛",
+      principalId: PRINCIPAL_ID,
+    });
     expect(res.status).toBe(200);
-    expect(h.rpc).toHaveBeenCalledWith("admin_remove_principal", {
+    expect(h.rpc).toHaveBeenCalledWith("admin_remove_principal_checked", {
       p_instrument: "长笛",
+      p_expected_principal_id: PRINCIPAL_ID,
       p_actor_id: "admin-1",
     });
   });
@@ -135,6 +145,12 @@ describe("POST /api/admin/section-leadership", () => {
     expect(
       (await invoke({ action: "set_principal", instrument: "长笛", userId: "abc" })).status,
     ).toBe(400);
+    // 撤销必须带「我看到的当前负责人」；缺 id 或非法 UUID 一律拒绝
+    expect((await invoke({ action: "remove_section_leader", section: "木管" })).status).toBe(400);
+    expect(
+      (await invoke({ action: "remove_section_leader", section: "木管", leaderId: "abc" })).status,
+    ).toBe(400);
+    expect((await invoke({ action: "remove_principal", instrument: "长笛" })).status).toBe(400);
     expect((await invoke({ action: "set_president", userId: "abc" })).status).toBe(400);
     expect(h.rpc).not.toHaveBeenCalled();
   });
@@ -169,21 +185,59 @@ describe("POST /api/admin/section-leadership", () => {
       data: null,
       error: { message: "actor_not_admin", code: "42501" },
     });
-    const res = await invoke({ action: "remove_principal", instrument: "长笛" });
+    const res = await invoke({
+      action: "remove_principal",
+      instrument: "长笛",
+      principalId: PRINCIPAL_ID,
+    });
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: "权限不足", code: "actor_not_admin" });
   });
 
   it("42501 映射为 403；未知错误映射为 500", async () => {
     h.rpc.mockResolvedValueOnce({ data: null, error: { message: "boom", code: "42501" } });
-    const forbidden = await invoke({ action: "remove_principal", instrument: "长笛" });
+    const forbidden = await invoke({
+      action: "remove_principal",
+      instrument: "长笛",
+      principalId: PRINCIPAL_ID,
+    });
     expect(forbidden.status).toBe(403);
     expect(await forbidden.json()).toEqual({ error: "权限不足", code: undefined });
 
     h.rpc.mockResolvedValueOnce({ data: null, error: { message: "unexpected" } });
-    const failed = await invoke({ action: "remove_principal", instrument: "长笛" });
+    const failed = await invoke({
+      action: "remove_principal",
+      instrument: "长笛",
+      principalId: PRINCIPAL_ID,
+    });
     expect(failed.status).toBe(500);
     expect(await failed.json()).toEqual({ error: "保存失败，请重试", code: undefined });
+  });
+
+  it("撤销时负责人已被别人换掉：leader_changed / principal_changed 映射为 400", async () => {
+    h.rpc.mockResolvedValueOnce({ data: null, error: { message: "leader_changed" } });
+    const leaderRes = await invoke({
+      action: "remove_section_leader",
+      section: "木管",
+      leaderId: LEADER_ID,
+    });
+    expect(leaderRes.status).toBe(400);
+    expect(await leaderRes.json()).toEqual({
+      error: "该作用域的声部长已被别人修改，请刷新后重试",
+      code: "leader_changed",
+    });
+
+    h.rpc.mockResolvedValueOnce({ data: null, error: { message: "principal_changed" } });
+    const principalRes = await invoke({
+      action: "remove_principal",
+      instrument: "长笛",
+      principalId: PRINCIPAL_ID,
+    });
+    expect(principalRes.status).toBe(400);
+    expect(await principalRes.json()).toEqual({
+      error: "该乐器的首席已被别人修改，请刷新后重试",
+      code: "principal_changed",
+    });
   });
 
   it("verifyAdmin 拒绝时原样透传响应", async () => {

@@ -183,16 +183,18 @@ export default function SectionLeadershipPage() {
   };
 
   const handleRemove = async (item: ScopeItem) => {
-    if (savingRef.current) return;
+    if (savingRef.current || !item.currentId) return;
     const roleLabel = item.kind === "leader" ? "声部长" : "首席";
     if (!window.confirm(`确定撤销「${item.section.name}」的${roleLabel}任命吗？`)) return;
     savingRef.current = true;
     setActionError(null);
     try {
+      // 带上「我看到的当前负责人」：数据库里若已被另一个管理员换人，
+      // 后端拒绝删除，避免按 section 把新人撤掉。
       const result =
         item.kind === "leader"
-          ? await removeLeader(item.section.name)
-          : await removePrincipal(item.section.name);
+          ? await removeLeader(item.section.name, item.currentId)
+          : await removePrincipal(item.section.name, item.currentId);
       if (!result.ok) setActionError(result.message);
     } finally {
       savingRef.current = false;

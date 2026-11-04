@@ -7,11 +7,13 @@ import { supabase } from "@/lib/supabase";
 export type SheetMusicOption = {
   id: string;
   title: string;
+  /** 作曲家；同名曲目（如两部「第五交响曲」）靠它区分 */
+  composer: string | null;
 };
 
 /**
  * 谱务库曲目列表（排练表单的「从谱务选择」用）。
- * 只读 id/title；失败时返回空列表，表单仍可添加无谱曲目。
+ * 只读 id/title/composer；失败时返回空列表，表单仍可添加无谱曲目。
  */
 export function useSheetMusicOptions(): SheetMusicOption[] {
   const [options, setOptions] = React.useState<SheetMusicOption[]>([]);
@@ -20,8 +22,9 @@ export function useSheetMusicOptions(): SheetMusicOption[] {
     let cancelled = false;
     void supabase
       .from("sheet_music")
-      .select("id, title")
+      .select("id, title, composer")
       .order("title")
+      .order("composer")
       .then(({ data, error }) => {
         if (cancelled) return;
         if (error) {

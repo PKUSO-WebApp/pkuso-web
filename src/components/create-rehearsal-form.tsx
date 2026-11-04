@@ -10,6 +10,15 @@ import { SectionSelect } from "./section-select";
 
 export type DbRehearsalType = "full" | "section";
 
+/**
+ * 曲目展示文案：`曲目名 - 作曲家`。
+ * 同名曲目（如两部「第五交响曲」）靠作曲家区分；没填作曲家时只显示曲目名，不留悬空的 `-`。
+ */
+export function formatRepertoireLabel(piece: { title: string; composer?: string | null }): string {
+  const composer = piece.composer?.trim();
+  return composer ? `${piece.title} - ${composer}` : piece.title;
+}
+
 export const MIN_CHECKIN_RADIUS_M = 10;
 export const MAX_CHECKIN_RADIUS_M = 6_371_000;
 
@@ -265,25 +274,34 @@ function RepertoireEditor({
         </p>
       ) : (
         <ul className="space-y-1">
-          {pieces.map((piece, index) => (
-            <li
-              key={`${piece.id ?? "new"}-${piece.sheetMusicId ?? "free"}-${index}`}
-              className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2"
-            >
-              <span className="min-w-0 flex-1 truncate text-xs text-text">{piece.title}</span>
-              <span className="shrink-0 rounded-full bg-surface px-1.5 py-0.5 text-caption text-text-muted">
-                {piece.sheetMusicId ? "有谱" : "无谱"}
-              </span>
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => onChange(pieces.filter((_, i) => i !== index))}
-                className="shrink-0 rounded-full px-2 py-0.5 text-caption text-danger hover:bg-danger-bg disabled:opacity-50"
+          {pieces.map((piece, index) => {
+            // 编辑存量排练时 piece 只有 title；作曲家按 sheetMusicId 从谱务选项补，
+            // 谱务条目被删或 composer 为空时自然退回纯曲目名
+            const composer = piece.sheetMusicId
+              ? options.find((o) => o.id === piece.sheetMusicId)?.composer
+              : null;
+            return (
+              <li
+                key={`${piece.id ?? "new"}-${piece.sheetMusicId ?? "free"}-${index}`}
+                className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2"
               >
-                移除
-              </button>
-            </li>
-          ))}
+                <span className="min-w-0 flex-1 truncate text-xs text-text">
+                  {formatRepertoireLabel({ title: piece.title, composer })}
+                </span>
+                <span className="shrink-0 rounded-full bg-surface px-1.5 py-0.5 text-caption text-text-muted">
+                  {piece.sheetMusicId ? "有谱" : "无谱"}
+                </span>
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onChange(pieces.filter((_, i) => i !== index))}
+                  className="shrink-0 rounded-full px-2 py-0.5 text-caption text-danger hover:bg-danger-bg disabled:opacity-50"
+                >
+                  移除
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
 
@@ -297,7 +315,7 @@ function RepertoireEditor({
           <option value="">{options.length === 0 ? "谱务库暂无曲目" : "从谱务库选择曲目"}</option>
           {options.map((option) => (
             <option key={option.id} value={option.id}>
-              {option.title}
+              {formatRepertoireLabel(option)}
             </option>
           ))}
         </select>

@@ -8,6 +8,8 @@ import type { RehearsalRow } from "@/types/database";
 export type RepertoirePiecePayload = {
   sheet_music_id: string | null;
   title: string;
+  /** 本次排练内容；旧调用方不传时 RPC 写 NULL */
+  content?: string | null;
   sort_order: number;
 };
 

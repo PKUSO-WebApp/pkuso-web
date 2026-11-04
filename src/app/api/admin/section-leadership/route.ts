@@ -12,9 +12,9 @@ export const runtime = "nodejs";
 
 type Body =
   | { action: "set_section_leader"; section: string; userId: string }
-  | { action: "remove_section_leader"; section: string }
+  | { action: "remove_section_leader"; section: string; leaderId: string }
   | { action: "set_principal"; instrument: string; userId: string }
-  | { action: "remove_principal"; instrument: string }
+  | { action: "remove_principal"; instrument: string; principalId: string }
   | { action: "set_president"; userId: string }
   | { action: "remove_president"; userId: string };
 
@@ -26,6 +26,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   president_cannot_be_section_leader: "团长不能同时担任声部长",
   section_leader_cannot_be_president: "声部长不能同时担任团长，请先撤销声部长",
   invalid_capability: "该能力不在团长能力矩阵内",
+  leader_changed: "该作用域的声部长已被别人修改，请刷新后重试",
+  principal_changed: "该乐器的首席已被别人修改，请刷新后重试",
   actor_not_admin: "权限不足",
 };
 
@@ -47,7 +49,9 @@ function parseBody(value: unknown): Body | null {
   }
   if (body.action === "remove_section_leader") {
     const section = readString(body.section);
-    return section ? { action: body.action, section } : null;
+    const leaderId = readString(body.leaderId);
+    if (!section || !leaderId || !UUID_RE.test(leaderId)) return null;
+    return { action: body.action, section, leaderId };
   }
   if (body.action === "set_principal") {
     const instrument = readString(body.instrument);
@@ -57,7 +61,9 @@ function parseBody(value: unknown): Body | null {
   }
   if (body.action === "remove_principal") {
     const instrument = readString(body.instrument);
-    return instrument ? { action: body.action, instrument } : null;
+    const principalId = readString(body.principalId);
+    if (!instrument || !principalId || !UUID_RE.test(principalId)) return null;
+    return { action: body.action, instrument, principalId };
   }
   if (body.action === "set_president" || body.action === "remove_president") {
     const userId = readString(body.userId);
@@ -107,8 +113,9 @@ export async function POST(request: Request) {
       p_actor_id: auth.userId,
     });
   } else if (body.action === "remove_section_leader") {
-    result = await auth.supabaseServer.rpc("admin_remove_section_leader", {
+    result = await auth.supabaseServer.rpc("admin_remove_section_leader_checked", {
       p_section: body.section,
+      p_expected_leader_id: body.leaderId,
       p_actor_id: auth.userId,
     });
   } else if (body.action === "set_principal") {
@@ -118,8 +125,9 @@ export async function POST(request: Request) {
       p_actor_id: auth.userId,
     });
   } else if (body.action === "remove_principal") {
-    result = await auth.supabaseServer.rpc("admin_remove_principal", {
+    result = await auth.supabaseServer.rpc("admin_remove_principal_checked", {
       p_instrument: body.instrument,
+      p_expected_principal_id: body.principalId,
       p_actor_id: auth.userId,
     });
   } else if (body.action === "set_president") {

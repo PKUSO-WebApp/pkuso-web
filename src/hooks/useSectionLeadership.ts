@@ -38,9 +38,9 @@ const EMPTY_DATA: SectionLeadershipData = {
 
 export type LeadershipMutation =
   | { action: "set_section_leader"; section: string; userId: string }
-  | { action: "remove_section_leader"; section: string }
+  | { action: "remove_section_leader"; section: string; leaderId: string }
   | { action: "set_principal"; instrument: string; userId: string }
-  | { action: "remove_principal"; instrument: string }
+  | { action: "remove_principal"; instrument: string; principalId: string }
   | { action: "set_president"; userId: string }
   | { action: "remove_president"; userId: string };
 
@@ -156,10 +156,12 @@ export function useSectionLeadership(client: typeof defaultClient = defaultClien
     fetch,
     assignLeader: (section: string, userId: string) =>
       mutate({ action: "set_section_leader", section, userId }),
-    removeLeader: (section: string) => mutate({ action: "remove_section_leader", section }),
+    removeLeader: (section: string, leaderId: string) =>
+      mutate({ action: "remove_section_leader", section, leaderId }),
     assignPrincipal: (instrument: string, userId: string) =>
       mutate({ action: "set_principal", instrument, userId }),
-    removePrincipal: (instrument: string) => mutate({ action: "remove_principal", instrument }),
+    removePrincipal: (instrument: string, principalId: string) =>
+      mutate({ action: "remove_principal", instrument, principalId }),
     assignPresident: (userId: string) => mutate({ action: "set_president", userId }),
     removePresident: (userId: string) => mutate({ action: "remove_president", userId }),
   };

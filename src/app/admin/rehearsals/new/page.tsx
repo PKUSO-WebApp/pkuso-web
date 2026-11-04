@@ -14,6 +14,7 @@ import {
   type RepertoirePiece,
 } from "@/components/create-rehearsal-form";
 import { formatLocalISO, getLocalDateString } from "@/lib/date-utils";
+import { formatRepertoireSummary } from "@/lib/repertoire-summary";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
 import { sectionsToDisplayString } from "@/constants/instruments";
 
@@ -138,10 +139,7 @@ export default function AdminCreateRehearsalPage() {
         return;
       }
 
-      const repertoireText = form.pieces
-        .map((p) => p.title.trim())
-        .filter(Boolean)
-        .join("、");
+      const repertoireText = formatRepertoireSummary(form.pieces);
 
       const payload: Record<string, unknown> = {
         type: form.type,
@@ -161,6 +159,7 @@ export default function AdminCreateRehearsalPage() {
         form.pieces.map((p, i) => ({
           sheet_music_id: p.sheetMusicId,
           title: p.title.trim(),
+          content: p.content.trim() || null,
           sort_order: i,
         })),
       );

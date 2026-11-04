@@ -15,9 +15,14 @@ import {
   type RepertoirePiece,
 } from "@/components/create-rehearsal-form";
 import { formatLocalISO, parseLocalISO, getLocalDateString } from "@/lib/date-utils";
+import { formatRepertoireSummary } from "@/lib/repertoire-summary";
 import { sectionsToDisplayString } from "@/constants/instruments";
 import type { RehearsalRepertoireRow, RehearsalRow } from "@/types/database";
 import { useAdminPageHeader } from "@/context/admin-page-header-context";
+
+type RepertoireRowWithContent = Pick<RehearsalRepertoireRow, "id" | "sheet_music_id" | "title"> & {
+  content: string | null;
+};
 
 function buildInitialForm(item: RehearsalRow, pieces: RepertoirePiece[]): CreateFormState {
   const hasCoords = item.checkin_lat != null && item.checkin_lng != null;
@@ -62,7 +67,10 @@ export default function AdminEditRehearsalPage() {
     let cancelled = false;
     void supabase
       .from("rehearsal_repertoire")
-      .select("id, sheet_music_id, title, sort_order")
+      // select("*")：content 是后加的列；用生成类型之外的本地窄类型接住，
+      // 这样后端 migration 还没同步到生成类型时页面也能编译。后端 dev 上列不存在时
+      // 这里读到 undefined，按空内容处理；保存由 RPC 负责。
+      .select("*")
       .eq("rehearsal_id", itemId)
       .order("sort_order")
       .then(({ data, error }) => {
@@ -70,23 +78,23 @@ export default function AdminEditRehearsalPage() {
         if (error) {
           console.error("[edit rehearsal] 曲目加载失败", error.message);
           setInitialPieces(
-            repertoireFallback ? [{ sheetMusicId: null, title: repertoireFallback }] : [],
+            repertoireFallback
+              ? [{ sheetMusicId: null, title: repertoireFallback, content: "" }]
+              : [],
           );
           return;
         }
-        const rows = (data ?? []) as Pick<
-          RehearsalRepertoireRow,
-          "id" | "sheet_music_id" | "title"
-        >[];
+        const rows = (data ?? []) as unknown as RepertoireRowWithContent[];
         setInitialPieces(
           rows.length > 0
             ? rows.map((r) => ({
                 id: r.id,
                 sheetMusicId: r.sheet_music_id,
                 title: r.title,
+                content: r.content ?? "",
               }))
             : repertoireFallback
-              ? [{ sheetMusicId: null, title: repertoireFallback }]
+              ? [{ sheetMusicId: null, title: repertoireFallback, content: "" }]
               : [],
         );
       });
@@ -243,10 +251,7 @@ function EditForm({
         return;
       }
 
-      const repertoireText = form.pieces
-        .map((p) => p.title.trim())
-        .filter(Boolean)
-        .join("、");
+      const repertoireText = formatRepertoireSummary(form.pieces);
 
       const payload: Record<string, unknown> = {
         type: form.type,
@@ -272,6 +277,7 @@ function EditForm({
         p_pieces: form.pieces.map((p, i) => ({
           sheet_music_id: p.sheetMusicId,
           title: p.title.trim(),
+          content: p.content.trim() || null,
           sort_order: i,
         })) as never,
       });

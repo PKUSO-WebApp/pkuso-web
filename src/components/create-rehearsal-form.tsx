@@ -28,6 +28,8 @@ export type RepertoirePiece = {
   id?: string;
   sheetMusicId: string | null;
   title: string;
+  /** 本次排练的具体内容（乐章/段落等），可空；与 title 一起压成 repertoire 文本 */
+  content: string;
 };
 
 export type CreateFormState = {
@@ -251,7 +253,7 @@ function RepertoireEditor({
       alert("同一场排练已有同名曲目");
       return;
     }
-    onChange([...pieces, { sheetMusicId: option.id, title: option.title }]);
+    onChange([...pieces, { sheetMusicId: option.id, title: option.title, content: "" }]);
     setSelectedScoreId("");
   };
 
@@ -262,8 +264,12 @@ function RepertoireEditor({
       alert("同一场排练已有同名曲目");
       return;
     }
-    onChange([...pieces, { sheetMusicId: null, title }]);
+    onChange([...pieces, { sheetMusicId: null, title, content: "" }]);
     setFreeTitle("");
+  };
+
+  const updateContent = (index: number, content: string) => {
+    onChange(pieces.map((piece, i) => (i === index ? { ...piece, content } : piece)));
   };
 
   return (
@@ -283,22 +289,37 @@ function RepertoireEditor({
             return (
               <li
                 key={`${piece.id ?? "new"}-${piece.sheetMusicId ?? "free"}-${index}`}
-                className="flex items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2"
+                className="rounded-xl border border-border bg-muted px-3 py-2"
               >
-                <span className="min-w-0 flex-1 truncate text-xs text-text">
-                  {formatRepertoireLabel({ title: piece.title, composer })}
-                </span>
-                <span className="shrink-0 rounded-full bg-surface px-1.5 py-0.5 text-caption text-text-muted">
-                  {piece.sheetMusicId ? "有谱" : "无谱"}
-                </span>
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => onChange(pieces.filter((_, i) => i !== index))}
-                  className="shrink-0 rounded-full px-2 py-0.5 text-caption text-danger hover:bg-danger-bg disabled:opacity-50"
-                >
-                  移除
-                </button>
+                <div className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-xs text-text">
+                        {formatRepertoireLabel({ title: piece.title, composer })}
+                      </span>
+                      <span className="shrink-0 rounded-full bg-surface px-1.5 py-0.5 text-caption text-text-muted">
+                        {piece.sheetMusicId ? "有谱" : "无谱"}
+                      </span>
+                    </div>
+                    <input
+                      type="text"
+                      value={piece.content}
+                      onChange={(e) => updateContent(index, e.target.value)}
+                      disabled={disabled}
+                      maxLength={200}
+                      placeholder="本次排练内容（如：第一、第二乐章）"
+                      className="mt-1 w-full rounded-lg border border-border bg-surface px-2 py-1 text-caption text-text outline-none placeholder:text-text-muted focus:border-text-muted disabled:opacity-60"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => onChange(pieces.filter((_, i) => i !== index))}
+                    className="shrink-0 rounded-full px-2 py-0.5 text-caption text-danger hover:bg-danger-bg disabled:opacity-50"
+                  >
+                    移除
+                  </button>
+                </div>
               </li>
             );
           })}

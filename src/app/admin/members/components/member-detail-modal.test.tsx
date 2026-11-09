@@ -53,6 +53,8 @@ const baseUser: ProfileRow = {
   full_name: "张三",
   hide_email: false,
   hide_join_date: false,
+  birthday: null,
+  hide_birthday: false,
   hide_phone: false,
   hide_college: false,
   session_started_at: null,

@@ -52,6 +52,8 @@ function roster(
     hide_college: null,
     hide_email: null,
     hide_join_date: null,
+    birthday: null,
+    hide_birthday: false,
     hide_phone: null,
     is_in_orchestra: true,
     is_principal: false,

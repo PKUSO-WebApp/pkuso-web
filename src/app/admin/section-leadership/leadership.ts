@@ -23,11 +23,12 @@ export type LeadershipMember = {
   instrument: string | null;
 };
 
-/** 团长能力矩阵（2026-10-25 固定六项）；backend `president_capability_keys()` 同源。 */
+/** 团长能力矩阵（2026-11-10 起七项）；backend `president_capability_keys()` 同源。 */
 export const PRESIDENT_CAPABILITY_LABELS: Record<string, string> = {
   rehearsal: "排练管理",
   leave_approval: "请假审批",
   membership_approval: "入团审批",
+  announcement: "公告管理",
   attendance: "修改考勤",
   attendance_approval: "考勤修改申请审批",
   attendance_export: "考勤导出",

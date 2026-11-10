@@ -26,7 +26,7 @@ type PresidentPanelProps = {
   onRemove: (userId: string) => Promise<MutationResult>;
 };
 
-/** P0c 团长 tab：现任团长 + 一次性任命六项能力；团长不能是声部长。 */
+/** P0c 团长 tab：现任团长 + 一次性任命七项能力；团长不能是声部长。 */
 export function PresidentPanel({
   presidents,
   candidates,
@@ -153,7 +153,7 @@ export function PresidentPanel({
         closeOnOverlay={!saving}
       >
         <p className="mt-2 text-sm text-text-muted">
-          将授予排练管理、请假审批、入团审批、修改考勤、考勤修改申请审批、考勤导出六项能力。
+          将授予排练管理、请假审批、入团审批、公告管理、修改考勤、考勤修改申请审批、考勤导出七项能力。
           团长不能同时是声部长。
         </p>
         <input

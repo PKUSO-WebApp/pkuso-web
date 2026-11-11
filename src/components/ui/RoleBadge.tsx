@@ -1,14 +1,18 @@
 type RoleBadgeProps = {
-  role: "section_leader" | "principal";
+  role: "president" | "vice_president" | "section_leader" | "principal";
   size?: "sm" | "md";
 };
 
 const LABEL: Record<RoleBadgeProps["role"], string> = {
+  president: "👑 团长",
+  vice_president: "⭐ 副团长",
   section_leader: "🏅 声部长",
   principal: "🎻 首席",
 };
 
 const TONE: Record<RoleBadgeProps["role"], string> = {
+  president: "bg-info-bg text-info",
+  vice_president: "bg-success-bg text-success",
   section_leader: "bg-warning-bg text-warning",
   principal: "bg-primary/10 text-primary",
 };

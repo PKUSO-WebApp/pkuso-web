@@ -64,6 +64,7 @@ const h = vi.hoisted(() => {
       is_principal: false,
       is_section_leader: false,
       join_date: null,
+      leadership_position: null,
       phone_number: null,
     },
     {
@@ -86,6 +87,7 @@ const h = vi.hoisted(() => {
       is_principal: false,
       is_section_leader: false,
       join_date: null,
+      leadership_position: null,
       phone_number: null,
     },
   ];

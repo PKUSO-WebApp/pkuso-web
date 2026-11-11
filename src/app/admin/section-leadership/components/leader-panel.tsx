@@ -8,32 +8,64 @@ import { filterByName } from "@/lib/name-search";
 import type { MutationResult } from "@/hooks/useSectionLeadership";
 import {
   PRESIDENT_CAPABILITY_LABELS,
+  type LeaderEntry,
   type LeadershipMember,
 } from "@/app/admin/section-leadership/leadership";
 
-export type PresidentEntry = {
-  userId: string;
-  member: LeadershipMember | null;
-  capabilities: string[];
-  isPrincipal: boolean;
-};
+export type LeaderPosition = "president" | "vice_president";
 
-type PresidentPanelProps = {
-  presidents: PresidentEntry[];
+type Props = {
+  position: LeaderPosition;
+  entries: LeaderEntry[];
   candidates: LeadershipMember[];
   saving: boolean;
   onAssign: (userId: string) => Promise<MutationResult>;
   onRemove: (userId: string) => Promise<MutationResult>;
 };
 
-/** P0c 团长 tab：现任团长 + 一次性任命七项能力；团长不能是声部长。 */
-export function PresidentPanel({
-  presidents,
-  candidates,
-  saving,
-  onAssign,
-  onRemove,
-}: PresidentPanelProps) {
+const COPY: Record<
+  LeaderPosition,
+  {
+    title: string;
+    assign: string;
+    remove: string;
+    radioName: string;
+    ariaLabel: string;
+    empty: string;
+    noCandidates: string;
+    description: string;
+  }
+> = {
+  president: {
+    title: "现任团长",
+    assign: "任命团长",
+    remove: "撤销团长",
+    radioName: "president-member",
+    ariaLabel: "选择团长",
+    empty: "暂无团长",
+    noCandidates: "暂无可任命的成员（团长不能是声部长）",
+    description:
+      "将授予排练管理、请假审批、入团审批、公告管理、修改考勤、考勤修改申请审批、考勤导出七项能力。团长不能同时是声部长。",
+  },
+  vice_president: {
+    title: "现任副团长",
+    assign: "任命副团长",
+    remove: "撤销副团长",
+    radioName: "vice-president-member",
+    ariaLabel: "选择副团长",
+    empty: "暂无副团长",
+    noCandidates: "暂无可任命的成员（副团长不能是声部长）",
+    description:
+      "将授予排练管理、请假审批、入团审批、公告管理、修改考勤、考勤修改申请审批、考勤导出七项能力。副团长不能同时是声部长。",
+  },
+};
+
+/**
+ * 团级职位面板：团长 / 副团长各一名。
+ * 已有职位时「任命」按钮禁用，必须先撤销；转职位不做特殊晋升。
+ */
+export function LeaderPanel({ position, entries, candidates, saving, onAssign, onRemove }: Props) {
+  const copy = COPY[position];
   const [assignOpen, setAssignOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
@@ -44,8 +76,10 @@ export function PresidentPanel({
   // 搜索把已选成员过滤掉后，保存按钮必须一起失效；否则会提交一个屏幕上不可见的人。
   const selectedVisible =
     selectedId !== null && filtered.some((member) => member.id === selectedId);
+  const canAssign = entries.length === 0 && candidates.length > 0;
 
   const openAssign = () => {
+    if (!canAssign) return;
     setSelectedId(null);
     setSearch("");
     setError(null);
@@ -82,10 +116,15 @@ export function PresidentPanel({
     }
   };
 
-  const handleRemove = async (entry: PresidentEntry) => {
+  const handleRemove = async (entry: LeaderEntry) => {
     if (busyRef.current) return;
     const name = entry.member?.full_name?.trim() || "该成员";
-    if (!window.confirm(`确定撤销「${name}」的团长能力吗？`)) return;
+    if (
+      !window.confirm(
+        `确定撤销「${name}」的${copy.title.replace("现任", "")}职位并收回七项能力吗？`,
+      )
+    )
+      return;
     busyRef.current = true;
     setError(null);
     try {
@@ -99,18 +138,29 @@ export function PresidentPanel({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-medium text-text">现任团长</p>
-        <Button type="button" disabled={saving || candidates.length === 0} onClick={openAssign}>
-          任命团长
+        <p className="text-sm font-medium text-text">{copy.title}</p>
+        <Button
+          type="button"
+          disabled={saving || !canAssign}
+          onClick={openAssign}
+          title={entries.length > 0 ? "已有职位，撤销后可重新任命" : undefined}
+        >
+          {copy.assign}
         </Button>
       </div>
 
+      {entries.length > 0 && (
+        <p className="text-xs text-text-muted">
+          已有{copy.title.replace("现任", "")}，撤销后才能任命新的人。
+        </p>
+      )}
+
       {error && <p className="text-xs text-danger">{error}</p>}
 
-      {presidents.length === 0 ? (
-        <p className="py-8 text-center text-xs text-text-muted">暂无团长</p>
+      {entries.length === 0 ? (
+        <p className="py-8 text-center text-xs text-text-muted">{copy.empty}</p>
       ) : (
-        presidents.map((entry) => (
+        entries.map((entry) => (
           <div key={entry.userId} className="rounded-xl border border-border bg-card p-3">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
@@ -138,7 +188,7 @@ export function PresidentPanel({
                 disabled={saving}
                 onClick={() => void handleRemove(entry)}
               >
-                撤销团长
+                {copy.remove}
               </Button>
             </div>
           </div>
@@ -148,14 +198,11 @@ export function PresidentPanel({
       <Modal
         open={assignOpen}
         onClose={closeAssign}
-        title="任命团长"
+        title={copy.assign}
         position="bottom"
         closeOnOverlay={!saving}
       >
-        <p className="mt-2 text-sm text-text-muted">
-          将授予排练管理、请假审批、入团审批、公告管理、修改考勤、考勤修改申请审批、考勤导出七项能力。
-          团长不能同时是声部长。
-        </p>
+        <p className="mt-2 text-sm text-text-muted">{copy.description}</p>
         <input
           type="text"
           value={search}
@@ -165,13 +212,11 @@ export function PresidentPanel({
         />
         <div
           role="radiogroup"
-          aria-label="选择团长"
+          aria-label={copy.ariaLabel}
           className="mt-2 max-h-[45vh] space-y-1 overflow-y-auto"
         >
           {candidates.length === 0 ? (
-            <p className="py-6 text-center text-xs text-text-muted">
-              暂无可任命的成员（团长不能是声部长）
-            </p>
+            <p className="py-6 text-center text-xs text-text-muted">{copy.noCandidates}</p>
           ) : filtered.length === 0 ? (
             <p className="py-6 text-center text-xs text-text-muted">没有匹配的成员</p>
           ) : (
@@ -182,7 +227,7 @@ export function PresidentPanel({
               >
                 <input
                   type="radio"
-                  name="president-member"
+                  name={copy.radioName}
                   checked={selectedId === member.id}
                   onChange={() => {
                     setSelectedId(member.id);

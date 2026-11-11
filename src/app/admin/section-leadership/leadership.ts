@@ -1,5 +1,7 @@
 import type {
   InstrumentPrincipalRow,
+  LeadershipPositionRow,
+  PresidentCapabilityRow,
   ProfileRosterRow,
   SectionGroupMemberRow,
   SectionLeaderRow,
@@ -33,6 +35,45 @@ export const PRESIDENT_CAPABILITY_LABELS: Record<string, string> = {
   attendance_approval: "考勤修改申请审批",
   attendance_export: "考勤导出",
 };
+
+export type LeaderEntry = {
+  userId: string;
+  member: LeadershipMember | null;
+  capabilities: string[];
+  isPrincipal: boolean;
+};
+
+/**
+ * 职位表 + 能力表 + 花名册 → 团长/副团长面板条目。
+ * 一人一职位（user_id 主键），所以每个 position 最多一条。
+ */
+export function buildLeaderEntries(
+  positions: LeadershipPositionRow[],
+  capabilities: PresidentCapabilityRow[],
+  members: LeadershipMember[],
+  principals: InstrumentPrincipalRow[],
+  roster: ProfileRosterRow[],
+  position: "president" | "vice_president",
+): LeaderEntry[] {
+  const byUser = new Map<string, string[]>();
+  for (const row of capabilities) {
+    byUser.set(row.user_id, [...(byUser.get(row.user_id) ?? []), row.capability]);
+  }
+
+  return positions
+    .filter((row) => row.position === position)
+    .map((row) => ({
+      userId: row.user_id,
+      member:
+        members.find((member) => member.id === row.user_id) ??
+        findLeadershipMember(roster, row.user_id),
+      capabilities: [...(byUser.get(row.user_id) ?? [])].sort(),
+      isPrincipal: principals.some((principal) => principal.principal_id === row.user_id),
+    }))
+    .sort((a, b) =>
+      String(a.member?.full_name ?? "").localeCompare(String(b.member?.full_name ?? ""), "zh-CN"),
+    );
+}
 
 export type LeaderScope = {
   section: SectionRow;

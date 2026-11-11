@@ -5,6 +5,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import SectionLeadershipPage from "./page";
 import { renderWithProviders } from "@/__tests__/render-with-providers";
 import type {
+  LeadershipPositionRow,
   PresidentCapabilityRow,
   ProfileRosterRow,
   SectionGroupMemberRow,
@@ -95,6 +96,7 @@ const h = vi.hoisted(() => {
     leaders: [] as SectionLeaderRow[],
     principals: [] as { instrument: string; principal_id: string }[],
     presidents: [] as PresidentCapabilityRow[],
+    positions: [] as LeadershipPositionRow[],
     fetchMock: vi.fn(),
   };
 });
@@ -123,6 +125,9 @@ vi.mock("@/lib/supabase", () => ({
         if (table === "president_capabilities") {
           return Promise.resolve({ data: h.presidents, error: null });
         }
+        if (table === "leadership_positions") {
+          return Promise.resolve({ data: h.positions, error: null });
+        }
         return Promise.resolve({ data: h.roster, error: null });
       },
     }),
@@ -134,6 +139,7 @@ describe("角色任命页（P0c）", () => {
     h.leaders = [];
     h.principals = [];
     h.presidents = [];
+    h.positions = [];
     h.fetchMock.mockImplementation(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body)) as {
         action: string;
@@ -150,8 +156,8 @@ describe("角色任命页（P0c）", () => {
           },
         ];
       }
-      if (body.action === "set_president") {
-        h.presidents = [
+      const capabilityRows = (userId: string) =>
+        [
           "rehearsal",
           "leave_approval",
           "membership_approval",
@@ -160,14 +166,26 @@ describe("角色任命页（P0c）", () => {
           "attendance_approval",
           "attendance_export",
         ].map((capability) => ({
-          user_id: body.userId,
+          user_id: userId,
           capability,
           granted_by: null,
           granted_at: "2026-10-01T00:00:00Z",
         }));
+
+      if (body.action === "set_president" || body.action === "set_vice_president") {
+        h.presidents = capabilityRows(body.userId);
+        h.positions = [
+          {
+            user_id: body.userId,
+            position: body.action === "set_president" ? "president" : "vice_president",
+            appointed_by: null,
+            appointed_at: "2026-10-01T00:00:00Z",
+          },
+        ];
       }
-      if (body.action === "remove_president") {
+      if (body.action === "remove_president" || body.action === "remove_vice_president") {
         h.presidents = h.presidents.filter((row) => row.user_id !== body.userId);
+        h.positions = h.positions.filter((row) => row.user_id !== body.userId);
       }
       return { ok: true, json: async () => ({ ok: true }) };
     });
@@ -230,7 +248,7 @@ describe("角色任命页（P0c）", () => {
     expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
   });
 
-  it("团长 tab：显示现任能力，任命/撤销调用对应 action", async () => {
+  it("团长 tab：显示现任能力；一名团长时禁止再任命，撤销后可任命", async () => {
     h.presidents = [
       "rehearsal",
       "leave_approval",
@@ -245,6 +263,14 @@ describe("角色任命页（P0c）", () => {
       granted_by: null,
       granted_at: "2026-10-01T00:00:00Z",
     }));
+    h.positions = [
+      {
+        user_id: "u1",
+        position: "president",
+        appointed_by: null,
+        appointed_at: "2026-10-01T00:00:00Z",
+      },
+    ];
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderWithProviders(<SectionLeadershipPage />);
     await screen.findByText("第一小提琴");
@@ -252,6 +278,18 @@ describe("角色任命页（P0c）", () => {
     fireEvent.click(screen.getByRole("button", { name: "团长" }));
     expect(screen.getByText("张三")).toBeInTheDocument();
     expect(screen.getByText("排练管理")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "任命团长" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "撤销团长" }));
+    await waitFor(() => {
+      expect(h.fetchMock).toHaveBeenCalledWith(
+        "/api/admin/section-leadership",
+        expect.objectContaining({
+          body: JSON.stringify({ action: "remove_president", userId: "u1" }),
+        }),
+      );
+    });
+    expect(await screen.findByText("暂无团长")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "任命团长" }));
     fireEvent.click(screen.getByRole("radio", { name: /李四/ }));
@@ -266,17 +304,63 @@ describe("角色任命页（P0c）", () => {
       );
     });
     expect(await screen.findByText("李四")).toBeInTheDocument();
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "撤销团长" }));
+  it("副团长 tab：显示职位；任命/撤销调用对应 action", async () => {
+    h.presidents = [
+      "rehearsal",
+      "leave_approval",
+      "membership_approval",
+      "announcement",
+      "attendance",
+      "attendance_approval",
+      "attendance_export",
+    ].map((capability) => ({
+      user_id: "u1",
+      capability,
+      granted_by: null,
+      granted_at: "2026-10-01T00:00:00Z",
+    }));
+    h.positions = [
+      {
+        user_id: "u1",
+        position: "vice_president",
+        appointed_by: null,
+        appointed_at: "2026-10-01T00:00:00Z",
+      },
+    ];
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderWithProviders(<SectionLeadershipPage />);
+    await screen.findByText("第一小提琴");
+
+    fireEvent.click(screen.getByRole("button", { name: "副团长" }));
+    expect(screen.getByText("张三")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "任命副团长" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "撤销副团长" }));
     await waitFor(() => {
       expect(h.fetchMock).toHaveBeenCalledWith(
         "/api/admin/section-leadership",
         expect.objectContaining({
-          body: JSON.stringify({ action: "remove_president", userId: "u2" }),
+          body: JSON.stringify({ action: "remove_vice_president", userId: "u1" }),
         }),
       );
     });
-    expect(await screen.findByText("暂无团长")).toBeInTheDocument();
+    expect(await screen.findByText("暂无副团长")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "任命副团长" }));
+    fireEvent.click(screen.getByRole("radio", { name: /李四/ }));
+    fireEvent.click(screen.getByRole("button", { name: "确认任命" }));
+
+    await waitFor(() => {
+      expect(h.fetchMock).toHaveBeenCalledWith(
+        "/api/admin/section-leadership",
+        expect.objectContaining({
+          body: JSON.stringify({ action: "set_vice_president", userId: "u2" }),
+        }),
+      );
+    });
+    expect(await screen.findByText("李四")).toBeInTheDocument();
   });
 
   it("团长搜索把已选成员过滤掉后，确认按钮失效", async () => {
@@ -339,6 +423,14 @@ describe("角色任命页（P0c）", () => {
         capability: "attendance",
         granted_by: null,
         granted_at: "2026-10-01T00:00:00Z",
+      },
+    ];
+    h.positions = [
+      {
+        user_id: "u1",
+        position: "president",
+        appointed_by: null,
+        appointed_at: "2026-10-01T00:00:00Z",
       },
     ];
     renderWithProviders(<SectionLeadershipPage />);

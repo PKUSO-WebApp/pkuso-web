@@ -164,8 +164,12 @@ function MemberEditForm({
 
   return (
     <form onSubmit={handleSubmit} className="mt-2 space-y-3">
-      {(user.is_section_leader || user.is_principal) && (
+      {(user.leadership_position || user.is_section_leader || user.is_principal) && (
         <div className="flex flex-wrap gap-1.5">
+          {user.leadership_position === "president" && <RoleBadge role="president" size="md" />}
+          {user.leadership_position === "vice_president" && (
+            <RoleBadge role="vice_president" size="md" />
+          )}
           {user.is_section_leader && <RoleBadge role="section_leader" size="md" />}
           {user.is_principal && <RoleBadge role="principal" size="md" />}
         </div>

@@ -425,6 +425,12 @@ export default function MembersPage() {
                           >
                             <p className="flex flex-wrap items-center gap-1.5 font-medium text-text">
                               <span>{(u.instrument ?? "—") + " - " + (u.full_name ?? "—")}</span>
+                              {u.leadership_position === "president" && (
+                                <RoleBadge role="president" />
+                              )}
+                              {u.leadership_position === "vice_president" && (
+                                <RoleBadge role="vice_president" />
+                              )}
                               {u.is_section_leader && <RoleBadge role="section_leader" />}
                               {u.is_principal && <RoleBadge role="principal" />}
                             </p>

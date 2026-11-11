@@ -112,8 +112,8 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
 
   it("声部长 / 首席身份只展示徽章，不提供可编辑 checkbox", () => {
     renderModal({ user: { ...baseUser, is_section_leader: true, is_principal: true } });
-    expect(screen.getByText("🏅 声部长")).toBeInTheDocument();
-    expect(screen.getByText("🎻 首席")).toBeInTheDocument();
+    expect(screen.getByText("声部长")).toBeInTheDocument();
+    expect(screen.getByText("首席")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
@@ -281,7 +281,7 @@ describe("AdminMemberDetailModal（admin 可编辑详情）", () => {
     expect((screen.getByPlaceholderText("11 位手机号") as HTMLInputElement).value).toBe(
       "18812345678",
     );
-    expect(screen.getByText("🏅 声部长")).toBeInTheDocument();
+    expect(screen.getByText("声部长")).toBeInTheDocument();
   });
 
   it("提交中禁止关闭：closeOnOverlay=false 且标题栏关闭按钮不触发 onClose", async () => {

@@ -440,6 +440,7 @@ describe("角色任命页（P0c）", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "团长" }));
 
-    expect(screen.getByText("🎻 首席")).toBeInTheDocument();
+    // tab 按钮与徽章都写着「首席」，徽章是 span、tab 是 button，这里只认徽章
+    expect(screen.getByText("首席", { selector: "span" })).toBeInTheDocument();
   });
 });

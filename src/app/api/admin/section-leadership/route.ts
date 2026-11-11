@@ -16,7 +16,9 @@ type Body =
   | { action: "set_principal"; instrument: string; userId: string }
   | { action: "remove_principal"; instrument: string; principalId: string }
   | { action: "set_president"; userId: string }
-  | { action: "remove_president"; userId: string };
+  | { action: "remove_president"; userId: string }
+  | { action: "set_vice_president"; userId: string }
+  | { action: "remove_vice_president"; userId: string };
 
 const ERROR_MESSAGES: Record<string, string> = {
   invalid_scope: "该作用域不能任命",
@@ -25,6 +27,13 @@ const ERROR_MESSAGES: Record<string, string> = {
   scope_overlap: "该作用域与已有任命冲突，请先撤销冲突项",
   president_cannot_be_section_leader: "团长不能同时担任声部长",
   section_leader_cannot_be_president: "声部长不能同时担任团长，请先撤销声部长",
+  section_leader_cannot_be_leader: "声部长不能同时担任团长或副团长，请先撤销声部长",
+  president_exists: "已有团长，请先撤销现任团长",
+  vice_president_exists: "已有副团长，请先撤销现任副团长",
+  leadership_position_exists: "该成员已有团级职位，请先撤销后再任命",
+  leadership_position_mismatch: "职位已变化，请刷新后重试",
+  not_vice_president: "该成员不是副团长",
+  invalid_position: "职位类型不正确",
   invalid_capability: "该能力不在团长能力矩阵内",
   leader_changed: "该作用域的声部长已被别人修改，请刷新后重试",
   principal_changed: "该乐器的首席已被别人修改，请刷新后重试",
@@ -65,7 +74,12 @@ function parseBody(value: unknown): Body | null {
     if (!instrument || !principalId || !UUID_RE.test(principalId)) return null;
     return { action: body.action, instrument, principalId };
   }
-  if (body.action === "set_president" || body.action === "remove_president") {
+  if (
+    body.action === "set_president" ||
+    body.action === "remove_president" ||
+    body.action === "set_vice_president" ||
+    body.action === "remove_vice_president"
+  ) {
     const userId = readString(body.userId);
     if (!userId || !UUID_RE.test(userId)) return null;
     return { action: body.action, userId };
@@ -135,8 +149,18 @@ export async function POST(request: Request) {
       p_user_id: body.userId,
       p_actor_id: auth.userId,
     });
-  } else {
+  } else if (body.action === "remove_president") {
     result = await auth.supabaseServer.rpc("admin_remove_president", {
+      p_user_id: body.userId,
+      p_actor_id: auth.userId,
+    });
+  } else if (body.action === "set_vice_president") {
+    result = await auth.supabaseServer.rpc("admin_set_vice_president", {
+      p_user_id: body.userId,
+      p_actor_id: auth.userId,
+    });
+  } else {
+    result = await auth.supabaseServer.rpc("admin_remove_vice_president", {
       p_user_id: body.userId,
       p_actor_id: auth.userId,
     });

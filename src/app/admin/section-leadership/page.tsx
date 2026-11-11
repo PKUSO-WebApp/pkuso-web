@@ -9,16 +9,17 @@ import { useSectionLeadership } from "@/hooks/useSectionLeadership";
 import { filterByName } from "@/lib/name-search";
 import type { SectionRow } from "@/types/database";
 import {
+  buildLeaderEntries,
   buildLeaderScopes,
   buildPrincipalScopes,
-  findLeadershipMember,
   personLabel,
   toLeadershipMembers,
+  type LeaderEntry,
   type LeadershipMember,
 } from "./leadership";
-import { PresidentPanel, type PresidentEntry } from "./components/president-panel";
+import { LeaderPanel } from "./components/leader-panel";
 
-type Tab = "leaders" | "principals" | "presidents";
+type Tab = "leaders" | "principals" | "presidents" | "vice-presidents";
 type AssignmentKind = "leader" | "principal";
 
 type ScopeItem = {
@@ -31,7 +32,7 @@ type ScopeItem = {
 
 type PickerState = ScopeItem;
 
-/** 角色任命页（P0c）：声部长 / 首席 / 团长三个 tab。 */
+/** 角色任命页（P0c）：声部长 / 首席 / 团长 / 副团长四个 tab。 */
 export default function SectionLeadershipPage() {
   const { setTitle } = useAdminPageHeader();
   React.useEffect(() => {
@@ -44,6 +45,7 @@ export default function SectionLeadershipPage() {
     leaders,
     principals,
     presidents,
+    positions,
     roster,
     loading,
     error,
@@ -55,6 +57,8 @@ export default function SectionLeadershipPage() {
     removePrincipal,
     assignPresident,
     removePresident,
+    assignVicePresident,
+    removeVicePresident,
   } = useSectionLeadership();
 
   const [tab, setTab] = React.useState<Tab>("leaders");
@@ -66,14 +70,18 @@ export default function SectionLeadershipPage() {
   const savingRef = React.useRef(false);
 
   const members = React.useMemo(() => toLeadershipMembers(roster), [roster]);
-  const presidentIds = React.useMemo(
+  // 任何团级能力持有者都不能当声部长（后端 guard 判的是能力，不是职位）
+  const capabilityUserIds = React.useMemo(
     () => new Set(presidents.map((row) => row.user_id)),
     [presidents],
   );
-  // 团长不能是声部长：声部长候选人里先去掉已有团长能力的人；首席不受影响。
+  const positionUserIds = React.useMemo(
+    () => new Set(positions.map((row) => row.user_id)),
+    [positions],
+  );
   const leaderMembers = React.useMemo(
-    () => members.filter((member) => !presidentIds.has(member.id)),
-    [members, presidentIds],
+    () => members.filter((member) => !capabilityUserIds.has(member.id)),
+    [members, capabilityUserIds],
   );
   const leaderScopes = React.useMemo(
     () => buildLeaderScopes(sections, groupMembers, leaders, leaderMembers),
@@ -84,32 +92,27 @@ export default function SectionLeadershipPage() {
     [sections, principals, members],
   );
 
-  const presidentEntries: PresidentEntry[] = React.useMemo(() => {
-    const byUser = new Map<string, string[]>();
-    for (const row of presidents) {
-      byUser.set(row.user_id, [...(byUser.get(row.user_id) ?? []), row.capability]);
-    }
-    return [...byUser.entries()]
-      .map(([userId, capabilities]) => ({
-        userId,
-        member:
-          members.find((member) => member.id === userId) ?? findLeadershipMember(roster, userId),
-        capabilities: capabilities.sort(),
-        isPrincipal: principals.some((row) => row.principal_id === userId),
-      }))
-      .sort((a, b) =>
-        String(a.member?.full_name ?? "").localeCompare(String(b.member?.full_name ?? ""), "zh-CN"),
-      );
-  }, [presidents, members, principals, roster]);
+  const presidentEntries: LeaderEntry[] = React.useMemo(
+    () => buildLeaderEntries(positions, presidents, members, principals, roster, "president"),
+    [positions, presidents, members, principals, roster],
+  );
+  const vicePresidentEntries: LeaderEntry[] = React.useMemo(
+    () => buildLeaderEntries(positions, presidents, members, principals, roster, "vice_president"),
+    [positions, presidents, members, principals, roster],
+  );
 
   const sectionLeaderIds = React.useMemo(
     () => new Set(leaders.map((row) => row.leader_id)),
     [leaders],
   );
-  const presidentCandidates = React.useMemo(
+  // 团长/副团长候选人：不能是声部长，也不能已有任何团级职位。
+  // 历史「仅有部分能力、没有职位」的用户允许被选中——任命时会清空并授予完整七项。
+  const leaderCandidates = React.useMemo(
     () =>
-      members.filter((member) => !sectionLeaderIds.has(member.id) && !presidentIds.has(member.id)),
-    [members, sectionLeaderIds, presidentIds],
+      members.filter(
+        (member) => !sectionLeaderIds.has(member.id) && !positionUserIds.has(member.id),
+      ),
+    [members, sectionLeaderIds, positionUserIds],
   );
 
   const list: ScopeItem[] =
@@ -205,7 +208,7 @@ export default function SectionLeadershipPage() {
     <div className="flex h-full min-h-0 flex-col space-y-4">
       <div className="flex items-center justify-between gap-3">
         <Toggle
-          options={["leaders", "principals", "presidents"] as const}
+          options={["leaders", "principals", "presidents", "vice-presidents"] as const}
           value={tab}
           disabled={saving}
           onChange={(value) => {
@@ -213,11 +216,21 @@ export default function SectionLeadershipPage() {
             setActionError(null);
           }}
           getLabel={(value) =>
-            value === "leaders" ? "声部长" : value === "principals" ? "首席" : "团长"
+            value === "leaders"
+              ? "声部长"
+              : value === "principals"
+                ? "首席"
+                : value === "presidents"
+                  ? "团长"
+                  : "副团长"
           }
         />
         <span className="text-xs text-text-muted">
-          {tab === "presidents" ? `${presidentEntries.length} 位团长` : `${list.length} 个作用域`}
+          {tab === "presidents"
+            ? `${presidentEntries.length} 位团长`
+            : tab === "vice-presidents"
+              ? `${vicePresidentEntries.length} 位副团长`
+              : `${list.length} 个作用域`}
         </span>
       </div>
 
@@ -235,12 +248,22 @@ export default function SectionLeadershipPage() {
         {loading ? (
           <p className="py-8 text-center text-xs text-text-subtle">加载中…</p>
         ) : tab === "presidents" ? (
-          <PresidentPanel
-            presidents={presidentEntries}
-            candidates={presidentCandidates}
+          <LeaderPanel
+            position="president"
+            entries={presidentEntries}
+            candidates={leaderCandidates}
             saving={saving}
             onAssign={assignPresident}
             onRemove={removePresident}
+          />
+        ) : tab === "vice-presidents" ? (
+          <LeaderPanel
+            position="vice_president"
+            entries={vicePresidentEntries}
+            candidates={leaderCandidates}
+            saving={saving}
+            onAssign={assignVicePresident}
+            onRemove={removeVicePresident}
           />
         ) : list.length === 0 ? (
           <p className="py-8 text-center text-xs text-text-muted">暂无可任命的作用域</p>

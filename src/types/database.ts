@@ -32,6 +32,7 @@ export type SectionGroupMemberRow = PublicSchema["Tables"]["section_group_member
 export type SectionLeaderRow = PublicSchema["Tables"]["section_leaders"]["Row"];
 export type InstrumentPrincipalRow = PublicSchema["Tables"]["instrument_principals"]["Row"];
 export type PresidentCapabilityRow = PublicSchema["Tables"]["president_capabilities"]["Row"];
+export type LeadershipPositionRow = PublicSchema["Tables"]["leadership_positions"]["Row"];
 export type ProfileRosterRow = PublicSchema["Views"]["profiles_roster"]["Row"];
 
 // ---- 表写入类型(Update) ----

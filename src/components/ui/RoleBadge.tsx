@@ -4,10 +4,10 @@ type RoleBadgeProps = {
 };
 
 const LABEL: Record<RoleBadgeProps["role"], string> = {
-  president: "👑 团长",
-  vice_president: "⭐ 副团长",
-  section_leader: "🏅 声部长",
-  principal: "🎻 首席",
+  president: "团长",
+  vice_president: "副团长",
+  section_leader: "声部长",
+  principal: "首席",
 };
 
 const TONE: Record<RoleBadgeProps["role"], string> = {
